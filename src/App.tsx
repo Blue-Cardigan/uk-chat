@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { AppShell } from "@/components/layout/AppShell";
 import { LoginPage } from "@/components/auth/LoginPage";
@@ -50,7 +50,8 @@ function ProtectedApp() {
       })
       .then((data) => {
         setConversations(data);
-        if (!activeConversationId && data.length > 0) setActiveConversationId(data[0].id);
+        const current = useAppStore.getState().activeConversationId;
+        if (!current && data.length > 0) setActiveConversationId(data[0].id);
       })
       .catch(() => setConversations([]));
 
@@ -81,7 +82,8 @@ function ProtectedApp() {
           .update({ claimed_at: new Date().toISOString() })
           .eq("email", email);
       });
-  }, [activeConversationId, session?.user.id, setActiveConversationId, setConversations]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once per session, must NOT re-trigger when activeConversationId changes
+  }, [session?.user.id, setActiveConversationId, setConversations]);
 
   const titleForNewConversation = useMemo(() => `New chat ${conversations.length + 1}`, [conversations.length]);
 
@@ -151,6 +153,15 @@ function ProtectedApp() {
     URL.revokeObjectURL(url);
   }
 
+  const handleConversationMissing = useCallback(() => {
+    const state = useAppStore.getState();
+    const staleId = state.activeConversationId;
+    if (!staleId) return;
+    const remaining = state.conversations.filter((c) => c.id !== staleId);
+    setConversations(remaining);
+    setActiveConversationId(remaining[0]?.id ?? null);
+  }, [setActiveConversationId, setConversations]);
+
   const settingsPanelProps = {
     theme,
     onThemeChange: setTheme,
@@ -171,6 +182,7 @@ function ProtectedApp() {
         onDeleteConversation={deleteConversation}
         onRenameConversation={renameConversation}
         mobileSettingsPanel={<SettingsPanel {...settingsPanelProps} />}
+        onConversationMissing={handleConversationMissing}
       />
       <aside className="hidden border-l border-(--color-border) bg-(--color-sidebar) p-3 xl:block">
         <div className="flex h-full flex-col gap-3 overflow-y-auto">

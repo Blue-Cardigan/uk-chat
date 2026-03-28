@@ -16,6 +16,7 @@ export function AppShell({
   onSelectConversation,
   onDeleteConversation,
   onRenameConversation,
+  onConversationMissing,
   mobileSettingsPanel,
 }: {
   conversations: ChatConversation[];
@@ -26,6 +27,7 @@ export function AppShell({
   onSelectConversation: (id: string | null) => void;
   onDeleteConversation: (id: string) => void;
   onRenameConversation: (id: string, title: string) => void;
+  onConversationMissing: () => void;
   mobileSettingsPanel?: React.ReactNode;
 }) {
   const sidebarOpen = useAppStore((state) => state.sidebarOpen);
@@ -34,10 +36,10 @@ export function AppShell({
   const setRightSidebarOpen = useAppStore((state) => state.setRightSidebarOpen);
   const desktopGridClass = sidebarOpen
     ? rightSidebarOpen
-      ? "md:grid-cols-[280px_minmax(0,1fr)_420px]"
+      ? "md:grid-cols-[280px_minmax(0,1fr)_minmax(0,1fr)]"
       : "md:grid-cols-[280px_minmax(0,1fr)_0px]"
     : rightSidebarOpen
-      ? "md:grid-cols-[0px_minmax(0,1fr)_420px]"
+      ? "md:grid-cols-[0px_minmax(0,1fr)_minmax(0,1fr)]"
       : "md:grid-cols-[0px_minmax(0,1fr)_0px]";
 
   return (
@@ -108,13 +110,13 @@ export function AppShell({
           </div>
         </div>
         <main className="min-h-0 p-3">
-          <Card className="h-full">
+          <Card className={cn("h-full", rightSidebarOpen ? "w-full" : "mx-auto w-full max-w-4xl")}>
             <ChatView
               conversationId={activeConversationId}
               mcpToken={mcpToken}
               authToken={authToken}
               onEnsureConversation={onCreateConversation}
-              onConversationMissing={() => onSelectConversation(null)}
+              onConversationMissing={onConversationMissing}
             />
           </Card>
         </main>

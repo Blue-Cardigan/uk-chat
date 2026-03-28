@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import type { UIMessage } from "ai";
@@ -43,6 +43,8 @@ export function ChatView({
   const pushVizPayload = useAppStore((state) => state.pushVizPayload);
   const clearVizPayloads = useAppStore((state) => state.clearVizPayloads);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const onMissingRef = useRef(onConversationMissing);
+  onMissingRef.current = onConversationMissing;
 
   const { messages, sendMessage, status, setMessages } = useChat({
     transport: new DefaultChatTransport({
@@ -85,7 +87,7 @@ export function ChatView({
     })
       .then(async (response) => {
         if (response.status === 404) {
-          onConversationMissing();
+          onMissingRef.current();
           return { messages: [] };
         }
         if (!response.ok) throw new Error(`Failed to load conversation (${response.status})`);
@@ -100,7 +102,7 @@ export function ChatView({
         setMessages(mapped);
       })
       .catch(() => setMessages([]));
-  }, [authToken, clearVizPayloads, conversationId, onConversationMissing, setMessages]);
+  }, [authToken, clearVizPayloads, conversationId, setMessages]);
 
   useEffect(() => {
     const latest = messages.at(-1);
