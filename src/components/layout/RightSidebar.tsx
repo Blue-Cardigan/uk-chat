@@ -2,7 +2,7 @@ import { VizRouter } from "@/components/viz/VizRouter";
 import { Card } from "@/components/ui/primitives";
 import { useAppStore } from "@/lib/store";
 
-export function RightSidebar({ topContent }: { topContent?: React.ReactNode }) {
+export function RightSidebar() {
   const payloads = useAppStore((state) => state.vizPayloads);
 
   return (
@@ -10,7 +10,6 @@ export function RightSidebar({ topContent }: { topContent?: React.ReactNode }) {
       <div className="mb-3">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-(--color-muted-foreground)">Insights</h2>
       </div>
-      {topContent ? <div className="mb-3 xl:hidden">{topContent}</div> : null}
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
         {payloads.length === 0 ? (
           <Card className="text-sm text-(--color-muted-foreground)">

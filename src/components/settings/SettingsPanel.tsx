@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Copy, Download, LogOut } from "lucide-react";
-import { Button, Card } from "@/components/ui/primitives";
+import { Button } from "@/components/ui/primitives";
 import type { ThemePreference } from "@/lib/types";
 
 export function SettingsPanel({
@@ -46,7 +46,7 @@ export function SettingsPanel({
   }
 
   return (
-    <Card className="space-y-3">
+    <div className="space-y-3">
       <h3 className="text-sm font-semibold uppercase tracking-wide text-(--color-muted-foreground)">Settings</h3>
       <div className="space-y-2 text-sm">
         <p>Theme</p>
@@ -86,6 +86,6 @@ export function SettingsPanel({
         </div>
       </div>
       {actionStatus ? <p className="text-xs text-(--color-muted-foreground)">{actionStatus}</p> : null}
-    </Card>
+    </div>
   );
 }

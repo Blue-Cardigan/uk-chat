@@ -170,27 +170,26 @@ function ProtectedApp() {
     onSignOut: signOut,
   } as const;
 
-  return (
-    <div className="grid grid-cols-1 xl:grid-cols-[1fr_360px]">
-      <AppShell
-        conversations={conversations}
-        activeConversationId={activeConversationId}
-        mcpToken={mcpToken}
-        authToken={session?.access_token ?? null}
-        onCreateConversation={createConversation}
-        onSelectConversation={setActiveConversationId}
-        onDeleteConversation={deleteConversation}
-        onRenameConversation={renameConversation}
-        mobileSettingsPanel={<SettingsPanel {...settingsPanelProps} />}
-        onConversationMissing={handleConversationMissing}
-      />
-      <aside className="hidden border-l border-(--color-border) bg-(--color-sidebar) p-3 xl:block">
-        <div className="flex h-full flex-col gap-3 overflow-y-auto">
-          <SettingsPanel {...settingsPanelProps} />
-          {isAdmin ? <AdminPanel /> : null}
-        </div>
-      </aside>
+  const settingsContent = (
+    <div className="space-y-4">
+      <SettingsPanel {...settingsPanelProps} />
+      {isAdmin ? <AdminPanel /> : null}
     </div>
+  );
+
+  return (
+    <AppShell
+      conversations={conversations}
+      activeConversationId={activeConversationId}
+      mcpToken={mcpToken}
+      authToken={session?.access_token ?? null}
+      onCreateConversation={createConversation}
+      onSelectConversation={setActiveConversationId}
+      onDeleteConversation={deleteConversation}
+      onRenameConversation={renameConversation}
+      onConversationMissing={handleConversationMissing}
+      settingsContent={settingsContent}
+    />
   );
 }
 

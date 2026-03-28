@@ -6,7 +6,6 @@ import { Conversation } from "@/components/ai-elements/conversation";
 import { Message } from "@/components/ai-elements/message";
 import { ChatInput } from "@/components/chat/ChatInput";
 import { SuggestedMessages } from "@/components/chat/SuggestedMessages";
-import { Card } from "@/components/ui/primitives";
 import { useAppStore } from "@/lib/store";
 
 type Part = { type: string; [key: string]: unknown };
@@ -119,10 +118,10 @@ export function ChatView({
   }, [messages, pushVizPayload]);
 
   return (
-    <section className="flex min-h-0 flex-1 flex-col gap-4">
-      <Card className="flex min-h-0 flex-1 flex-col gap-3">
+    <section className="flex h-full flex-col">
+      <div className="flex-1 overflow-y-auto px-4 py-6">
         {messages.length === 0 ? (
-          <div className="space-y-4">
+          <div className="mx-auto max-w-2xl space-y-4 pt-[20vh]">
             <h2 className="font-display text-2xl">Ask a UK question</h2>
             <p className="text-sm text-(--color-muted-foreground)">
               Answers are grounded in live UK data tools and rendered with maps, dashboards, and synthetic personas.
@@ -136,9 +135,12 @@ export function ChatView({
             ))}
           </Conversation>
         )}
-      </Card>
-      {submitError ? <p className="text-xs text-(--color-muted-foreground)">{submitError}</p> : null}
-      <ChatInput onSubmit={(text) => void submitPrompt(text)} isStreaming={status === "streaming" || status === "submitted"} />
+      </div>
+
+      <div className="sticky bottom-0 border-t border-(--color-border) bg-(--color-background) px-4 py-3">
+        {submitError ? <p className="mb-2 text-xs text-(--color-muted-foreground)">{submitError}</p> : null}
+        <ChatInput onSubmit={(text) => void submitPrompt(text)} isStreaming={status === "streaming" || status === "submitted"} />
+      </div>
     </section>
   );
 }

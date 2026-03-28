@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { MoreHorizontal, Plus } from "lucide-react";
+import { MoreHorizontal, Plus, Settings } from "lucide-react";
 import { Button, Input } from "@/components/ui/primitives";
 import type { ChatConversation } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -11,6 +11,7 @@ export function LeftSidebar({
   onSelect,
   onDelete,
   onRename,
+  onToggleSettings,
 }: {
   conversations: ChatConversation[];
   activeConversationId: string | null;
@@ -18,6 +19,7 @@ export function LeftSidebar({
   onSelect: (id: string) => void;
   onDelete: (id: string) => void;
   onRename: (id: string, title: string) => void;
+  onToggleSettings: () => void;
 }) {
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -173,6 +175,17 @@ export function LeftSidebar({
             </div>
           );
         })}
+      </div>
+
+      <div className="border-t border-(--color-border) pt-2">
+        <Button
+          variant="ghost"
+          className="group w-full justify-start gap-2 text-sm text-(--color-muted-foreground) transition-colors hover:text-(--color-foreground)"
+          onClick={onToggleSettings}
+        >
+          <Settings className="h-4 w-4 transition-transform duration-200 ease-out group-hover:rotate-45" />
+          Settings
+        </Button>
       </div>
     </aside>
   );
