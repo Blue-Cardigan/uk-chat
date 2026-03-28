@@ -31,8 +31,8 @@ export function AppShell({
   const setRightSidebarOpen = useAppStore((state) => state.setRightSidebarOpen);
 
   return (
-    <div className="flex h-screen flex-col bg-[var(--color-background)] text-[var(--color-foreground)]">
-      <header className="flex h-14 items-center justify-between border-b border-[var(--color-border)] px-3">
+    <div className="flex h-screen flex-col bg-(--color-background) text-(--color-foreground)">
+      <header className="flex h-14 items-center justify-between border-b border-(--color-border) px-3">
         <div className="flex items-center gap-2">
           <Button variant="ghost" onClick={() => setSidebarOpen(!sidebarOpen)}>
             {sidebarOpen ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeftOpen className="h-4 w-4" />}

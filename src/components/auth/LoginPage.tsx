@@ -1,30 +1,37 @@
 import { useState } from "react";
+import { Navigate } from "react-router-dom";
 import { Input, Button, Card } from "@/components/ui/primitives";
+import { useAuth } from "@/lib/auth";
 export function LoginPage() {
+  const { session, loading: authLoading } = useAuth();
   const [email, setEmail] = useState("");
   const [status, setStatus] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  if (session) {
+    return <Navigate to="/" replace />;
+  }
 
   async function handleLogin(event: React.FormEvent) {
     event.preventDefault();
     setLoading(true);
     setStatus(null);
-    const response = await fetch("/api/auth/check-email", {
+    const response = await fetch("/api/auth/sign-in", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email }),
     });
-    const payload = (await response.json().catch(() => ({}))) as { error?: string; message?: string; allowed?: boolean };
+    const payload = (await response.json().catch(() => ({}))) as { error?: string; message?: string; redirectTo?: string };
     setLoading(false);
     if (!response.ok) {
       setStatus(payload.error ?? payload.message ?? "Unable to verify email");
       return;
     }
-    if (payload.allowed) {
-      setStatus(payload.message ?? "Email recognized. Check your inbox for your magic link.");
+    if (payload.redirectTo) {
+      window.location.assign(payload.redirectTo);
       return;
     }
-    setStatus(payload.message ?? "Email not found. Ask your admin to add you.");
+    setStatus("Unable to sign in right now. Please try again.");
   }
 
   return (
@@ -35,7 +42,7 @@ export function LoginPage() {
         <form onSubmit={handleLogin} className="space-y-3">
           <Input type="email" required placeholder="you@example.com" value={email} onChange={(e) => setEmail(e.target.value)} />
           <Button type="submit" disabled={loading} className="w-full">
-            {loading ? "Checking..." : "Check email access"}
+            {loading || authLoading ? "Signing in..." : "Sign in"}
           </Button>
         </form>
         {status ? <p className="text-xs text-(--color-muted-foreground)">{status}</p> : null}

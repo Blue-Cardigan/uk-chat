@@ -171,6 +171,36 @@ async function handleCheckEmail(request: Request) {
   });
 }
 
+async function handleRecognizedSignIn(request: Request) {
+  const { email } = (await request.json()) as { email?: string };
+  const normalizedEmail = email?.trim().toLowerCase();
+  if (!normalizedEmail) {
+    return json({ error: "Email is required" }, 400);
+  }
+
+  const supabase = getSupabaseAdmin();
+  const { data: gateRow, error: gateError } = await supabase
+    .from("uk_chat_email_gate")
+    .select("email")
+    .eq("email", normalizedEmail)
+    .maybeSingle();
+  if (gateError) return json({ error: "Unable to verify email access right now" }, 500);
+  if (!gateRow) return json({ error: "Email not found. Ask your admin to add you." }, 404);
+
+  const { data: linkData, error: linkError } = await supabase.auth.admin.generateLink({
+    type: "magiclink",
+    email: normalizedEmail,
+  });
+  if (linkError) {
+    return json({ error: "Unable to sign in right now. Please try again." }, 500);
+  }
+
+  const actionLink = linkData?.properties?.action_link;
+  if (!actionLink) return json({ error: "Unable to sign in right now. Please try again." }, 500);
+
+  return json({ redirectTo: actionLink });
+}
+
 async function getProfileTokenMapByEmail(emails: string[]) {
   const supabase = getSupabaseAdmin();
   let page = 1;
@@ -346,6 +376,10 @@ async function routeRequest(request: Request) {
     if (parts[2] === "check-email") {
       if (request.method !== "POST") return methodNotAllowed();
       return handleCheckEmail(request);
+    }
+    if (parts[2] === "sign-in") {
+      if (request.method !== "POST") return methodNotAllowed();
+      return handleRecognizedSignIn(request);
     }
     if (parts[2] === "callback") {
       if (request.method !== "GET") return methodNotAllowed();

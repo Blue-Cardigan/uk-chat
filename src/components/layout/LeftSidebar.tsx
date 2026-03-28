@@ -18,9 +18,9 @@ export function LeftSidebar({
   onRename: (id: string, title: string) => void;
 }) {
   return (
-    <aside className="flex h-full w-full flex-col gap-3 border-r border-[var(--color-border)] bg-[var(--color-sidebar)] p-3">
+    <aside className="flex h-full w-full flex-col gap-3 border-r border-(--color-border) bg-(--color-sidebar) p-3">
       <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-[var(--color-muted-foreground)]">Chats</h2>
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-(--color-muted-foreground)">Chats</h2>
         <Button variant="ghost" onClick={onCreate} aria-label="New chat">
           <Plus className="h-4 w-4" />
         </Button>
@@ -29,7 +29,7 @@ export function LeftSidebar({
         {conversations.map((conversation) => {
           const isActive = conversation.id === activeConversationId;
           return (
-            <Card key={conversation.id} className={isActive ? "border-[var(--color-primary)]" : ""}>
+            <Card key={conversation.id} className={isActive ? "border-(--color-primary)" : ""}>
               <button type="button" className="mb-2 w-full text-left text-sm font-medium" onClick={() => onSelect(conversation.id)}>
                 {conversation.title}
               </button>
