@@ -1,4 +1,4 @@
-import { convertToModelMessages, streamText } from "ai";
+import { convertToModelMessages, jsonSchema, streamText } from "ai";
 import { google } from "@ai-sdk/google";
 import { createMCPClient } from "@ai-sdk/mcp";
 import { waitUntil } from "@vercel/functions";
@@ -242,12 +242,9 @@ function normalizeGeminiTools<T extends Record<string, unknown>>(tools: T): {
       entries.push([toolName, toolDefinition]);
       continue;
     }
-    // Normalize only raw JSON schema objects.
-    // Do not touch AI SDK schema wrappers (`inputSchema`) because cloning/mutating
-    // those can strip internal schema symbols and break tool preparation.
     const schemaKey = isRecord(toolDefinition.parameters)
       ? "parameters"
-      : isRecord(toolDefinition.inputSchema) && !isSchemaWrapper(toolDefinition.inputSchema)
+      : isRecord(toolDefinition.inputSchema)
         ? "inputSchema"
         : null;
     if (!schemaKey) {
@@ -256,15 +253,40 @@ function normalizeGeminiTools<T extends Record<string, unknown>>(tools: T): {
     }
 
     const schemaValue = toolDefinition[schemaKey];
+    const isInputSchemaWrapper = schemaKey === "inputSchema" && isSchemaWrapper(schemaValue);
+    const toolCopy: Record<string, unknown> = { ...toolDefinition };
+
+    if (isInputSchemaWrapper) {
+      const wrapper = schemaValue as Record<string, unknown>;
+      let rawSchema: unknown = wrapper.jsonSchema;
+      try {
+        rawSchema = structuredClone(rawSchema);
+      } catch {
+        // Keep original schema object if clone fails.
+      }
+      const changed = normalizeGeminiSchemaInPlace(rawSchema, [toolName, schemaKey, "jsonSchema"]);
+      if (changed) {
+        const validate = typeof wrapper.validate === "function" ? (wrapper.validate as (value: unknown) => unknown) : undefined;
+        toolCopy[schemaKey] = jsonSchema(
+          rawSchema as Record<string, unknown>,
+          validate ? { validate: validate as never } : undefined,
+        );
+        normalizedToolNames.push(toolName);
+      } else {
+        toolCopy[schemaKey] = schemaValue;
+      }
+      entries.push([toolName, toolCopy]);
+      continue;
+    }
+
     let schemaCopy: unknown = schemaValue;
     try {
       schemaCopy = structuredClone(schemaValue);
     } catch {
       // Keep original schema object if clone fails.
     }
-
-    const toolCopy: Record<string, unknown> = { ...toolDefinition, [schemaKey]: schemaCopy };
-    const changed = normalizeGeminiSchemaInPlace(toolCopy[schemaKey], [toolName, schemaKey]);
+    const changed = normalizeGeminiSchemaInPlace(schemaCopy, [toolName, schemaKey]);
+    toolCopy[schemaKey] = schemaCopy;
     if (changed) normalizedToolNames.push(toolName);
     entries.push([toolName, toolCopy]);
   }
