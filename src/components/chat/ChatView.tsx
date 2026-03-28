@@ -215,10 +215,10 @@ export function ChatView({
     const latest = messages.at(-1);
     if (!latest?.parts) return;
     (latest.parts as Part[]).forEach((part, index) => {
-      if (!part.type.startsWith("tool-")) continue;
-      if (part.state !== "output-available" || !("output" in part) || part.output == null) continue;
+      if (!part.type.startsWith("tool-")) return;
+      if (part.state !== "output-available" || !("output" in part) || part.output == null) return;
       const toolName = part.type.replace("tool-", "");
-      if (!isChartArtifactCandidate(toolName, part.output)) continue;
+      if (!isChartArtifactCandidate(toolName, part.output)) return;
       const toolCallId = typeof part.toolCallId === "string" ? part.toolCallId : `idx-${index}`;
       pushVizPayload({
         id: `${latest.id}:${toolName}:${toolCallId}`,
