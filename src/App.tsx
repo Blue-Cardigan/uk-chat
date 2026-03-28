@@ -32,6 +32,28 @@ function ProtectedApp() {
   const [mcpToken, setMcpToken] = useState<string | null>(null);
   const isAdmin = (session?.user.email ?? "").toLowerCase() === (import.meta.env.VITE_ADMIN_EMAIL ?? "").toLowerCase();
 
+  const loadConversations = useCallback(async () => {
+    if (!session?.access_token) {
+      setConversations([]);
+      setActiveConversationId(null);
+      return [] as ChatConversation[];
+    }
+
+    const response = await fetch("/api/conversations", {
+      headers: { Authorization: `Bearer ${session.access_token}` },
+    });
+    if (!response.ok) throw new Error(`Failed to load conversations (${response.status})`);
+
+    const data = (await safeJson<ChatConversation[]>(response)) ?? [];
+    setConversations(data);
+
+    const current = useAppStore.getState().activeConversationId;
+    const nextActiveId = current && data.some((conversation) => conversation.id === current) ? current : data[0]?.id ?? null;
+    setActiveConversationId(nextActiveId);
+
+    return data;
+  }, [session?.access_token, setActiveConversationId, setConversations]);
+
   useEffect(() => {
     const root = document.documentElement;
     const resolved = theme === "system" ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light") : theme;
@@ -43,17 +65,10 @@ function ProtectedApp() {
     void supabase
       .from("uk_chat_profiles")
       .upsert({ id: session.user.id, email: session.user.email?.toLowerCase() ?? null, display_name: session.user.email ?? null }, { onConflict: "id" });
-    fetch("/api/conversations", { headers: { Authorization: `Bearer ${session.access_token}` } })
-      .then(async (response) => {
-        if (!response.ok) throw new Error(`Failed to load conversations (${response.status})`);
-        return (await safeJson<ChatConversation[]>(response)) ?? [];
-      })
-      .then((data) => {
-        setConversations(data);
-        const current = useAppStore.getState().activeConversationId;
-        if (!current && data.length > 0) setActiveConversationId(data[0].id);
-      })
-      .catch(() => setConversations([]));
+    void loadConversations().catch(() => {
+      setConversations([]);
+      setActiveConversationId(null);
+    });
 
     supabase
       .from("uk_chat_profiles")
@@ -82,8 +97,7 @@ function ProtectedApp() {
           .update({ claimed_at: new Date().toISOString() })
           .eq("email", email);
       });
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once per session, must NOT re-trigger when activeConversationId changes
-  }, [session?.user.id, setActiveConversationId, setConversations]);
+  }, [loadConversations, session?.user.id, setActiveConversationId, setConversations]);
 
   const titleForNewConversation = useMemo(() => `New chat ${conversations.length + 1}`, [conversations.length]);
 
@@ -153,14 +167,20 @@ function ProtectedApp() {
     URL.revokeObjectURL(url);
   }
 
-  const handleConversationMissing = useCallback(() => {
-    const state = useAppStore.getState();
-    const staleId = state.activeConversationId;
-    if (!staleId) return;
-    const remaining = state.conversations.filter((c) => c.id !== staleId);
-    setConversations(remaining);
-    setActiveConversationId(remaining[0]?.id ?? null);
-  }, [setActiveConversationId, setConversations]);
+  const handleConversationMissing = useCallback(
+    async (missingId: string) => {
+      const knownConversation = useAppStore.getState().conversations.some((conversation) => conversation.id === missingId);
+      if (!knownConversation) return;
+
+      try {
+        const refreshed = await loadConversations();
+        if (refreshed.some((conversation) => conversation.id === missingId)) return;
+      } catch {
+        // If reloading the canonical list fails, keep the current sidebar state intact.
+      }
+    },
+    [loadConversations],
+  );
 
   const settingsPanelProps = {
     theme,

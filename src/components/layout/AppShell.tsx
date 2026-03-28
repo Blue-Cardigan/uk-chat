@@ -28,7 +28,7 @@ export function AppShell({
   onSelectConversation: (id: string | null) => void;
   onDeleteConversation: (id: string) => void;
   onRenameConversation: (id: string, title: string) => void;
-  onConversationMissing: () => void;
+  onConversationMissing: (id: string) => Promise<void> | void;
   settingsContent: React.ReactNode;
 }) {
   const sidebarOpen = useAppStore((state) => state.sidebarOpen);

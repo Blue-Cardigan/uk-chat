@@ -37,7 +37,7 @@ export function ChatView({
   mcpToken: string | null;
   authToken: string | null;
   onEnsureConversation: () => Promise<string | null>;
-  onConversationMissing: () => void;
+  onConversationMissing: (id: string) => Promise<void> | void;
 }) {
   const pushVizPayload = useAppStore((state) => state.pushVizPayload);
   const clearVizPayloads = useAppStore((state) => state.clearVizPayloads);
@@ -81,18 +81,22 @@ export function ChatView({
       setMessages([]);
       return;
     }
-    fetch(`/api/conversations/${conversationId}`, {
+    const requestedConversationId = conversationId;
+    const abortController = new AbortController();
+    fetch(`/api/conversations/${requestedConversationId}`, {
       headers: { Authorization: `Bearer ${authToken}` },
+      signal: abortController.signal,
     })
       .then(async (response) => {
         if (response.status === 404) {
-          onMissingRef.current();
-          return { messages: [] };
+          await onMissingRef.current(requestedConversationId);
+          return null;
         }
         if (!response.ok) throw new Error(`Failed to load conversation (${response.status})`);
         return (await safeJson<{ messages?: PersistedMessage[] }>(response)) ?? { messages: [] };
       })
       .then((payload) => {
+        if (abortController.signal.aborted || !payload) return;
         const mapped: UIMessage[] = (payload.messages ?? []).map((message) => ({
           id: message.id,
           role: message.role === "assistant" ? "assistant" : "user",
@@ -100,7 +104,13 @@ export function ChatView({
         }));
         setMessages(mapped);
       })
-      .catch(() => setMessages([]));
+      .catch((error) => {
+        if (abortController.signal.aborted || error instanceof DOMException) return;
+        setMessages([]);
+      });
+    return () => {
+      abortController.abort();
+    };
   }, [authToken, clearVizPayloads, conversationId, setMessages]);
 
   useEffect(() => {

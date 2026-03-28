@@ -199,7 +199,16 @@ async function handleConversationById(request: Request) {
       .eq("id", id)
       .eq("user_id", user.id)
       .single();
-    if (conversationError) return json({ error: conversationError.message }, 404);
+    if (conversationError) {
+      console.warn("[api/conversations/:id] lookup failed", {
+        conversationId: id,
+        userId: user.id,
+        userEmail: user.email ?? null,
+        error: conversationError.message,
+        code: conversationError.code ?? null,
+      });
+      return json({ error: conversationError.message }, 404);
+    }
 
     const { data: messages, error: messageError } = await supabase
       .from("uk_chat_messages")
