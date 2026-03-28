@@ -16,15 +16,17 @@ export function AppShell({
   onSelectConversation,
   onDeleteConversation,
   onRenameConversation,
+  mobileSettingsPanel,
 }: {
   conversations: ChatConversation[];
   activeConversationId: string | null;
   mcpToken: string | null;
   authToken: string | null;
   onCreateConversation: () => Promise<string | null>;
-  onSelectConversation: (id: string) => void;
+  onSelectConversation: (id: string | null) => void;
   onDeleteConversation: (id: string) => void;
   onRenameConversation: (id: string, title: string) => void;
+  mobileSettingsPanel?: React.ReactNode;
 }) {
   const sidebarOpen = useAppStore((state) => state.sidebarOpen);
   const rightSidebarOpen = useAppStore((state) => state.rightSidebarOpen);
@@ -42,13 +44,25 @@ export function AppShell({
     <div className="flex h-screen flex-col bg-(--color-background) text-(--color-foreground)">
       <header className="flex h-14 items-center justify-between border-b border-(--color-border) px-3">
         <div className="flex items-center gap-2">
-          <Button variant="ghost" onClick={() => setSidebarOpen(!sidebarOpen)}>
-            {sidebarOpen ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeftOpen className="h-4 w-4" />}
+          <Button variant="ghost" className="group transition-transform duration-200 ease-out hover:scale-105 active:scale-95" onClick={() => setSidebarOpen(!sidebarOpen)}>
+            {sidebarOpen ? (
+              <PanelLeftClose className="h-4 w-4 transition-transform duration-200 ease-out group-hover:-rotate-6" />
+            ) : (
+              <PanelLeftOpen className="h-4 w-4 transition-transform duration-200 ease-out group-hover:rotate-6" />
+            )}
           </Button>
           <h1 className="font-display text-lg">Explore the Kingdom Chat</h1>
         </div>
-        <Button variant="ghost" onClick={() => setRightSidebarOpen(!rightSidebarOpen)}>
-          {rightSidebarOpen ? <PanelRightClose className="h-4 w-4" /> : <PanelRightOpen className="h-4 w-4" />}
+        <Button
+          variant="ghost"
+          className="group transition-transform duration-200 ease-out hover:scale-105 active:scale-95"
+          onClick={() => setRightSidebarOpen(!rightSidebarOpen)}
+        >
+          {rightSidebarOpen ? (
+            <PanelRightClose className="h-4 w-4 transition-transform duration-200 ease-out group-hover:rotate-6" />
+          ) : (
+            <PanelRightOpen className="h-4 w-4 transition-transform duration-200 ease-out group-hover:-rotate-6" />
+          )}
         </Button>
       </header>
 
@@ -76,6 +90,7 @@ export function AppShell({
               mcpToken={mcpToken}
               authToken={authToken}
               onEnsureConversation={onCreateConversation}
+              onConversationMissing={() => onSelectConversation(null)}
             />
           </Card>
         </main>
@@ -86,7 +101,7 @@ export function AppShell({
             rightSidebarOpen ? "md:translate-x-0 md:opacity-100" : "md:pointer-events-none md:translate-x-3 md:opacity-0",
           )}
         >
-          <RightSidebar />
+          <RightSidebar topContent={mobileSettingsPanel} />
         </div>
       </div>
     </div>

@@ -1,5 +1,6 @@
-import { Plus, Trash2 } from "lucide-react";
-import { Button, Card, Input } from "@/components/ui/primitives";
+import { useMemo, useState } from "react";
+import { MoreHorizontal, Plus } from "lucide-react";
+import { Button, Input } from "@/components/ui/primitives";
 import type { ChatConversation } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -18,6 +19,26 @@ export function LeftSidebar({
   onDelete: (id: string) => void;
   onRename: (id: string, title: string) => void;
 }) {
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draftTitle, setDraftTitle] = useState("");
+  const conversationById = useMemo(() => new Map(conversations.map((conversation) => [conversation.id, conversation])), [conversations]);
+
+  function startRename(id: string) {
+    const conversation = conversationById.get(id);
+    if (!conversation) return;
+    setDraftTitle(conversation.title);
+    setEditingId(id);
+    setOpenMenuId(null);
+  }
+
+  function submitRename(id: string) {
+    const trimmed = draftTitle.trim();
+    const current = conversationById.get(id)?.title?.trim() ?? "";
+    if (trimmed && trimmed !== current) onRename(id, trimmed);
+    setEditingId(null);
+  }
+
   return (
     <aside className="flex h-full w-full flex-col gap-3 border-r border-(--color-border) bg-(--color-sidebar) p-3">
       <div className="flex items-center justify-between">
@@ -29,25 +50,102 @@ export function LeftSidebar({
       <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
         {conversations.map((conversation) => {
           const isActive = conversation.id === activeConversationId;
+          const isEditing = editingId === conversation.id;
+          const isMenuOpen = openMenuId === conversation.id;
+
           return (
-            <Card
+            <div
               key={conversation.id}
               className={cn("animate-[slideUp_200ms_ease-out_both] transition-colors duration-200 ease-out", isActive ? "border-(--color-primary)" : "")}
             >
-              <button type="button" className="mb-2 w-full text-left text-sm font-medium" onClick={() => onSelect(conversation.id)}>
-                {conversation.title}
-              </button>
-              <div className="flex items-center gap-2">
-                <Input
-                  defaultValue={conversation.title}
-                  className="h-8 text-xs"
-                  onBlur={(event) => onRename(conversation.id, event.target.value)}
-                />
-                <Button variant="ghost" onClick={() => onDelete(conversation.id)}>
-                  <Trash2 className="h-4 w-4" />
+              <div
+                className={cn(
+                  "group relative flex items-center gap-1 rounded-md px-2 py-1 transition-colors duration-200 ease-out",
+                  isActive
+                    ? "bg-[color-mix(in_oklch,var(--color-primary)_14%,var(--color-sidebar)_86%)]"
+                    : "hover:bg-[color-mix(in_oklch,var(--color-foreground)_6%,transparent)]",
+                )}
+              >
+                <button
+                  type="button"
+                  className={cn(
+                    "min-w-0 flex-1 truncate py-1 text-left text-sm",
+                    isActive ? "font-semibold text-(--color-foreground)" : "font-medium text-(--color-foreground)",
+                  )}
+                  onClick={() => {
+                    setOpenMenuId(null);
+                    setEditingId(null);
+                    onSelect(conversation.id);
+                  }}
+                >
+                  {conversation.title}
+                </button>
+
+                <Button
+                  variant="ghost"
+                  className={cn(
+                    "h-7 w-7 p-0 transition-opacity",
+                    isMenuOpen ? "opacity-100" : "opacity-0 group-hover:opacity-100 focus:opacity-100",
+                  )}
+                  aria-label={`Open actions for ${conversation.title}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setOpenMenuId((current) => (current === conversation.id ? null : conversation.id));
+                  }}
+                >
+                  <MoreHorizontal className="h-4 w-4" />
                 </Button>
+
+                {isMenuOpen ? (
+                  <div className="absolute right-0 top-8 z-10 min-w-36 rounded-md border border-(--color-border) bg-(--color-card) p-1 shadow-sm">
+                    <button
+                      type="button"
+                      className="w-full rounded px-2 py-1 text-left text-xs font-medium hover:bg-[color-mix(in_oklch,var(--color-foreground)_6%,transparent)]"
+                      onClick={() => startRename(conversation.id)}
+                    >
+                      Edit name
+                    </button>
+                    <button
+                      type="button"
+                      className="w-full rounded px-2 py-1 text-left text-xs font-medium text-(--color-accent) hover:bg-[color-mix(in_oklch,var(--color-accent)_14%,transparent)]"
+                      onClick={() => onDelete(conversation.id)}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                ) : null}
               </div>
-            </Card>
+
+              {isEditing ? (
+                <form
+                  className="mt-1 flex items-center gap-2 px-2"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    submitRename(conversation.id);
+                  }}
+                >
+                  <Input
+                    value={draftTitle}
+                    className="h-8 text-xs"
+                    onChange={(event) => setDraftTitle(event.target.value)}
+                    autoFocus
+                  />
+                  <Button type="submit" variant="secondary" className="h-8 px-2 text-xs">
+                    Save
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="h-8 px-2 text-xs"
+                    onClick={() => {
+                      setEditingId(null);
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                </form>
+              ) : null}
+            </div>
           );
         })}
       </div>

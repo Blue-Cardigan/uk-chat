@@ -14,6 +14,11 @@ function getConversationId(request: Request) {
   return parts.length >= 3 ? parts[2] ?? "" : "";
 }
 
+function env(key: string): string | undefined {
+  const maybeProcess = globalThis as { process?: { env?: Record<string, string | undefined> } };
+  return maybeProcess.process?.env?.[key];
+}
+
 async function ensureProfileExists(user: { id: string; email?: string | null }) {
   const supabase = getSupabaseAdmin();
   const normalizedEmail = user.email?.toLowerCase() ?? null;
@@ -50,14 +55,38 @@ async function handleChat(request: Request) {
     .single();
   if (!conversation) return json({ error: "Conversation not found" }, 404);
 
-  const mcpClient = await createMCPClient({
-    transport: {
-      type: "sse",
-      url: "https://mcp.explorethekingdom.co.uk",
-      headers: { Authorization: `Bearer ${token}` },
-    },
-  });
-  const tools = await mcpClient.tools();
+  const configuredMcpUrl = env("MCP_SERVER_URL") ?? "https://mcp.explorethekingdom.co.uk/sse";
+  let tools: Awaited<ReturnType<Awaited<ReturnType<typeof createMCPClient>>["tools"]>>;
+  try {
+    const mcpClient = await createMCPClient({
+      transport: {
+        type: "sse",
+        url: configuredMcpUrl,
+        headers: { Authorization: `Bearer ${token}` },
+      },
+    });
+    tools = await mcpClient.tools();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const fallbackUrl = configuredMcpUrl.endsWith("/sse") ? null : `${configuredMcpUrl.replace(/\/+$/, "")}/sse`;
+    if (fallbackUrl && message.includes("404")) {
+      try {
+        const mcpClient = await createMCPClient({
+          transport: {
+            type: "sse",
+            url: fallbackUrl,
+            headers: { Authorization: `Bearer ${token}` },
+          },
+        });
+        tools = await mcpClient.tools();
+      } catch (fallbackError) {
+        const fallbackMessage = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
+        return json({ error: `Unable to connect to MCP tools (${fallbackMessage}).` }, 502);
+      }
+    } else {
+      return json({ error: `Unable to connect to MCP tools (${message}).` }, 502);
+    }
+  }
 
   const latestUserMessage = [...(body.messages ?? [])].reverse().find((message) => message.role === "user");
   if (latestUserMessage) {
@@ -253,7 +282,16 @@ async function handleRecognizedSignIn(request: Request) {
   const actionLink = linkData?.properties?.action_link;
   if (!actionLink) return json({ error: "Unable to sign in right now. Please try again." }, 500);
 
-  return json({ allowed: true, redirectTo: actionLink });
+  const maybeProcess = globalThis as { process?: { env?: Record<string, string | undefined> } };
+  const appUrl = maybeProcess.process?.env?.APP_URL;
+  let finalLink = actionLink;
+  if (appUrl) {
+    const parsed = new URL(actionLink);
+    parsed.searchParams.set("redirect_to", `${appUrl.replace(/\/+$/, "")}/auth/callback`);
+    finalLink = parsed.toString();
+  }
+
+  return json({ allowed: true, redirectTo: finalLink });
 }
 
 async function getProfileTokenMapByEmail(emails: string[]) {

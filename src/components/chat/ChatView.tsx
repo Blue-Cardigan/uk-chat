@@ -32,11 +32,13 @@ export function ChatView({
   mcpToken,
   authToken,
   onEnsureConversation,
+  onConversationMissing,
 }: {
   conversationId: string | null;
   mcpToken: string | null;
   authToken: string | null;
   onEnsureConversation: () => Promise<string | null>;
+  onConversationMissing: () => void;
 }) {
   const pushVizPayload = useAppStore((state) => state.pushVizPayload);
   const clearVizPayloads = useAppStore((state) => state.clearVizPayloads);
@@ -82,6 +84,10 @@ export function ChatView({
       headers: { Authorization: `Bearer ${authToken}` },
     })
       .then(async (response) => {
+        if (response.status === 404) {
+          onConversationMissing();
+          return { messages: [] };
+        }
         if (!response.ok) throw new Error(`Failed to load conversation (${response.status})`);
         return (await safeJson<{ messages?: PersistedMessage[] }>(response)) ?? { messages: [] };
       })
@@ -94,7 +100,7 @@ export function ChatView({
         setMessages(mapped);
       })
       .catch(() => setMessages([]));
-  }, [authToken, clearVizPayloads, conversationId, setMessages]);
+  }, [authToken, clearVizPayloads, conversationId, onConversationMissing, setMessages]);
 
   useEffect(() => {
     const latest = messages.at(-1);

@@ -22,7 +22,7 @@ async function safeJson<T>(response: Response): Promise<T | null> {
 }
 
 function ProtectedApp() {
-  const { session } = useAuth();
+  const { session, signOut } = useAuth();
   const setConversations = useAppStore((state) => state.setConversations);
   const conversations = useAppStore((state) => state.conversations);
   const activeConversationId = useAppStore((state) => state.activeConversationId);
@@ -115,6 +115,50 @@ function ProtectedApp() {
     setConversations(conversations.map((conversation) => (conversation.id === id ? { ...conversation, title } : conversation)));
   }
 
+  async function exportChats() {
+    if (!session?.access_token) throw new Error("Missing auth token");
+    const exportConversations = await Promise.all(
+      conversations.map(async (conversation) => {
+        const response = await fetch(`/api/conversations/${conversation.id}`, {
+          headers: { Authorization: `Bearer ${session.access_token}` },
+        });
+        if (!response.ok) {
+          return { ...conversation, messages: [], export_error: `Failed to load messages (${response.status})` };
+        }
+        const payload = (await safeJson<{ messages?: unknown[] }>(response)) ?? { messages: [] };
+        return { ...conversation, messages: payload.messages ?? [] };
+      }),
+    );
+
+    const exportPayload = {
+      exportedAt: new Date().toISOString(),
+      user: {
+        id: session.user.id,
+        email: session.user.email ?? null,
+      },
+      conversations: exportConversations,
+    };
+
+    const blob = new Blob([JSON.stringify(exportPayload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `uk-chat-export-${timestamp}.json`;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  const settingsPanelProps = {
+    theme,
+    onThemeChange: setTheme,
+    mcpToken,
+    onExportChats: exportChats,
+    onSignOut: signOut,
+  } as const;
+
   return (
     <div className="grid grid-cols-1 xl:grid-cols-[1fr_360px]">
       <AppShell
@@ -126,10 +170,11 @@ function ProtectedApp() {
         onSelectConversation={setActiveConversationId}
         onDeleteConversation={deleteConversation}
         onRenameConversation={renameConversation}
+        mobileSettingsPanel={<SettingsPanel {...settingsPanelProps} />}
       />
       <aside className="hidden border-l border-(--color-border) bg-(--color-sidebar) p-3 xl:block">
         <div className="flex h-full flex-col gap-3 overflow-y-auto">
-          <SettingsPanel theme={theme} onThemeChange={setTheme} mcpToken={mcpToken} />
+          <SettingsPanel {...settingsPanelProps} />
           {isAdmin ? <AdminPanel /> : null}
         </div>
       </aside>
