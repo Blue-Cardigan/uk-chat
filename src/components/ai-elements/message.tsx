@@ -3,7 +3,7 @@ import { cn } from "@/lib/utils";
 
 type UiPart =
   | { type: "text"; text?: string }
-  | { type: `tool-${string}`; state?: string; input?: unknown; output?: unknown }
+  | { type: `tool-${string}`; state?: string; input?: unknown; output?: unknown; toolCallId?: string | null }
   | { type: "reasoning"; text?: string }
   | { type: string; [key: string]: unknown };
 
@@ -11,16 +11,42 @@ type UiMessage = { id: string; role: "user" | "assistant" | string; parts?: UiPa
 
 function renderToolPart(part: Extract<UiPart, { type: `tool-${string}` }>, index: number) {
   const toolName = part.type.replace("tool-", "");
+  const hasInput = "input" in part && part.input != null;
+  const hasOutput = "output" in part && part.output != null;
+  const stateLabel = part.state ?? "completed";
   return (
-    <div key={`${toolName}-${index}`} className="rounded-md border border-(--color-border) bg-(--color-card)/60 p-2 text-xs">
-      <div className="mb-1 font-medium">Tool: {toolName}</div>
-      <div className="text-(--color-muted-foreground)">State: {part.state ?? "completed"}</div>
-      {"output" in part && part.output ? (
-        <pre className="mt-2 overflow-x-auto whitespace-pre-wrap rounded bg-(--color-background) p-2 text-[11px]">
-          {JSON.stringify(part.output, null, 2)}
-        </pre>
-      ) : null}
-    </div>
+    <details
+      key={`${toolName}-${part.toolCallId ?? index}`}
+      className="rounded-md border border-(--color-border) bg-(--color-card)/60 p-2 text-xs"
+      open={stateLabel === "output-available"}
+    >
+      <summary className="cursor-pointer list-none">
+        <div className="flex items-center justify-between gap-2">
+          <span className="font-medium">Tool: {toolName}</span>
+          <span className="rounded-full border border-(--color-border) px-2 py-0.5 text-[10px] uppercase tracking-wide text-(--color-muted-foreground)">
+            {stateLabel}
+          </span>
+        </div>
+      </summary>
+      <div className="mt-2 space-y-2">
+        {hasInput ? (
+          <div>
+            <p className="mb-1 text-[11px] font-medium text-(--color-muted-foreground)">Input</p>
+            <pre className="overflow-x-auto whitespace-pre-wrap rounded bg-(--color-background) p-2 text-[11px]">
+              {JSON.stringify(part.input, null, 2)}
+            </pre>
+          </div>
+        ) : null}
+        {hasOutput ? (
+          <div>
+            <p className="mb-1 text-[11px] font-medium text-(--color-muted-foreground)">Output</p>
+            <pre className="overflow-x-auto whitespace-pre-wrap rounded bg-(--color-background) p-2 text-[11px]">
+              {JSON.stringify(part.output, null, 2)}
+            </pre>
+          </div>
+        ) : null}
+      </div>
+    </details>
   );
 }
 

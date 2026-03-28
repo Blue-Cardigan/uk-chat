@@ -69,3 +69,21 @@ export const showcaseVisualizations: React.ComponentType[] = [
   TubeStatusBoard,
   TrafficCountChart,
 ];
+
+const chartToolNames = new Set<string>(["boe_series", "metoffice_fetchSeries", "dft_roadTraffic"]);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function hasChartLikeShape(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  if (Array.isArray(value.series) || Array.isArray(value.datasets) || Array.isArray(value.points)) return true;
+  if (isRecord(value.chart) || isRecord(value.plot) || isRecord(value.echarts) || isRecord(value.vega)) return true;
+  return false;
+}
+
+export function isChartArtifactCandidate(toolName: string, data: unknown): boolean {
+  if (chartToolNames.has(toolName)) return true;
+  return hasChartLikeShape(data);
+}

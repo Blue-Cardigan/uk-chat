@@ -41,7 +41,7 @@ export function RightSidebar() {
 
       <div className="flex min-h-0 flex-1 flex-col gap-3 p-3">
         {payloads.length === 0 ? (
-          <div className="pt-4 text-center text-sm text-(--color-muted-foreground)">Charts and more will appear here.</div>
+          <div className="pt-4 text-center text-sm text-(--color-muted-foreground)">Chart outputs will appear here.</div>
         ) : (
           <>
             <div className="space-y-1 overflow-y-auto">

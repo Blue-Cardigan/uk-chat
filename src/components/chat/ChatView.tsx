@@ -4,9 +4,11 @@ import { DefaultChatTransport } from "ai";
 import type { UIMessage } from "ai";
 import { Conversation } from "@/components/ai-elements/conversation";
 import { Message } from "@/components/ai-elements/message";
-import { ChatInput } from "@/components/chat/ChatInput";
+import { ChatInput, type ChatToolOption } from "@/components/chat/ChatInput";
 import { SuggestedMessages } from "@/components/chat/SuggestedMessages";
+import { DEFAULT_CHAT_MODEL_ID, type ChatModelId } from "@/lib/chat-models";
 import { useAppStore } from "@/lib/store";
+import { isChartArtifactCandidate } from "@/lib/viz-registry";
 import { Input } from "@/components/ui/primitives";
 import type { ChatConversation } from "@/lib/types";
 
@@ -16,6 +18,14 @@ type PersistedMessage = {
   role: "user" | "assistant";
   parts: Part[];
   created_at: string;
+};
+type ToolsCatalogResponse = {
+  tools: ChatToolOption[];
+};
+type ModelUsageResponse = {
+  banner: string | null;
+  approaching: boolean;
+  reached: boolean;
 };
 
 async function safeJson<T>(response: Response): Promise<T | null> {
@@ -50,18 +60,73 @@ export function ChatView({
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState(false);
   const [draftTitle, setDraftTitle] = useState("");
+  const [selectedModelId, setSelectedModelId] = useState<ChatModelId>(DEFAULT_CHAT_MODEL_ID);
+  const [toolsLoading, setToolsLoading] = useState(false);
+  const [tools, setTools] = useState<ChatToolOption[]>([]);
+  const [usageBanner, setUsageBanner] = useState<string | null>(null);
   const onMissingRef = useRef(onConversationMissing);
   onMissingRef.current = onConversationMissing;
+
+  useEffect(() => {
+    if (!authToken || !mcpToken) {
+      setTools([]);
+      setToolsLoading(false);
+      return;
+    }
+    const abortController = new AbortController();
+    setToolsLoading(true);
+    fetch("/api/chat/tools", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${authToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ mcpToken }),
+      signal: abortController.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`Failed to load tools (${response.status})`);
+        return (await safeJson<ToolsCatalogResponse>(response)) ?? { tools: [] };
+      })
+      .then((payload) => {
+        if (abortController.signal.aborted) return;
+        setTools(payload.tools ?? []);
+      })
+      .catch(() => {
+        if (abortController.signal.aborted) return;
+        setTools([]);
+      })
+      .finally(() => {
+        if (!abortController.signal.aborted) setToolsLoading(false);
+      });
+    return () => abortController.abort();
+  }, [authToken, mcpToken]);
 
   useEffect(() => {
     setDraftTitle(conversation?.title ?? "");
     setEditingTitle(false);
   }, [conversation?.id, conversation?.title]);
 
+  useEffect(() => {
+    setSubmitError(null);
+    void refreshUsageBanner();
+  }, [selectedModelId]);
+
+  useEffect(() => {
+    if (!authToken) {
+      setUsageBanner(null);
+      return;
+    }
+    void refreshUsageBanner();
+  }, [authToken]);
+
   const { messages, sendMessage, status, setMessages } = useChat({
     transport: new DefaultChatTransport({
       api: "/api/chat",
     }),
+    onError: (error) => {
+      setSubmitError(error.message || "Request failed. Please try again.");
+    },
   });
 
   async function submitPrompt(text: string) {
@@ -83,9 +148,29 @@ export function ChatView({
       { text },
       {
         headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
-        body: { conversationId: ensuredConversationId, mcpToken },
+        body: { conversationId: ensuredConversationId, mcpToken, modelId: selectedModelId },
       },
     );
+    window.setTimeout(() => {
+      void refreshUsageBanner();
+    }, 1200);
+  }
+
+  async function refreshUsageBanner() {
+    if (!authToken) {
+      setUsageBanner(null);
+      return;
+    }
+    try {
+      const response = await fetch(`/api/chat/usage?modelId=${encodeURIComponent(selectedModelId)}`, {
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      if (!response.ok) return;
+      const payload = await safeJson<ModelUsageResponse>(response);
+      setUsageBanner(payload?.banner ?? null);
+    } catch {
+      // Optional banner only; ignore transient failures.
+    }
   }
 
   useEffect(() => {
@@ -129,15 +214,19 @@ export function ChatView({
   useEffect(() => {
     const latest = messages.at(-1);
     if (!latest?.parts) return;
-    for (const part of latest.parts as Part[]) {
+    (latest.parts as Part[]).forEach((part, index) => {
       if (!part.type.startsWith("tool-")) continue;
+      if (part.state !== "output-available" || !("output" in part) || part.output == null) continue;
+      const toolName = part.type.replace("tool-", "");
+      if (!isChartArtifactCandidate(toolName, part.output)) continue;
+      const toolCallId = typeof part.toolCallId === "string" ? part.toolCallId : `idx-${index}`;
       pushVizPayload({
-        id: `${latest.id}:${part.type}`,
-        toolName: part.type.replace("tool-", ""),
+        id: `${latest.id}:${toolName}:${toolCallId}`,
+        toolName,
         data: part,
-        title: `Tool: ${part.type.replace("tool-", "")}`,
+        title: `Chart: ${toolName}`,
       });
-    }
+    });
   }, [messages, pushVizPayload]);
 
   function submitTitleRename() {
@@ -216,8 +305,18 @@ export function ChatView({
       </div>
 
       <div className="sticky bottom-0 border-t border-(--color-border) bg-(--color-background) px-6 py-3 md:px-12">
+        {usageBanner ? (
+          <p className="mb-2 rounded-md border border-amber-500/35 bg-amber-500/10 px-2 py-1.5 text-xs text-amber-200">{usageBanner}</p>
+        ) : null}
         {submitError ? <p className="mb-2 text-xs text-(--color-muted-foreground)">{submitError}</p> : null}
-        <ChatInput onSubmit={(text) => void submitPrompt(text)} isStreaming={status === "streaming" || status === "submitted"} />
+        <ChatInput
+          onSubmit={(text) => void submitPrompt(text)}
+          isStreaming={status === "streaming" || status === "submitted"}
+          modelId={selectedModelId}
+          onModelChange={setSelectedModelId}
+          tools={tools}
+          toolsLoading={toolsLoading}
+        />
       </div>
     </section>
   );

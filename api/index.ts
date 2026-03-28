@@ -2,6 +2,7 @@ import { convertToModelMessages, jsonSchema, streamText } from "ai";
 import { google } from "@ai-sdk/google";
 import { createMCPClient } from "@ai-sdk/mcp";
 import { waitUntil } from "@vercel/functions";
+import { CHAT_SUPPORT_CONTACT, getChatModelConfig } from "./_lib/chat-models.js";
 import { onboardUser } from "./_lib/onboarding.js";
 import { ensureAdmin, ensureAdminOrBootstrap, getSupabaseAdmin, getUserFromRequest, json } from "./_lib/server.js";
 
@@ -73,6 +74,12 @@ type PersistedMessagePart = { type: string; [key: string]: unknown };
 type McpTransportType = "sse" | "http";
 type McpCandidate = { type: McpTransportType; url: string };
 type McpAttempt = { type: McpTransportType; url: string; error: string };
+type ToolCatalogItem = {
+  name: string;
+  description: string;
+  category: "suggested" | "data" | "analysis" | "system";
+  priority: number;
+};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -420,27 +427,132 @@ async function ensureProfileExists(user: { id: string; email?: string | null }) 
   if (error) throw new Error(`Failed to ensure profile exists: ${error.message}`);
 }
 
-async function handleChat(request: Request) {
-  const user = await getUserFromRequest(request);
-  if (!user) return json({ error: "Unauthorized" }, 401);
+function utcDateStamp() {
+  return new Date().toISOString().slice(0, 10);
+}
 
-  const body = (await request.json()) as {
-    messages?: Array<{ role?: string; parts?: unknown[] }>;
-    mcpToken?: string | null;
-    conversationId?: string | null;
-  };
-  const supabase = getSupabaseAdmin();
+function approachingThreshold(dailyLimit: number) {
+  return Math.max(2, Math.ceil(dailyLimit * 0.15));
+}
+
+async function reserveModelUsageSlot({
+  supabase,
+  userId,
+  modelId,
+  dailyLimit,
+}: {
+  supabase: ReturnType<typeof getSupabaseAdmin>;
+  userId: string;
+  modelId: string;
+  dailyLimit: number;
+}) {
+  const usageDate = utcDateStamp();
+  const { data: existing, error: existingError } = await supabase
+    .from("uk_chat_model_usage")
+    .select("id,request_count")
+    .eq("user_id", userId)
+    .eq("model_id", modelId)
+    .eq("usage_date", usageDate)
+    .maybeSingle();
+
+  if (existingError) return { ok: false as const, error: existingError.message, remaining: 0 };
+  if ((existing?.request_count ?? 0) >= dailyLimit) return { ok: false as const, error: null, remaining: 0 };
+
+  const nextCount = (existing?.request_count ?? 0) + 1;
+  if (existing) {
+    const { error: updateError } = await supabase
+      .from("uk_chat_model_usage")
+      .update({ request_count: nextCount, updated_at: new Date().toISOString() })
+      .eq("id", existing.id);
+    if (updateError) return { ok: false as const, error: updateError.message, remaining: 0 };
+    return { ok: true as const, error: null, remaining: Math.max(0, dailyLimit - nextCount) };
+  }
+
+  const { error: insertError } = await supabase.from("uk_chat_model_usage").insert({
+    user_id: userId,
+    model_id: modelId,
+    usage_date: usageDate,
+    request_count: 1,
+  });
+  if (insertError) return { ok: false as const, error: insertError.message, remaining: 0 };
+  return { ok: true as const, error: null, remaining: Math.max(0, dailyLimit - 1) };
+}
+
+async function getModelUsageStatus({
+  supabase,
+  userId,
+  modelId,
+  dailyLimit,
+}: {
+  supabase: ReturnType<typeof getSupabaseAdmin>;
+  userId: string;
+  modelId: string;
+  dailyLimit: number;
+}) {
+  const usageDate = utcDateStamp();
+  const { data, error } = await supabase
+    .from("uk_chat_model_usage")
+    .select("request_count")
+    .eq("user_id", userId)
+    .eq("model_id", modelId)
+    .eq("usage_date", usageDate)
+    .maybeSingle();
+  if (error) return { ok: false as const, error: error.message, used: 0, remaining: 0, approaching: false, reached: false };
+  const used = data?.request_count ?? 0;
+  const remaining = Math.max(0, dailyLimit - used);
+  const reached = remaining <= 0;
+  const approaching = !reached && remaining <= approachingThreshold(dailyLimit);
+  return { ok: true as const, error: null, used, remaining, approaching, reached };
+}
+
+function classifyTool(name: string, description: string): { category: ToolCatalogItem["category"]; priority: number } {
+  const text = `${name} ${description}`.toLowerCase();
+  if (/search|query|lookup|find|dataset|postcode|geocode|boundary|stats|fetch|get/.test(text)) {
+    return { category: "suggested", priority: 120 };
+  }
+  if (/chart|summar|compare|aggregate|trend|rank|analysis|insight/.test(text)) {
+    return { category: "analysis", priority: 95 };
+  }
+  if (/token|admin|email|onboard|invite|delete|rotate|auth/.test(text)) {
+    return { category: "system", priority: 40 };
+  }
+  return { category: "data", priority: 70 };
+}
+
+function buildToolCatalog(tools: Record<string, unknown>) {
+  const catalog: ToolCatalogItem[] = Object.entries(tools).map(([name, definition]) => {
+    const description =
+      (isRecord(definition) && typeof definition.description === "string" ? definition.description : "Model tool") ?? "Model tool";
+    const shortDescription = description.length > 120 ? `${description.slice(0, 117)}...` : description;
+    const { category, priority } = classifyTool(name, shortDescription);
+    const startsWithVerb = /^(get|list|search|query|find|fetch)/i.test(name) ? 10 : 0;
+    const conciseBonus = Math.max(0, 12 - Math.min(12, name.length));
+    return {
+      name,
+      description: shortDescription,
+      category,
+      priority: priority + startsWithVerb + conciseBonus,
+    };
+  });
+
+  catalog.sort((a, b) => b.priority - a.priority || a.name.localeCompare(b.name));
+  return catalog;
+}
+
+async function loadAuthorizedMcpTools({
+  supabase,
+  user,
+  mcpToken,
+  conversationId,
+}: {
+  supabase: ReturnType<typeof getSupabaseAdmin>;
+  user: { id: string; email?: string | null };
+  mcpToken?: string | null;
+  conversationId?: string | null;
+}): Promise<{ tools: Record<string, unknown> } | { response: Response }> {
   const { data: profile } = await supabase.from("uk_chat_profiles").select("mcp_token").eq("id", user.id).single();
-  let token = body.mcpToken ?? profile?.mcp_token;
-  if (!token) return json({ error: "Missing MCP token" }, 400);
-  if (!body.conversationId) return json({ error: "Missing conversationId" }, 400);
-  const { data: conversation } = await supabase
-    .from("uk_chat_conversations")
-    .select("id")
-    .eq("id", body.conversationId)
-    .eq("user_id", user.id)
-    .single();
-  if (!conversation) return json({ error: "Conversation not found" }, 404);
+  let token = mcpToken ?? profile?.mcp_token;
+  if (!token) return { response: json({ error: "Missing MCP token" }, 400) };
 
   const configuredMcpUrl = env("MCP_SERVER_URL") ?? "https://mcp.explorethekingdom.co.uk/sse";
   let mcpLoad = await loadMcpToolsWithFallback(configuredMcpUrl, token);
@@ -454,7 +566,6 @@ async function handleChat(request: Request) {
         .maybeSingle();
       const pendingToken = gate?.pending_mcp_token as string | null | undefined;
 
-      // Recover automatically when the pending token differs from the stale profile/body token.
       if (pendingToken && pendingToken !== token) {
         const retryLoad = await loadMcpToolsWithFallback(configuredMcpUrl, pendingToken);
         if (retryLoad.tools) {
@@ -463,12 +574,12 @@ async function handleChat(request: Request) {
           await supabase.from("uk_chat_profiles").update({ mcp_token: pendingToken }).eq("id", user.id);
           console.warn("[api/chat] Recovered from unauthorized MCP token using pending token", {
             userId: user.id,
-            conversationId: body.conversationId,
+            conversationId: conversationId ?? null,
           });
         } else {
           console.error("[api/chat] Pending MCP token retry failed", {
             userId: user.id,
-            conversationId: body.conversationId,
+            conversationId: conversationId ?? null,
             configuredMcpUrl,
             attempts: retryLoad.attempts,
           });
@@ -483,29 +594,120 @@ async function handleChat(request: Request) {
       await supabase.from("uk_chat_profiles").update({ mcp_token: null }).eq("id", user.id);
       console.error("[api/chat] MCP token unauthorized after recovery attempts", {
         userId: user.id,
-        conversationId: body.conversationId,
+        conversationId: conversationId ?? null,
         configuredMcpUrl,
         attempts: mcpLoad.attempts,
       });
-      return json(
-        {
-          error:
-            "Your MCP token is no longer valid. Please ask an admin to rotate your token, then refresh and try again.",
-          code: "MCP_TOKEN_UNAUTHORIZED",
-        },
-        401,
-      );
+      return {
+        response: json(
+          {
+            error: "Your MCP token is no longer valid. Please ask an admin to rotate your token, then refresh and try again.",
+            code: "MCP_TOKEN_UNAUTHORIZED",
+          },
+          401,
+        ),
+      };
     }
-
     console.error("[api/chat] MCP tool connection failed", {
       userId: user.id,
-      conversationId: body.conversationId,
+      conversationId: conversationId ?? null,
       configuredMcpUrl,
       attempts: mcpLoad.attempts,
     });
-    return json({ error: `Unable to connect to MCP tools (${details || "no attempts"}).` }, 502);
+    return { response: json({ error: `Unable to connect to MCP tools (${details || "no attempts"}).` }, 502) };
   }
-  const tools = mcpLoad.tools;
+
+  return { tools: mcpLoad.tools as Record<string, unknown> };
+}
+
+async function handleChatTools(request: Request) {
+  const user = await getUserFromRequest(request);
+  if (!user) return json({ error: "Unauthorized" }, 401);
+  const body = (await request.json()) as { mcpToken?: string | null };
+  const supabase = getSupabaseAdmin();
+  const toolLoad = await loadAuthorizedMcpTools({ supabase, user, mcpToken: body.mcpToken });
+  if ("response" in toolLoad) return toolLoad.response;
+  const catalog = buildToolCatalog(toolLoad.tools);
+  return json({
+    totalCount: catalog.length,
+    tools: catalog.slice(0, 80).map(({ name, description, category }) => ({ name, description, category })),
+  });
+}
+
+async function handleChatUsage(request: Request) {
+  const user = await getUserFromRequest(request);
+  if (!user) return json({ error: "Unauthorized" }, 401);
+  const modelId = new URL(request.url).searchParams.get("modelId");
+  const selectedModel = getChatModelConfig(modelId);
+  const supabase = getSupabaseAdmin();
+  const usage = await getModelUsageStatus({
+    supabase,
+    userId: user.id,
+    modelId: selectedModel.id,
+    dailyLimit: selectedModel.dailyLimit,
+  });
+  if (!usage.ok) return json({ error: usage.error }, 500);
+  const banner = usage.reached
+    ? `Daily ${selectedModel.label} limit reached - ${CHAT_SUPPORT_CONTACT}.`
+    : usage.approaching
+      ? `${selectedModel.label} limit nearly reached (${usage.remaining} remaining today).`
+      : null;
+  return json({
+    modelId: selectedModel.id,
+    label: selectedModel.label,
+    dailyLimit: selectedModel.dailyLimit,
+    used: usage.used,
+    remaining: usage.remaining,
+    approaching: usage.approaching,
+    reached: usage.reached,
+    banner,
+  });
+}
+
+async function handleChat(request: Request) {
+  const user = await getUserFromRequest(request);
+  if (!user) return json({ error: "Unauthorized" }, 401);
+
+  const body = (await request.json()) as {
+    messages?: Array<{ role?: string; parts?: unknown[] }>;
+    mcpToken?: string | null;
+    conversationId?: string | null;
+    modelId?: string | null;
+  };
+  const supabase = getSupabaseAdmin();
+  if (!body.conversationId) return json({ error: "Missing conversationId" }, 400);
+  const { data: conversation } = await supabase
+    .from("uk_chat_conversations")
+    .select("id")
+    .eq("id", body.conversationId)
+    .eq("user_id", user.id)
+    .single();
+  if (!conversation) return json({ error: "Conversation not found" }, 404);
+  const selectedModel = getChatModelConfig(body.modelId);
+  const usageReservation = await reserveModelUsageSlot({
+    supabase,
+    userId: user.id,
+    modelId: selectedModel.id,
+    dailyLimit: selectedModel.dailyLimit,
+  });
+  if (!usageReservation.ok) {
+    if (usageReservation.error) return json({ error: usageReservation.error }, 500);
+    return json(
+      {
+        error: `You've hit today's conservative limit for ${selectedModel.label}. Please try again tomorrow - ${CHAT_SUPPORT_CONTACT}.`,
+        code: "MODEL_USAGE_LIMIT_REACHED",
+      },
+      429,
+    );
+  }
+  const toolLoad = await loadAuthorizedMcpTools({
+    supabase,
+    user,
+    mcpToken: body.mcpToken,
+    conversationId: body.conversationId,
+  });
+  if ("response" in toolLoad) return toolLoad.response;
+  const tools = toolLoad.tools;
 
   const { normalizedTools, normalizedToolNames } = normalizeGeminiTools(tools);
   if (normalizedToolNames.length > 0) {
@@ -517,10 +719,12 @@ async function handleChat(request: Request) {
 
   const latestUserMessage = [...(body.messages ?? [])].reverse().find((message) => message.role === "user");
   if (latestUserMessage) {
+    const userParts = Array.isArray(latestUserMessage.parts) ? [...latestUserMessage.parts] : [];
+    userParts.push({ type: "meta-model", modelId: selectedModel.id });
     const { error: insertUserError } = await supabase.from("uk_chat_messages").insert({
       conversation_id: body.conversationId,
       role: "user",
-      parts: latestUserMessage.parts ?? [],
+      parts: userParts,
     });
     if (insertUserError) {
       console.error("[api/chat] Failed to persist user message", {
@@ -534,7 +738,7 @@ async function handleChat(request: Request) {
   }
 
   const result = streamText({
-    model: google("gemini-3-flash-preview"),
+    model: google(selectedModel.providerModel),
     messages: await convertToModelMessages((body.messages ?? []) as Parameters<typeof convertToModelMessages>[0]),
     tools: normalizedTools,
     system: `You are a UK data analyst. Answer with precision and cite the relevant data source/tool.
@@ -1022,6 +1226,14 @@ async function routeRequest(request: Request) {
   }
 
   if (parts[0] === "chat") {
+    if (parts.length === 2 && parts[1] === "tools") {
+      if (request.method !== "POST") return methodNotAllowed();
+      return handleChatTools(request);
+    }
+    if (parts.length === 2 && parts[1] === "usage") {
+      if (request.method !== "GET") return methodNotAllowed();
+      return handleChatUsage(request);
+    }
     if (request.method !== "POST") return methodNotAllowed();
     return handleChat(request);
   }

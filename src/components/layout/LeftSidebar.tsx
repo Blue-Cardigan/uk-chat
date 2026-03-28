@@ -87,6 +87,7 @@ export function LeftSidebar({
         <div
           className={cn(
             "group relative flex items-center gap-1 rounded-md px-2 py-2 sm:py-1 transition-colors duration-200 ease-out",
+            isMenuOpen ? "z-30" : "z-0",
             isActive
               ? "bg-[color-mix(in_oklch,var(--color-primary)_14%,var(--color-sidebar)_86%)]"
               : isMenuOpen
@@ -164,7 +165,7 @@ export function LeftSidebar({
           </Button>
 
           {isMenuOpen ? (
-            <div ref={menuRef} className="absolute right-0 top-10 z-10 min-w-40 rounded-md border border-(--color-border) bg-(--color-card) p-1 shadow-lg">
+            <div ref={menuRef} className="absolute right-0 top-10 z-50 min-w-40 rounded-md border border-(--color-border) bg-(--color-card) p-1 shadow-xl">
               <button
                 type="button"
                 className="w-full rounded px-2 py-1 text-left text-xs font-medium hover:bg-[color-mix(in_oklch,var(--color-foreground)_6%,transparent)]"
