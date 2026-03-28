@@ -18,6 +18,7 @@
     "@ai-sdk/mcp": "^1.0.30",
     "@ai-sdk/react": "^3.0.143",
     "@supabase/supabase-js": "^2.100.1",
+    "@vercel/functions": "^3.4.3",
     "ai": "^6.0.141",
     "clsx": "^2.1.1",
     "d3-geo": "^3.1.1",

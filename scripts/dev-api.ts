@@ -110,9 +110,23 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse) {
     webResponse.headers.forEach((value, key) => {
       res.setHeader(key, value);
     });
+    if (!webResponse.body) {
+      res.end();
+      return;
+    }
 
-    const responseBody = Buffer.from(await webResponse.arrayBuffer());
-    res.end(responseBody);
+    const reader = webResponse.body.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value || value.length === 0) continue;
+      if (!res.write(value)) {
+        await new Promise<void>((resolveDrain) => {
+          res.once("drain", () => resolveDrain());
+        });
+      }
+    }
+    res.end();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error("[dev-api] request failed", error);

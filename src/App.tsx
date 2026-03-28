@@ -110,25 +110,36 @@ function ProtectedApp() {
     if (!response.ok) return null;
     const created = await safeJson<ChatConversation>(response);
     if (!created) return null;
-    setConversations([created, ...conversations]);
+    const currentConversations = useAppStore.getState().conversations;
+    setConversations([created, ...currentConversations]);
     setActiveConversationId(created.id);
     return created.id;
   }
 
   async function deleteConversation(id: string) {
-    await fetch(`/api/conversations/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${session?.access_token ?? ""}` } });
-    const next = conversations.filter((conversation) => conversation.id !== id);
+    const response = await fetch(`/api/conversations/${id}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${session?.access_token ?? ""}` },
+    });
+    if (!response.ok) return;
+
+    const next = useAppStore.getState().conversations.filter((conversation) => conversation.id !== id);
     setConversations(next);
-    if (activeConversationId === id) setActiveConversationId(next[0]?.id ?? null);
+    if (useAppStore.getState().activeConversationId === id) {
+      setActiveConversationId(next[0]?.id ?? null);
+    }
   }
 
   async function renameConversation(id: string, title: string) {
-    await fetch(`/api/conversations/${id}`, {
+    const response = await fetch(`/api/conversations/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token ?? ""}` },
       body: JSON.stringify({ title }),
     });
-    setConversations(conversations.map((conversation) => (conversation.id === id ? { ...conversation, title } : conversation)));
+    if (!response.ok) return;
+
+    const currentConversations = useAppStore.getState().conversations;
+    setConversations(currentConversations.map((conversation) => (conversation.id === id ? { ...conversation, title } : conversation)));
   }
 
   async function exportChats() {

@@ -1,6 +1,7 @@
 import { convertToModelMessages, streamText } from "ai";
 import { google } from "@ai-sdk/google";
 import { createMCPClient } from "@ai-sdk/mcp";
+import { waitUntil } from "@vercel/functions";
 import { onboardUser } from "./_lib/onboarding.js";
 import { ensureAdmin, ensureAdminOrBootstrap, getSupabaseAdmin, getUserFromRequest, json } from "./_lib/server.js";
 
@@ -17,6 +18,120 @@ function getConversationId(request: Request) {
 function env(key: string): string | undefined {
   const maybeProcess = globalThis as { process?: { env?: Record<string, string | undefined> } };
   return maybeProcess.process?.env?.[key];
+}
+
+type PersistedMessagePart = { type: string; [key: string]: unknown };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function sanitizeToolName(name: unknown): string | null {
+  if (typeof name !== "string") return null;
+  const normalized = name.trim();
+  if (!normalized) return null;
+  return normalized.replace(/[^a-zA-Z0-9_-]/g, "-");
+}
+
+function extractPartsFromResponseMessage(message: unknown): PersistedMessagePart[] {
+  if (!isRecord(message)) return [];
+
+  const directParts = message.parts;
+  if (Array.isArray(directParts)) {
+    return directParts.filter((part): part is PersistedMessagePart => isRecord(part) && typeof part.type === "string");
+  }
+
+  const content = message.content;
+  if (!Array.isArray(content)) return [];
+
+  const parts: PersistedMessagePart[] = [];
+  for (const segment of content) {
+    if (!isRecord(segment) || typeof segment.type !== "string") continue;
+
+    if (segment.type === "text" && typeof segment.text === "string") {
+      parts.push({ type: "text", text: segment.text });
+      continue;
+    }
+
+    if (segment.type === "reasoning" && typeof segment.text === "string") {
+      parts.push({ type: "reasoning", text: segment.text });
+      continue;
+    }
+
+    if (segment.type === "tool-call") {
+      const toolName = sanitizeToolName(segment.toolName);
+      if (!toolName) continue;
+      parts.push({
+        type: `tool-${toolName}`,
+        state: "input-available",
+        input: segment.input ?? null,
+        toolCallId: segment.toolCallId ?? null,
+      });
+      continue;
+    }
+
+    if (segment.type === "tool-result") {
+      const toolName = sanitizeToolName(segment.toolName);
+      if (!toolName) continue;
+      parts.push({
+        type: `tool-${toolName}`,
+        state: "output-available",
+        output: segment.output ?? null,
+        toolCallId: segment.toolCallId ?? null,
+      });
+      continue;
+    }
+
+    parts.push(segment as PersistedMessagePart);
+  }
+  return parts;
+}
+
+function buildAssistantPartsFromFinishEvent(event: unknown): PersistedMessagePart[] {
+  if (!isRecord(event)) return [{ type: "text", text: "" }];
+
+  const response = event.response;
+  if (isRecord(response) && Array.isArray(response.messages)) {
+    const assistantResponseMessage = [...response.messages]
+      .reverse()
+      .find((message) => isRecord(message) && message.role === "assistant");
+    const responseParts = extractPartsFromResponseMessage(assistantResponseMessage);
+    if (responseParts.length > 0) return responseParts;
+  }
+
+  const text = typeof event.text === "string" ? event.text : "";
+  const fallbackParts: PersistedMessagePart[] = [{ type: "text", text }];
+  if (typeof event.reasoning === "string" && event.reasoning.trim()) {
+    fallbackParts.push({ type: "reasoning", text: event.reasoning });
+  }
+
+  const toolCalls = Array.isArray(event.toolCalls) ? event.toolCalls : [];
+  for (const call of toolCalls) {
+    if (!isRecord(call)) continue;
+    const toolName = sanitizeToolName(call.toolName);
+    if (!toolName) continue;
+    fallbackParts.push({
+      type: `tool-${toolName}`,
+      state: "input-available",
+      input: call.input ?? null,
+      toolCallId: call.toolCallId ?? null,
+    });
+  }
+
+  const toolResults = Array.isArray(event.toolResults) ? event.toolResults : [];
+  for (const result of toolResults) {
+    if (!isRecord(result)) continue;
+    const toolName = sanitizeToolName(result.toolName);
+    if (!toolName) continue;
+    fallbackParts.push({
+      type: `tool-${toolName}`,
+      state: "output-available",
+      output: result.output ?? null,
+      toolCallId: result.toolCallId ?? null,
+    });
+  }
+
+  return fallbackParts;
 }
 
 async function ensureProfileExists(user: { id: string; email?: string | null }) {
@@ -90,11 +205,20 @@ async function handleChat(request: Request) {
 
   const latestUserMessage = [...(body.messages ?? [])].reverse().find((message) => message.role === "user");
   if (latestUserMessage) {
-    await supabase.from("uk_chat_messages").insert({
+    const { error: insertUserError } = await supabase.from("uk_chat_messages").insert({
       conversation_id: body.conversationId,
       role: "user",
       parts: latestUserMessage.parts ?? [],
     });
+    if (insertUserError) {
+      console.error("[api/chat] Failed to persist user message", {
+        conversationId: body.conversationId,
+        userId: user.id,
+        error: insertUserError.message,
+        code: insertUserError.code ?? null,
+      });
+      return json({ error: "Failed to save your message. Please try again." }, 500);
+    }
   }
 
   const result = streamText({
@@ -104,16 +228,44 @@ async function handleChat(request: Request) {
     system: `You are a UK data analyst. Answer with precision and cite the relevant data source/tool.
 Use geography codes and UK postcodes carefully. Prefer tool calls when factual data is needed.`,
     onFinish: async (event) => {
-      await supabase.from("uk_chat_messages").insert({
-        conversation_id: body.conversationId!,
-        role: "assistant",
-        parts: [{ type: "text", text: event.text }],
-      });
-      await supabase
-        .from("uk_chat_conversations")
-        .update({ updated_at: new Date().toISOString() })
-        .eq("id", body.conversationId!)
-        .eq("user_id", user.id);
+      const persistPromise = (async () => {
+        const assistantParts = buildAssistantPartsFromFinishEvent(event);
+        const { error: assistantInsertError } = await supabase.from("uk_chat_messages").insert({
+          conversation_id: body.conversationId!,
+          role: "assistant",
+          parts: assistantParts,
+        });
+        if (assistantInsertError) {
+          console.error("[api/chat] Failed to persist assistant message", {
+            conversationId: body.conversationId,
+            userId: user.id,
+            error: assistantInsertError.message,
+            code: assistantInsertError.code ?? null,
+          });
+          return;
+        }
+
+        const { error: updateConversationError } = await supabase
+          .from("uk_chat_conversations")
+          .update({ updated_at: new Date().toISOString() })
+          .eq("id", body.conversationId!)
+          .eq("user_id", user.id);
+        if (updateConversationError) {
+          console.error("[api/chat] Failed to update conversation timestamp", {
+            conversationId: body.conversationId,
+            userId: user.id,
+            error: updateConversationError.message,
+            code: updateConversationError.code ?? null,
+          });
+        }
+      })();
+
+      try {
+        waitUntil(persistPromise);
+      } catch {
+        // Local dev can run outside a waitUntil-capable runtime.
+      }
+      await persistPromise;
     },
   });
 
