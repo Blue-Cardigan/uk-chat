@@ -1,0 +1,49 @@
+{
+  "name": "uk-chat",
+  "private": true,
+  "version": "0.1.0",
+  "description": "UK Data Chat Application",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -b",
+    "user:add": "node scripts/add-user.mjs"
+  },
+  "type": "module",
+  "dependencies": {
+    "@ai-sdk/google": "^3.0.53",
+    "@ai-sdk/mcp": "^1.0.30",
+    "@ai-sdk/react": "^3.0.143",
+    "@supabase/supabase-js": "^2.100.1",
+    "ai": "^6.0.141",
+    "clsx": "^2.1.1",
+    "d3-geo": "^3.1.1",
+    "d3-selection": "^3.0.0",
+    "d3-zoom": "^3.0.0",
+    "lucide-react": "^1.7.0",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "react-router-dom": "^7.13.2",
+    "recharts": "^3.8.1",
+    "tailwind-merge": "^3.5.0",
+    "topojson-client": "^3.1.0",
+    "zustand": "^5.0.12"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.2.2",
+    "@types/d3-geo": "^3.1.0",
+    "@types/d3-selection": "^3.0.11",
+    "@types/d3-zoom": "^3.0.8",
+    "@types/geojson": "^7946.0.16",
+    "@types/node": "^25.5.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@types/topojson-client": "^3.1.5",
+    "@vitejs/plugin-react": "^6.0.1",
+    "postcss": "^8.5.8",
+    "tailwindcss": "^4.2.2",
+    "typescript": "^6.0.2",
+    "vite": "^8.0.3"
+  }
+}

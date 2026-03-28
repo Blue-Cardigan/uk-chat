@@ -1,0 +1,64 @@
+@import url("https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Instrument+Serif:ital@0;1&display=swap");
+@import "tailwindcss";
+
+:root {
+  --font-body: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Instrument Serif", serif;
+
+  --color-background: oklch(0.985 0.006 90);
+  --color-foreground: oklch(0.22 0.02 85);
+  --color-card: oklch(0.97 0.01 92);
+  --color-sidebar: oklch(0.955 0.01 92);
+  --color-border: oklch(0.87 0.02 92);
+  --color-muted-foreground: oklch(0.5 0.03 90);
+  --color-primary: oklch(0.55 0.12 195);
+  --color-primary-foreground: oklch(0.99 0.01 180);
+  --color-ring: oklch(0.62 0.1 200);
+  --color-water: oklch(0.93 0.03 220);
+  --color-water-line: oklch(0.66 0.09 220);
+}
+
+:root[data-theme="dark"] {
+  --color-background: oklch(0.2 0.015 92);
+  --color-foreground: oklch(0.94 0.01 92);
+  --color-card: oklch(0.26 0.02 92);
+  --color-sidebar: oklch(0.24 0.02 92);
+  --color-border: oklch(0.36 0.02 92);
+  --color-muted-foreground: oklch(0.72 0.02 92);
+  --color-primary: oklch(0.62 0.1 195);
+  --color-primary-foreground: oklch(0.14 0.01 200);
+  --color-ring: oklch(0.66 0.09 205);
+  --color-water: oklch(0.24 0.03 220);
+  --color-water-line: oklch(0.6 0.08 220);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  width: 100%;
+  min-height: 100%;
+}
+
+body {
+  font-family: var(--font-body);
+  background: var(--color-background);
+  color: var(--color-foreground);
+}
+
+.font-display {
+  font-family: var(--font-display);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
