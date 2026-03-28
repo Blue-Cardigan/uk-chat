@@ -3,6 +3,9 @@ export type ThemePreference = "system" | "light" | "dark";
 export type ChatConversation = {
   id: string;
   title: string;
+  starred: boolean;
+  is_public: boolean;
+  share_token: string | null;
   created_at: string;
   updated_at: string;
 };

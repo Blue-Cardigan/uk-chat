@@ -4,6 +4,7 @@ import { AppShell } from "@/components/layout/AppShell";
 import { LoginPage } from "@/components/auth/LoginPage";
 import { AuthCallbackPage } from "@/components/auth/AuthCallbackPage";
 import { AdminPanel } from "@/components/auth/AdminPanel";
+import { SharedChatView } from "@/components/chat/SharedChatView";
 import { SettingsPanel } from "@/components/settings/SettingsPanel";
 import { Card } from "@/components/ui/primitives";
 import { useAuth } from "@/lib/auth";
@@ -44,7 +45,13 @@ function ProtectedApp() {
     });
     if (!response.ok) throw new Error(`Failed to load conversations (${response.status})`);
 
-    const data = (await safeJson<ChatConversation[]>(response)) ?? [];
+    const raw = (await safeJson<ChatConversation[]>(response)) ?? [];
+    const data = raw.map((conversation) => ({
+      ...conversation,
+      starred: conversation.starred ?? false,
+      is_public: conversation.is_public ?? false,
+      share_token: conversation.share_token ?? null,
+    }));
     setConversations(data);
 
     const current = useAppStore.getState().activeConversationId;
@@ -110,10 +117,16 @@ function ProtectedApp() {
     if (!response.ok) return null;
     const created = await safeJson<ChatConversation>(response);
     if (!created) return null;
+    const normalizedCreated = {
+      ...created,
+      starred: created.starred ?? false,
+      is_public: created.is_public ?? false,
+      share_token: created.share_token ?? null,
+    };
     const currentConversations = useAppStore.getState().conversations;
-    setConversations([created, ...currentConversations]);
-    setActiveConversationId(created.id);
-    return created.id;
+    setConversations([normalizedCreated, ...currentConversations]);
+    setActiveConversationId(normalizedCreated.id);
+    return normalizedCreated.id;
   }
 
   async function deleteConversation(id: string) {
@@ -140,6 +153,49 @@ function ProtectedApp() {
 
     const currentConversations = useAppStore.getState().conversations;
     setConversations(currentConversations.map((conversation) => (conversation.id === id ? { ...conversation, title } : conversation)));
+  }
+
+  async function starConversation(id: string, starred: boolean) {
+    const response = await fetch(`/api/conversations/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token ?? ""}` },
+      body: JSON.stringify({ starred }),
+    });
+    if (!response.ok) return;
+
+    const currentConversations = useAppStore.getState().conversations;
+    const next = currentConversations.map((conversation) => (conversation.id === id ? { ...conversation, starred } : conversation));
+    next.sort((a, b) => {
+      if (a.starred !== b.starred) return a.starred ? -1 : 1;
+      return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+    });
+    setConversations(next);
+  }
+
+  async function shareConversation(id: string) {
+    const response = await fetch(`/api/conversations/${id}/share`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${session?.access_token ?? ""}` },
+    });
+    if (!response.ok) return null;
+    const payload = await safeJson<{ conversation?: ChatConversation; shareUrl?: string }>(response);
+    const sharedConversation = payload?.conversation;
+    const shareUrl = payload?.shareUrl ?? null;
+    if (!sharedConversation) return shareUrl;
+
+    const currentConversations = useAppStore.getState().conversations;
+    setConversations(
+      currentConversations.map((conversation) =>
+        conversation.id === id
+          ? {
+              ...conversation,
+              is_public: sharedConversation.is_public ?? true,
+              share_token: sharedConversation.share_token ?? conversation.share_token ?? null,
+            }
+          : conversation,
+      ),
+    );
+    return shareUrl;
   }
 
   async function exportChats() {
@@ -224,6 +280,8 @@ function ProtectedApp() {
       onSelectConversation={setActiveConversationId}
       onDeleteConversation={deleteConversation}
       onRenameConversation={renameConversation}
+      onStarConversation={starConversation}
+      onShareConversation={shareConversation}
       onConversationMissing={handleConversationMissing}
       settingsContent={settingsContent}
     />
@@ -242,6 +300,7 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route path="/auth/callback" element={<AuthCallbackPage />} />
+      <Route path="/shared/:token" element={<SharedChatView />} />
       <Route
         path="/"
         element={

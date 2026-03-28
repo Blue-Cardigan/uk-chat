@@ -2,11 +2,14 @@ import { useEffect, useRef, useState } from "react";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import type { UIMessage } from "ai";
+import { Star } from "lucide-react";
 import { Conversation } from "@/components/ai-elements/conversation";
 import { Message } from "@/components/ai-elements/message";
 import { ChatInput } from "@/components/chat/ChatInput";
 import { SuggestedMessages } from "@/components/chat/SuggestedMessages";
 import { useAppStore } from "@/lib/store";
+import { Button, Input } from "@/components/ui/primitives";
+import type { ChatConversation } from "@/lib/types";
 
 type Part = { type: string; [key: string]: unknown };
 type PersistedMessage = {
@@ -27,23 +30,36 @@ async function safeJson<T>(response: Response): Promise<T | null> {
 }
 
 export function ChatView({
+  conversation,
   conversationId,
   mcpToken,
   authToken,
   onEnsureConversation,
+  onRenameConversation,
+  onToggleStarConversation,
   onConversationMissing,
 }: {
+  conversation: ChatConversation | null;
   conversationId: string | null;
   mcpToken: string | null;
   authToken: string | null;
   onEnsureConversation: () => Promise<string | null>;
+  onRenameConversation: (id: string, title: string) => void;
+  onToggleStarConversation: (id: string, starred: boolean) => void;
   onConversationMissing: (id: string) => Promise<void> | void;
 }) {
   const pushVizPayload = useAppStore((state) => state.pushVizPayload);
   const clearVizPayloads = useAppStore((state) => state.clearVizPayloads);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [draftTitle, setDraftTitle] = useState("");
   const onMissingRef = useRef(onConversationMissing);
   onMissingRef.current = onConversationMissing;
+
+  useEffect(() => {
+    setDraftTitle(conversation?.title ?? "");
+    setEditingTitle(false);
+  }, [conversation?.id, conversation?.title]);
 
   const { messages, sendMessage, status, setMessages } = useChat({
     transport: new DefaultChatTransport({
@@ -127,8 +143,73 @@ export function ChatView({
     }
   }, [messages, pushVizPayload]);
 
+  function submitTitleRename() {
+    if (!conversation) return;
+    const trimmed = draftTitle.trim();
+    if (!trimmed || trimmed === conversation.title.trim()) {
+      setEditingTitle(false);
+      setDraftTitle(conversation.title);
+      return;
+    }
+    onRenameConversation(conversation.id, trimmed);
+    setEditingTitle(false);
+  }
+
   return (
     <section className="flex h-full flex-col">
+      <div className="sticky top-0 z-20 border-b border-(--color-border) bg-(--color-background)/95 px-4 py-3 backdrop-blur-sm">
+        <div className="flex items-center justify-between gap-3">
+          {editingTitle && conversation ? (
+            <form
+              className="min-w-0 flex-1"
+              onSubmit={(event) => {
+                event.preventDefault();
+                submitTitleRename();
+              }}
+            >
+              <Input
+                value={draftTitle}
+                className="h-8 text-sm"
+                onChange={(event) => setDraftTitle(event.target.value)}
+                onBlur={submitTitleRename}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    setEditingTitle(false);
+                    setDraftTitle(conversation.title);
+                  }
+                }}
+                autoFocus
+              />
+            </form>
+          ) : (
+            <button
+              type="button"
+              className="min-w-0 truncate text-left text-sm font-medium hover:opacity-80"
+              onClick={() => {
+                if (!conversation) return;
+                setDraftTitle(conversation.title);
+                setEditingTitle(true);
+              }}
+              disabled={!conversation}
+              aria-label={conversation ? "Rename conversation" : "Conversation title"}
+            >
+              {conversation?.title ?? "New conversation"}
+            </button>
+          )}
+          {conversation ? (
+            <Button
+              variant="ghost"
+              aria-label={conversation.starred ? "Unstar conversation" : "Star conversation"}
+              className={conversation.starred ? "text-amber-400" : ""}
+              onClick={() => onToggleStarConversation(conversation.id, !conversation.starred)}
+            >
+              <Star className="h-4 w-4" fill={conversation.starred ? "currentColor" : "none"} />
+            </Button>
+          ) : null}
+        </div>
+      </div>
+
       <div className="flex-1 overflow-y-auto px-4 py-6">
         {messages.length === 0 ? (
           <div className="mx-auto max-w-2xl space-y-4 pt-[20vh]">

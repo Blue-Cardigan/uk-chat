@@ -26,6 +26,12 @@ function getConversationId(request: Request) {
   return parts[1] ?? "";
 }
 
+function getSharedToken(request: Request) {
+  const parts = routeParts(request);
+  if (parts[0] !== "shared") return "";
+  return parts[1] ?? "";
+}
+
 function env(key: string): string | undefined {
   const maybeProcess = globalThis as { process?: { env?: Record<string, string | undefined> } };
   return maybeProcess.process?.env?.[key];
@@ -179,6 +185,10 @@ function sanitizeToolName(name: unknown): string | null {
   const normalized = name.trim();
   if (!normalized) return null;
   return normalized.replace(/[^a-zA-Z0-9_-]/g, "-");
+}
+
+function createShareToken() {
+  return `share_${crypto.randomUUID().replace(/-/g, "")}`;
 }
 
 function extractPartsFromResponseMessage(message: unknown): PersistedMessagePart[] {
@@ -442,8 +452,9 @@ async function handleConversationsIndex(request: Request) {
   if (request.method === "GET") {
     const { data, error } = await supabase
       .from("uk_chat_conversations")
-      .select("id,title,created_at,updated_at")
+      .select("id,title,starred,is_public,share_token,created_at,updated_at")
       .eq("user_id", user.id)
+      .order("starred", { ascending: false })
       .order("updated_at", { ascending: false });
     if (error) return json({ error: error.message }, 400);
     return json(data ?? []);
@@ -453,7 +464,7 @@ async function handleConversationsIndex(request: Request) {
     const { title } = (await request.json()) as { title?: string };
     const payload = { user_id: user.id, title: title?.trim() || "New chat" };
     const createConversation = () =>
-      supabase.from("uk_chat_conversations").insert(payload).select("id,title,created_at,updated_at").single();
+      supabase.from("uk_chat_conversations").insert(payload).select("id,title,starred,is_public,share_token,created_at,updated_at").single();
 
     let { data, error } = await createConversation();
 
@@ -488,13 +499,18 @@ async function handleConversationById(request: Request) {
   const supabase = getSupabaseAdmin();
 
   if (request.method === "PATCH") {
-    const { title } = (await request.json()) as { title?: string };
+    const { title, starred } = (await request.json()) as { title?: string; starred?: boolean };
+    const updates: { title?: string; starred?: boolean; updated_at: string } = {
+      updated_at: new Date().toISOString(),
+    };
+    if (typeof title === "string") updates.title = title.trim() || "Untitled";
+    if (typeof starred === "boolean") updates.starred = starred;
     const { data, error } = await supabase
       .from("uk_chat_conversations")
-      .update({ title: title?.trim() || "Untitled", updated_at: new Date().toISOString() })
+      .update(updates)
       .eq("id", id)
       .eq("user_id", user.id)
-      .select("id,title,created_at,updated_at")
+      .select("id,title,starred,is_public,share_token,created_at,updated_at")
       .single();
     if (error) return json({ error: error.message }, 400);
     return json(data);
@@ -503,7 +519,7 @@ async function handleConversationById(request: Request) {
   if (request.method === "GET") {
     const { data: conversation, error: conversationError } = await supabase
       .from("uk_chat_conversations")
-      .select("id,title,created_at,updated_at")
+      .select("id,title,starred,is_public,share_token,created_at,updated_at")
       .eq("id", id)
       .eq("user_id", user.id)
       .single();
@@ -535,6 +551,98 @@ async function handleConversationById(request: Request) {
   }
 
   return json({ error: "Method not allowed" }, 405);
+}
+
+async function handleConversationShare(request: Request) {
+  const user = await getUserFromRequest(request);
+  if (!user) return json({ error: "Unauthorized" }, 401);
+  const id = getConversationId(request);
+  const supabase = getSupabaseAdmin();
+
+  const { data: conversation, error: conversationError } = await supabase
+    .from("uk_chat_conversations")
+    .select("id,title,is_public,share_token")
+    .eq("id", id)
+    .eq("user_id", user.id)
+    .single();
+  if (conversationError || !conversation) {
+    return json({ error: "Conversation not found" }, 404);
+  }
+
+  const shareToken = conversation.share_token ?? createShareToken();
+  const now = new Date().toISOString();
+  const { data, error } = await supabase
+    .from("uk_chat_conversations")
+    .update({
+      is_public: true,
+      share_token: shareToken,
+      shared_at: now,
+      updated_at: now,
+    })
+    .eq("id", id)
+    .eq("user_id", user.id)
+    .select("id,title,starred,is_public,share_token,created_at,updated_at")
+    .single();
+  if (error || !data) return json({ error: error?.message ?? "Failed to share conversation" }, 400);
+
+  const shareUrl = `${getAuthRedirectBase(request).replace(/\/+$/, "")}/shared/${shareToken}`;
+  return json({ conversation: data, shareUrl });
+}
+
+function extractSharedArtifacts(messages: Array<{ id: string; parts: unknown[] }>) {
+  const artifacts: Array<{ id: string; toolName: string; title: string; data: unknown }> = [];
+  for (const message of messages) {
+    for (const part of message.parts ?? []) {
+      if (!isRecord(part) || typeof part.type !== "string" || !part.type.startsWith("tool-")) continue;
+      const toolName = part.type.replace("tool-", "");
+      artifacts.push({
+        id: `${message.id}:${part.type}`,
+        toolName,
+        title: `Tool: ${toolName}`,
+        data: part,
+      });
+    }
+  }
+  return artifacts;
+}
+
+async function handleSharedConversation(request: Request) {
+  const token = getSharedToken(request);
+  if (!token) return json({ error: "Not found" }, 404);
+  const supabase = getSupabaseAdmin();
+
+  const { data: conversation, error: conversationError } = await supabase
+    .from("uk_chat_conversations")
+    .select("id,title,created_at,updated_at,is_public,share_token")
+    .eq("share_token", token)
+    .eq("is_public", true)
+    .single();
+  if (conversationError || !conversation) {
+    return json({ error: "Shared conversation not found" }, 404);
+  }
+
+  const { data: messages, error: messageError } = await supabase
+    .from("uk_chat_messages")
+    .select("id,conversation_id,role,parts,created_at")
+    .eq("conversation_id", conversation.id)
+    .order("created_at", { ascending: true });
+  if (messageError) return json({ error: messageError.message }, 400);
+
+  const normalizedMessages = (messages ?? []).map((message) => ({
+    ...message,
+    parts: Array.isArray(message.parts) ? message.parts : [],
+  }));
+
+  return json({
+    conversation: {
+      id: conversation.id,
+      title: conversation.title,
+      created_at: conversation.created_at,
+      updated_at: conversation.updated_at,
+    },
+    messages: normalizedMessages,
+    artifacts: extractSharedArtifacts(normalizedMessages),
+  });
 }
 
 function isDevBypassEnabled(): boolean {
@@ -774,7 +882,16 @@ async function routeRequest(request: Request) {
 
   if (parts[0] === "conversations") {
     if (parts.length === 1) return handleConversationsIndex(request);
+    if (parts.length === 3 && parts[2] === "share") {
+      if (request.method !== "POST") return methodNotAllowed();
+      return handleConversationShare(request);
+    }
     if (parts.length === 2) return handleConversationById(request);
+    return json({ error: "Not found" }, 404);
+  }
+
+  if (parts[0] === "shared") {
+    if (parts.length === 2 && request.method === "GET") return handleSharedConversation(request);
     return json({ error: "Not found" }, 404);
   }
 

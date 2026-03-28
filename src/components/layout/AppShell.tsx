@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { PanelLeftClose, PanelLeftOpen, X } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { PanelLeftOpen, PanelRightClose, PanelRightOpen, X } from "lucide-react";
 import { Button } from "@/components/ui/primitives";
 import { LeftSidebar } from "@/components/layout/LeftSidebar";
 import { RightSidebar } from "@/components/layout/RightSidebar";
@@ -17,6 +17,8 @@ export function AppShell({
   onSelectConversation,
   onDeleteConversation,
   onRenameConversation,
+  onStarConversation,
+  onShareConversation,
   onConversationMissing,
   settingsContent,
 }: {
@@ -28,6 +30,8 @@ export function AppShell({
   onSelectConversation: (id: string | null) => void;
   onDeleteConversation: (id: string) => void;
   onRenameConversation: (id: string, title: string) => void;
+  onStarConversation: (id: string, starred: boolean) => void;
+  onShareConversation: (id: string) => Promise<string | null>;
   onConversationMissing: (id: string) => Promise<void> | void;
   settingsContent: React.ReactNode;
 }) {
@@ -36,6 +40,29 @@ export function AppShell({
   const setSidebarOpen = useAppStore((state) => state.setSidebarOpen);
   const setRightSidebarOpen = useAppStore((state) => state.setRightSidebarOpen);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [shareModalConversation, setShareModalConversation] = useState<ChatConversation | null>(null);
+  const [shareNotice, setShareNotice] = useState<string | null>(null);
+  const [sharePending, setSharePending] = useState(false);
+  const activeConversation = useMemo(
+    () => conversations.find((conversation) => conversation.id === activeConversationId) ?? null,
+    [activeConversationId, conversations],
+  );
+
+  function buildShareUrl(shareToken: string) {
+    if (typeof window === "undefined") return `/shared/${shareToken}`;
+    return `${window.location.origin}/shared/${shareToken}`;
+  }
+
+  async function copyShareUrl(url: string) {
+    if (typeof window === "undefined") return;
+    try {
+      await window.navigator.clipboard.writeText(url);
+      setShareNotice("Share link copied to clipboard.");
+    } catch {
+      setShareNotice(`Share link: ${url}`);
+    }
+    window.setTimeout(() => setShareNotice(null), 3000);
+  }
 
   useEffect(() => {
     if (!settingsOpen) return;
@@ -50,32 +77,15 @@ export function AppShell({
 
   const desktopGridClass = sidebarOpen
     ? rightSidebarOpen
-      ? "md:grid-cols-[280px_minmax(0,1fr)_minmax(0,1fr)]"
+      ? "md:grid-cols-[280px_minmax(0,1fr)_320px]"
       : "md:grid-cols-[280px_minmax(0,1fr)_0px]"
     : rightSidebarOpen
-      ? "md:grid-cols-[0px_minmax(0,1fr)_minmax(0,1fr)]"
+      ? "md:grid-cols-[0px_minmax(0,1fr)_320px]"
       : "md:grid-cols-[0px_minmax(0,1fr)_0px]";
 
   return (
-    <div className="flex h-screen flex-col bg-(--color-background) text-(--color-foreground)">
-      <header className="flex h-14 shrink-0 items-center justify-between border-b border-(--color-border) px-3">
-        <div className="flex items-center gap-2">
-          <Button variant="ghost" className="group transition-transform duration-200 ease-out hover:scale-105 active:scale-95" onClick={() => setSidebarOpen(!sidebarOpen)}>
-            {sidebarOpen ? (
-              <PanelLeftClose className="h-4 w-4 transition-transform duration-200 ease-out group-hover:-rotate-6" />
-            ) : (
-              <PanelLeftOpen className="h-4 w-4 transition-transform duration-200 ease-out group-hover:rotate-6" />
-            )}
-          </Button>
-          <h1 className="font-display text-lg">
-            <span className="hidden sm:inline">Explore the Kingdom </span>
-            <span className="sm:hidden">ETK </span>
-            Chat
-          </h1>
-        </div>
-      </header>
-
-      <div className={cn("grid min-h-0 flex-1 grid-cols-1 md:transition-[grid-template-columns] md:duration-300 md:ease-out", desktopGridClass)}>
+    <div className="h-screen bg-(--color-background) text-(--color-foreground)">
+      <div className={cn("relative grid h-full min-h-0 grid-cols-1 md:transition-[grid-template-columns] md:duration-300 md:ease-out", desktopGridClass)}>
         <div className={cn(sidebarOpen ? "fixed inset-0 z-40 md:relative md:inset-auto md:z-auto md:block" : "hidden md:block")}>
           {sidebarOpen ? (
             <button
@@ -99,17 +109,48 @@ export function AppShell({
               onSelect={onSelectConversation}
               onDelete={onDeleteConversation}
               onRename={onRenameConversation}
+              onToggleStar={onStarConversation}
+              onShare={(conversation) => {
+                if (conversation.is_public && conversation.share_token) {
+                  void copyShareUrl(buildShareUrl(conversation.share_token));
+                  return;
+                }
+                setShareModalConversation(conversation);
+              }}
+              onCollapse={() => setSidebarOpen(false)}
               onToggleSettings={() => setSettingsOpen((v) => !v)}
             />
           </div>
         </div>
 
-        <main className={cn("relative min-h-0", rightSidebarOpen ? "w-full" : "mx-auto w-full max-w-4xl")}>
+        <main className="relative min-h-0">
+          {!sidebarOpen ? (
+            <Button
+              variant="ghost"
+              aria-label="Open navigation sidebar"
+              className="absolute left-3 top-3 z-30 h-8 w-8 p-0"
+              onClick={() => setSidebarOpen(true)}
+            >
+              <PanelLeftOpen className="h-4 w-4" />
+            </Button>
+          ) : null}
+          <Button
+            variant="ghost"
+            aria-label={rightSidebarOpen ? "Hide artifacts" : "Show artifacts"}
+            className="absolute right-3 top-3 z-30 h-8 gap-2 px-2 text-xs"
+            onClick={() => setRightSidebarOpen(!rightSidebarOpen)}
+          >
+            {rightSidebarOpen ? <PanelRightClose className="h-4 w-4" /> : <PanelRightOpen className="h-4 w-4" />}
+            Artifacts
+          </Button>
           <ChatView
+            conversation={activeConversation}
             conversationId={activeConversationId}
             mcpToken={mcpToken}
             authToken={authToken}
             onEnsureConversation={onCreateConversation}
+            onRenameConversation={onRenameConversation}
+            onToggleStarConversation={onStarConversation}
             onConversationMissing={onConversationMissing}
           />
         </main>
@@ -125,7 +166,8 @@ export function AppShell({
           ) : null}
           <div
             className={cn(
-              "absolute right-0 top-0 h-full w-[320px] max-w-[92vw] md:relative md:h-full md:w-full md:max-w-none md:transition-[opacity,transform] md:duration-250 md:ease-out",
+              "absolute right-0 top-0 h-full max-w-[92vw] md:relative md:h-full md:w-full md:max-w-none md:transition-[opacity,transform] md:duration-250 md:ease-out",
+              "w-[320px]",
               rightSidebarOpen ? "translate-x-0 opacity-100" : "translate-x-full opacity-0",
               rightSidebarOpen ? "md:translate-x-0 md:opacity-100" : "md:pointer-events-none md:translate-x-3 md:opacity-0",
             )}
@@ -133,25 +175,73 @@ export function AppShell({
             <RightSidebar />
           </div>
         </div>
+        {settingsOpen ? (
+          <div
+            className={cn(
+              "absolute inset-y-0 right-0 z-50 overflow-y-auto bg-(--color-background)/95 backdrop-blur-sm",
+              sidebarOpen ? "left-0 md:left-[280px]" : "left-0",
+            )}
+          >
+            <div className="flex justify-end p-3">
+              <Button
+                type="button"
+                variant="ghost"
+                aria-label="Close settings"
+                className="h-8 w-8 p-0 opacity-70 hover:opacity-100"
+                onClick={() => setSettingsOpen(false)}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+            <div className="mx-auto w-full max-w-md px-4 pb-8">
+              {settingsContent}
+            </div>
+          </div>
+        ) : null}
+        {shareModalConversation ? (
+          <div
+            className={cn(
+              "absolute inset-y-0 right-0 z-60 flex items-center justify-center bg-black/40 px-4",
+              sidebarOpen ? "left-0 md:left-[280px]" : "left-0",
+            )}
+          >
+            <div className="w-full max-w-md rounded-lg border border-(--color-border) bg-(--color-card) p-4 shadow-xl">
+              <h3 className="text-sm font-semibold">Share conversation publicly?</h3>
+              <p className="mt-2 text-sm text-(--color-muted-foreground)">
+                Anyone with the link will be able to view this conversation and its artifacts.
+              </p>
+              <div className="mt-4 flex justify-end gap-2">
+                <Button type="button" variant="ghost" onClick={() => setShareModalConversation(null)}>
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={sharePending}
+                  onClick={async () => {
+                    if (!shareModalConversation) return;
+                    setSharePending(true);
+                    const shareUrl = await onShareConversation(shareModalConversation.id);
+                    const token = shareModalConversation.share_token;
+                    const fallbackUrl = token ? buildShareUrl(token) : null;
+                    const url = shareUrl ?? fallbackUrl;
+                    if (url) await copyShareUrl(url);
+                    setSharePending(false);
+                    setShareModalConversation(null);
+                  }}
+                >
+                  {sharePending ? "Sharing..." : "Share conversation"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+        {shareNotice ? (
+          <div className="pointer-events-none absolute bottom-4 right-4 z-70 rounded-md border border-(--color-border) bg-(--color-card) px-3 py-2 text-xs shadow-md">
+            {shareNotice}
+          </div>
+        ) : null}
       </div>
-      {settingsOpen ? (
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-(--color-background)/95 backdrop-blur-sm">
-          <div className="flex justify-end p-3">
-            <Button
-              type="button"
-              variant="ghost"
-              aria-label="Close settings"
-              className="h-8 w-8 p-0 opacity-70 hover:opacity-100"
-              onClick={() => setSettingsOpen(false)}
-            >
-              <X className="h-4 w-4" />
-            </Button>
-          </div>
-          <div className="mx-auto w-full max-w-md px-4 pb-8">
-            {settingsContent}
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }
