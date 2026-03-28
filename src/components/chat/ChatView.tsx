@@ -17,6 +17,16 @@ type PersistedMessage = {
   created_at: string;
 };
 
+async function safeJson<T>(response: Response): Promise<T | null> {
+  const text = await response.text();
+  if (!text) return null;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return null;
+  }
+}
+
 export function ChatView({
   conversationId,
   mcpToken,
@@ -46,8 +56,11 @@ export function ChatView({
     fetch(`/api/conversations/${conversationId}`, {
       headers: { Authorization: `Bearer ${authToken}` },
     })
-      .then((response) => response.json())
-      .then((payload: { messages?: PersistedMessage[] }) => {
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`Failed to load conversation (${response.status})`);
+        return (await safeJson<{ messages?: PersistedMessage[] }>(response)) ?? { messages: [] };
+      })
+      .then((payload) => {
         const mapped: UIMessage[] = (payload.messages ?? []).map((message) => ({
           id: message.id,
           role: message.role === "assistant" ? "assistant" : "user",

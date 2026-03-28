@@ -2,7 +2,7 @@
   "name": "uk-chat",
   "private": true,
   "version": "0.1.0",
-  "description": "UK Data Chat Application",
+  "description": "Explore the Kingdom Chat Application",
   "scripts": {
     "dev": "concurrently -k -n WEB,API -c cyan,magenta \"npm:dev:web\" \"npm:dev:api\"",
     "dev:web": "vite",

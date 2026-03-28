@@ -11,6 +11,16 @@ import { useAppStore } from "@/lib/store";
 import type { ChatConversation } from "@/lib/types";
 import { supabase } from "@/lib/supabase";
 
+async function safeJson<T>(response: Response): Promise<T | null> {
+  const text = await response.text();
+  if (!text) return null;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return null;
+  }
+}
+
 function ProtectedApp() {
   const { session } = useAuth();
   const setConversations = useAppStore((state) => state.setConversations);
@@ -34,8 +44,11 @@ function ProtectedApp() {
       .from("uk_chat_profiles")
       .upsert({ id: session.user.id, email: session.user.email?.toLowerCase() ?? null, display_name: session.user.email ?? null }, { onConflict: "id" });
     fetch("/api/conversations", { headers: { Authorization: `Bearer ${session.access_token}` } })
-      .then((response) => response.json())
-      .then((data: ChatConversation[]) => {
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`Failed to load conversations (${response.status})`);
+        return (await safeJson<ChatConversation[]>(response)) ?? [];
+      })
+      .then((data) => {
         setConversations(data);
         if (!activeConversationId && data.length > 0) setActiveConversationId(data[0].id);
       })
@@ -45,8 +58,9 @@ function ProtectedApp() {
       .from("uk_chat_profiles")
       .select("mcp_token")
       .eq("id", session.user.id)
-      .single()
-      .then(async ({ data }) => {
+      .maybeSingle()
+      .then(async ({ data, error }) => {
+        if (error) return;
         if (data?.mcp_token) {
           setMcpToken(data.mcp_token);
           return;
@@ -57,7 +71,7 @@ function ProtectedApp() {
           .from("uk_chat_email_gate")
           .select("pending_mcp_token")
           .eq("email", email)
-          .single();
+          .maybeSingle();
         const pendingToken = gate?.pending_mcp_token as string | null | undefined;
         if (!pendingToken) return;
         setMcpToken(pendingToken);
@@ -77,7 +91,9 @@ function ProtectedApp() {
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token ?? ""}` },
       body: JSON.stringify({ title: titleForNewConversation }),
     });
-    const created = (await response.json()) as ChatConversation;
+    if (!response.ok) return;
+    const created = await safeJson<ChatConversation>(response);
+    if (!created) return;
     setConversations([created, ...conversations]);
     setActiveConversationId(created.id);
   }

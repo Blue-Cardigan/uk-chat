@@ -37,7 +37,7 @@ export function AppShell({
           <Button variant="ghost" onClick={() => setSidebarOpen(!sidebarOpen)}>
             {sidebarOpen ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeftOpen className="h-4 w-4" />}
           </Button>
-          <h1 className="font-display text-lg">UK Data Chat</h1>
+          <h1 className="font-display text-lg">Explore the Kingdom Chat</h1>
         </div>
         <Button variant="ghost" onClick={() => setRightSidebarOpen(!rightSidebarOpen)}>
           {rightSidebarOpen ? <PanelRightClose className="h-4 w-4" /> : <PanelRightOpen className="h-4 w-4" />}

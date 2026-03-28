@@ -379,3 +379,12 @@ export async function PATCH(request: Request) {
 export async function DELETE(request: Request) {
   return routeRequest(request);
 }
+
+export async function OPTIONS() {
+  return new Response(null, {
+    status: 204,
+    headers: {
+      Allow: "GET,POST,PATCH,DELETE,OPTIONS",
+    },
+  });
+}

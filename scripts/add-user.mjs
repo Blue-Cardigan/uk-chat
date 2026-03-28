@@ -30,7 +30,7 @@ Flags:
   --token <token>   Optional token override (otherwise server issues/reuses)
   --no-email        Skip sending a magic-link email
   --rotate-token    Force issuing a fresh MCP token
-  --api-url <url>   Base URL for API requests (defaults to APP_URL)
+  --api-url <url>   Base URL for API requests (defaults to ADMIN_API_URL or http://localhost:3000)
   --help            Show this help
 `);
 }
@@ -94,7 +94,7 @@ async function main() {
     throw new Error("A valid email is required.");
   }
 
-  const apiBase = (args.apiUrl || process.env.APP_URL || "http://localhost:3000").replace(/\/$/, "");
+  const apiBase = (args.apiUrl || process.env.ADMIN_API_URL || "http://localhost:3000").replace(/\/$/, "");
   const bootstrapSecret = process.env.ADMIN_BOOTSTRAP_SECRET;
 
   if (!bootstrapSecret) {

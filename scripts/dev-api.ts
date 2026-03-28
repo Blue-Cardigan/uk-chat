@@ -30,7 +30,10 @@ function loadEnvFromWorkspace() {
 function resolveApiModule(pathname: string): string | null {
   if (!pathname.startsWith("/api")) return null;
   const normalized = pathname.replace(/\/+$/, "") || "/api";
-  if (normalized === "/api") return null;
+  const catchAll = resolve(apiRoot, "[...route].ts");
+  if (normalized === "/api") {
+    return existsSync(catchAll) ? catchAll : null;
+  }
 
   const exact = resolve(apiRoot, `.${normalized.slice(4)}.ts`);
   if (existsSync(exact)) return exact;
@@ -40,6 +43,8 @@ function resolveApiModule(pathname: string): string | null {
     const dynamicPath = resolve(apiRoot, "conversations/[id].ts");
     if (existsSync(dynamicPath)) return dynamicPath;
   }
+
+  if (existsSync(catchAll)) return catchAll;
 
   return null;
 }
