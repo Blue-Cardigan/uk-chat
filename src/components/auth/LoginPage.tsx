@@ -31,7 +31,7 @@ export function LoginPage() {
     <main className="flex min-h-screen items-center justify-center bg-(--color-background) p-4">
       <Card className="w-full max-w-md space-y-4">
         <h1 className="font-display text-2xl">Sign in</h1>
-        <p className="text-sm text-(--color-muted-foreground)">Enter your email to confirm access. Admin sends magic links from the CLI.</p>
+        <p className="text-sm text-(--color-muted-foreground)">Not set up yet? Contact <a href="mailto:jethro@explorethekingdom.co.uk">Jethro</a> to get access.</p>
         <form onSubmit={handleLogin} className="space-y-3">
           <Input type="email" required placeholder="you@example.com" value={email} onChange={(e) => setEmail(e.target.value)} />
           <Button type="submit" disabled={loading} className="w-full">

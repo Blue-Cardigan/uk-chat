@@ -1,9 +1,4 @@
 {
-  "functions": {
-    "api/**/*.ts": {
-      "runtime": "nodejs"
-    }
-  },
   "rewrites": [
     { "source": "/api/:path*", "destination": "/api/:path*" },
     { "source": "/(.*)", "destination": "/index.html" }

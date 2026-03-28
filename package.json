@@ -4,7 +4,9 @@
   "version": "0.1.0",
   "description": "UK Data Chat Application",
   "scripts": {
-    "dev": "vite",
+    "dev": "concurrently -k -n WEB,API -c cyan,magenta \"npm:dev:web\" \"npm:dev:api\"",
+    "dev:web": "vite",
+    "dev:api": "tsx scripts/dev-api.ts",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "tsc -b",
@@ -41,9 +43,12 @@
     "@types/react-dom": "^19.2.3",
     "@types/topojson-client": "^3.1.5",
     "@vitejs/plugin-react": "^6.0.1",
+    "concurrently": "^9.2.1",
     "postcss": "^8.5.8",
     "tailwindcss": "^4.2.2",
+    "tsx": "^4.21.0",
     "typescript": "^6.0.2",
+    "vercel": "^50.37.3",
     "vite": "^8.0.3"
   }
 }

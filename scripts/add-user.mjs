@@ -94,12 +94,9 @@ async function main() {
     throw new Error("A valid email is required.");
   }
 
-  const apiBase = (args.apiUrl || process.env.APP_URL || "").replace(/\/$/, "");
+  const apiBase = (args.apiUrl || process.env.APP_URL || "http://localhost:3000").replace(/\/$/, "");
   const bootstrapSecret = process.env.ADMIN_BOOTSTRAP_SECRET;
 
-  if (!apiBase) {
-    throw new Error("APP_URL (or --api-url) is required.");
-  }
   if (!bootstrapSecret) {
     throw new Error("ADMIN_BOOTSTRAP_SECRET must be set in .env or environment.");
   }
@@ -120,6 +117,9 @@ async function main() {
 
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
+    if (response.status >= 500) {
+      throw new Error(`Onboarding API failed at ${apiBase}. Is your local API server running (for example, vercel dev on :3000)?`);
+    }
     const message = typeof payload?.error === "string" ? payload.error : "Onboarding request failed";
     throw new Error(message);
   }
