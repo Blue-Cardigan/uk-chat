@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { MoreHorizontal, Plus } from "lucide-react";
 import { Button, Input } from "@/components/ui/primitives";
 import type { ChatConversation } from "@/lib/types";
@@ -22,7 +22,32 @@ export function LeftSidebar({
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draftTitle, setDraftTitle] = useState("");
+  const menuRef = useRef<HTMLDivElement | null>(null);
   const conversationById = useMemo(() => new Map(conversations.map((conversation) => [conversation.id, conversation])), [conversations]);
+
+  useEffect(() => {
+    if (!openMenuId && !editingId) return;
+
+    function handleDocumentMouseDown(event: MouseEvent) {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (menuRef.current?.contains(target)) return;
+      setOpenMenuId(null);
+    }
+
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      setOpenMenuId(null);
+      setEditingId(null);
+    }
+
+    document.addEventListener("mousedown", handleDocumentMouseDown);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("mousedown", handleDocumentMouseDown);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [editingId, openMenuId]);
 
   function startRename(id: string) {
     const conversation = conversationById.get(id);
@@ -60,7 +85,7 @@ export function LeftSidebar({
             >
               <div
                 className={cn(
-                  "group relative flex items-center gap-1 rounded-md px-2 py-1 transition-colors duration-200 ease-out",
+                  "group relative flex items-center gap-1 rounded-md px-2 py-2 sm:py-1 transition-colors duration-200 ease-out",
                   isActive
                     ? "bg-[color-mix(in_oklch,var(--color-primary)_14%,var(--color-sidebar)_86%)]"
                     : "hover:bg-[color-mix(in_oklch,var(--color-foreground)_6%,transparent)]",
@@ -84,7 +109,7 @@ export function LeftSidebar({
                 <Button
                   variant="ghost"
                   className={cn(
-                    "h-7 w-7 p-0 transition-opacity",
+                    "h-11 w-11 p-0 sm:h-7 sm:w-7 transition-opacity",
                     isMenuOpen ? "opacity-100" : "opacity-0 group-hover:opacity-100 focus:opacity-100",
                   )}
                   aria-label={`Open actions for ${conversation.title}`}
@@ -97,7 +122,7 @@ export function LeftSidebar({
                 </Button>
 
                 {isMenuOpen ? (
-                  <div className="absolute right-0 top-8 z-10 min-w-36 rounded-md border border-(--color-border) bg-(--color-card) p-1 shadow-sm">
+                  <div ref={menuRef} className="absolute right-0 top-10 z-10 min-w-36 rounded-md border border-(--color-border) bg-(--color-card) p-1 shadow-sm">
                     <button
                       type="button"
                       className="w-full rounded px-2 py-1 text-left text-xs font-medium hover:bg-[color-mix(in_oklch,var(--color-foreground)_6%,transparent)]"

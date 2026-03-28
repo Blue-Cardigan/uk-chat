@@ -53,19 +53,19 @@ export function LoginPage() {
     <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-(--color-background) p-4">
       <div
         aria-hidden
-        className="pointer-events-none absolute -left-24 -top-12 h-72 w-72 rounded-full blur-3xl"
+        className="pointer-events-none absolute -left-16 -top-8 h-48 w-48 rounded-full blur-3xl sm:-left-24 sm:-top-12 sm:h-72 sm:w-72"
         style={{ background: "color-mix(in oklch, var(--color-primary) 30%, transparent)" }}
       />
       <div
         aria-hidden
-        className="pointer-events-none absolute -bottom-20 -right-20 h-80 w-80 rounded-full blur-3xl"
+        className="pointer-events-none absolute -bottom-14 -right-14 h-56 w-56 rounded-full blur-3xl sm:-bottom-20 sm:-right-20 sm:h-80 sm:w-80"
         style={{ background: "color-mix(in oklch, var(--color-accent) 26%, transparent)" }}
       />
 
       <Card className="relative w-full max-w-xl overflow-hidden p-0">
         <div className="border-b border-(--color-border) bg-[linear-gradient(120deg,color-mix(in_oklch,var(--color-primary)_14%,var(--color-card)_86%)_0%,color-mix(in_oklch,var(--color-accent)_10%,var(--color-card)_90%)_100%)] px-6 py-6">
           <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-(--color-muted-foreground)">Explore the Kingdom</p>
-          <h1 className="font-display text-4xl leading-none">Sign in</h1>
+          <h1 className="font-display text-3xl leading-none sm:text-4xl">Sign in</h1>
           <p className="mt-3 max-w-md text-sm text-(--color-muted-foreground)">
             Ask UK questions and get answers grounded in live data, maps, and policy context.
           </p>

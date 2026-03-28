@@ -1,4 +1,4 @@
-import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen } from "lucide-react";
+import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Settings } from "lucide-react";
 import { Button, Card } from "@/components/ui/primitives";
 import { LeftSidebar } from "@/components/layout/LeftSidebar";
 import { RightSidebar } from "@/components/layout/RightSidebar";
@@ -51,37 +51,61 @@ export function AppShell({
               <PanelLeftOpen className="h-4 w-4 transition-transform duration-200 ease-out group-hover:rotate-6" />
             )}
           </Button>
-          <h1 className="font-display text-lg">Explore the Kingdom Chat</h1>
+          <h1 className="font-display text-lg">
+            <span className="hidden sm:inline">Explore the Kingdom </span>
+            <span className="sm:hidden">ETK </span>
+            Chat
+          </h1>
         </div>
-        <Button
-          variant="ghost"
-          className="group transition-transform duration-200 ease-out hover:scale-105 active:scale-95"
-          onClick={() => setRightSidebarOpen(!rightSidebarOpen)}
-        >
-          {rightSidebarOpen ? (
-            <PanelRightClose className="h-4 w-4 transition-transform duration-200 ease-out group-hover:rotate-6" />
-          ) : (
-            <PanelRightOpen className="h-4 w-4 transition-transform duration-200 ease-out group-hover:-rotate-6" />
-          )}
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            className="group xl:hidden transition-transform duration-200 ease-out hover:scale-105 active:scale-95"
+            onClick={() => setRightSidebarOpen(true)}
+            aria-label="Open settings and insights"
+          >
+            <Settings className="h-4 w-4 transition-transform duration-200 ease-out group-hover:rotate-6" />
+          </Button>
+          <Button
+            variant="ghost"
+            className="group transition-transform duration-200 ease-out hover:scale-105 active:scale-95"
+            onClick={() => setRightSidebarOpen(!rightSidebarOpen)}
+          >
+            {rightSidebarOpen ? (
+              <PanelRightClose className="h-4 w-4 transition-transform duration-200 ease-out group-hover:rotate-6" />
+            ) : (
+              <PanelRightOpen className="h-4 w-4 transition-transform duration-200 ease-out group-hover:-rotate-6" />
+            )}
+          </Button>
+        </div>
       </header>
 
       <div className={cn("grid min-h-0 flex-1 grid-cols-1 md:transition-[grid-template-columns] md:duration-300 md:ease-out", desktopGridClass)}>
-        <div
-          className={cn(
-            sidebarOpen ? "block md:block" : "hidden md:block",
-            "overflow-hidden md:transition-[opacity,transform] md:duration-250 md:ease-out",
-            sidebarOpen ? "md:translate-x-0 md:opacity-100" : "md:pointer-events-none md:-translate-x-3 md:opacity-0",
-          )}
-        >
-          <LeftSidebar
-            conversations={conversations}
-            activeConversationId={activeConversationId}
-            onCreate={onCreateConversation}
-            onSelect={onSelectConversation}
-            onDelete={onDeleteConversation}
-            onRename={onRenameConversation}
-          />
+        <div className={cn(sidebarOpen ? "fixed inset-0 z-40 md:relative md:inset-auto md:z-auto md:block" : "hidden md:block")}>
+          {sidebarOpen ? (
+            <button
+              type="button"
+              aria-label="Close navigation sidebar"
+              className="absolute inset-0 bg-black/45 md:hidden"
+              onClick={() => setSidebarOpen(false)}
+            />
+          ) : null}
+          <div
+            className={cn(
+              "absolute left-0 top-0 h-full w-[280px] max-w-[88vw] md:relative md:h-full md:w-full md:max-w-none md:transition-[opacity,transform] md:duration-250 md:ease-out",
+              sidebarOpen ? "translate-x-0 opacity-100" : "-translate-x-full opacity-0",
+              sidebarOpen ? "md:translate-x-0 md:opacity-100" : "md:pointer-events-none md:-translate-x-3 md:opacity-0",
+            )}
+          >
+            <LeftSidebar
+              conversations={conversations}
+              activeConversationId={activeConversationId}
+              onCreate={onCreateConversation}
+              onSelect={onSelectConversation}
+              onDelete={onDeleteConversation}
+              onRename={onRenameConversation}
+            />
+          </div>
         </div>
         <main className="min-h-0 p-3">
           <Card className="h-full">
@@ -94,14 +118,24 @@ export function AppShell({
             />
           </Card>
         </main>
-        <div
-          className={cn(
-            rightSidebarOpen ? "block md:block" : "hidden md:block",
-            "overflow-hidden md:transition-[opacity,transform] md:duration-250 md:ease-out",
-            rightSidebarOpen ? "md:translate-x-0 md:opacity-100" : "md:pointer-events-none md:translate-x-3 md:opacity-0",
-          )}
-        >
-          <RightSidebar topContent={mobileSettingsPanel} />
+        <div className={cn(rightSidebarOpen ? "fixed inset-0 z-40 md:relative md:inset-auto md:z-auto md:block" : "hidden md:block")}>
+          {rightSidebarOpen ? (
+            <button
+              type="button"
+              aria-label="Close insights sidebar"
+              className="absolute inset-0 bg-black/45 md:hidden"
+              onClick={() => setRightSidebarOpen(false)}
+            />
+          ) : null}
+          <div
+            className={cn(
+              "absolute right-0 top-0 h-full w-[320px] max-w-[92vw] md:relative md:h-full md:w-full md:max-w-none md:transition-[opacity,transform] md:duration-250 md:ease-out",
+              rightSidebarOpen ? "translate-x-0 opacity-100" : "translate-x-full opacity-0",
+              rightSidebarOpen ? "md:translate-x-0 md:opacity-100" : "md:pointer-events-none md:translate-x-3 md:opacity-0",
+            )}
+          >
+            <RightSidebar topContent={mobileSettingsPanel} />
+          </div>
         </div>
       </div>
     </div>
