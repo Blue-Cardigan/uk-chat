@@ -10,14 +10,57 @@ function pathParts(request: Request) {
   return pathname.split("/").filter(Boolean);
 }
 
-function getConversationId(request: Request) {
+function routeParts(request: Request) {
+  const url = new URL(request.url);
+  const route = url.searchParams.get("route")?.trim();
+  if (route) return route.split("/").filter(Boolean);
+
   const parts = pathParts(request);
-  return parts.length >= 3 ? parts[2] ?? "" : "";
+  if (parts[0] !== "api") return [];
+  return parts.slice(1);
+}
+
+function getConversationId(request: Request) {
+  const parts = routeParts(request);
+  if (parts[0] !== "conversations") return "";
+  return parts[1] ?? "";
 }
 
 function env(key: string): string | undefined {
   const maybeProcess = globalThis as { process?: { env?: Record<string, string | undefined> } };
   return maybeProcess.process?.env?.[key];
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+}
+
+function parseHttpUrl(value: string | undefined | null): URL | null {
+  if (!value) return null;
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function getAuthRedirectBase(request: Request): string {
+  const requestUrl = new URL(request.url);
+  const configuredAppUrl = parseHttpUrl(env("APP_URL")?.trim());
+  const originHeader = parseHttpUrl(request.headers.get("origin"));
+  const refererHeader = parseHttpUrl(request.headers.get("referer"));
+  const browserOrigin = originHeader ?? refererHeader;
+
+  if (isLoopbackHostname(requestUrl.hostname)) {
+    // Dev API runs on :3000 behind the Vite app on :5173; prefer browser origin.
+    if (browserOrigin && isLoopbackHostname(browserOrigin.hostname)) return browserOrigin.origin;
+    if (configuredAppUrl && isLoopbackHostname(configuredAppUrl.hostname)) return configuredAppUrl.origin;
+    return "http://localhost:5173";
+  }
+
+  return configuredAppUrl?.origin ?? requestUrl.origin;
 }
 
 type PersistedMessagePart = { type: string; [key: string]: unknown };
@@ -498,14 +541,11 @@ async function handleRecognizedSignIn(request: Request) {
   const actionLink = linkData?.properties?.action_link;
   if (!actionLink) return json({ error: "Unable to sign in right now. Please try again." }, 500);
 
-  const maybeProcess = globalThis as { process?: { env?: Record<string, string | undefined> } };
-  const appUrl = maybeProcess.process?.env?.APP_URL;
+  const redirectBase = getAuthRedirectBase(request);
   let finalLink = actionLink;
-  if (appUrl) {
-    const parsed = new URL(actionLink);
-    parsed.searchParams.set("redirect_to", `${appUrl.replace(/\/+$/, "")}/auth/callback`);
-    finalLink = parsed.toString();
-  }
+  const parsed = new URL(actionLink);
+  parsed.searchParams.set("redirect_to", `${redirectBase.replace(/\/+$/, "")}/auth/callback`);
+  finalLink = parsed.toString();
 
   return json({ allowed: true, redirectTo: finalLink });
 }
@@ -662,45 +702,44 @@ function methodNotAllowed() {
 }
 
 async function routeRequest(request: Request) {
-  const parts = pathParts(request);
-  if (parts[0] !== "api") return json({ error: "Not found" }, 404);
+  const parts = routeParts(request);
 
-  if (parts.length === 1) {
+  if (parts.length === 0) {
     if (request.method === "GET") return json({ ok: true });
     return methodNotAllowed();
   }
 
-  if (parts[1] === "chat") {
+  if (parts[0] === "chat") {
     if (request.method !== "POST") return methodNotAllowed();
     return handleChat(request);
   }
 
-  if (parts[1] === "conversations") {
-    if (parts.length === 2) return handleConversationsIndex(request);
-    if (parts.length === 3) return handleConversationById(request);
+  if (parts[0] === "conversations") {
+    if (parts.length === 1) return handleConversationsIndex(request);
+    if (parts.length === 2) return handleConversationById(request);
     return json({ error: "Not found" }, 404);
   }
 
-  if (parts[1] === "auth") {
-    if (parts[2] === "check-email") {
+  if (parts[0] === "auth") {
+    if (parts[1] === "check-email") {
       if (request.method !== "POST") return methodNotAllowed();
       return handleCheckEmail(request);
     }
-    if (parts[2] === "sign-in") {
+    if (parts[1] === "sign-in") {
       if (request.method !== "POST") return methodNotAllowed();
       return handleRecognizedSignIn(request);
     }
-    if (parts[2] === "callback") {
+    if (parts[1] === "callback") {
       if (request.method !== "GET") return methodNotAllowed();
       return json({ ok: true });
     }
     return json({ error: "Not found" }, 404);
   }
 
-  if (parts[1] === "admin") {
-    if (parts[2] === "users") return handleAdminUsers(request);
-    if (parts[2] === "tokens") return handleAdminTokens(request);
-    if (parts[2] === "onboard-user") return handleAdminOnboardUser(request);
+  if (parts[0] === "admin") {
+    if (parts[1] === "users") return handleAdminUsers(request);
+    if (parts[1] === "tokens") return handleAdminTokens(request);
+    if (parts[1] === "onboard-user") return handleAdminOnboardUser(request);
     return json({ error: "Not found" }, 404);
   }
 
