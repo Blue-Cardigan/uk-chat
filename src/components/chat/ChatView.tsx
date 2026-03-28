@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import type { UIMessage } from "ai";
@@ -31,13 +31,16 @@ export function ChatView({
   conversationId,
   mcpToken,
   authToken,
+  onEnsureConversation,
 }: {
   conversationId: string | null;
   mcpToken: string | null;
   authToken: string | null;
+  onEnsureConversation: () => Promise<string | null>;
 }) {
   const pushVizPayload = useAppStore((state) => state.pushVizPayload);
   const clearVizPayloads = useAppStore((state) => state.clearVizPayloads);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   const { messages, sendMessage, status, setMessages } = useChat({
     transport: new DefaultChatTransport({
@@ -46,6 +49,24 @@ export function ChatView({
       body: { conversationId, mcpToken },
     }),
   });
+
+  async function submitPrompt(text: string) {
+    setSubmitError(null);
+    if (!authToken) {
+      setSubmitError("You need to sign in before sending a message.");
+      return;
+    }
+    if (!mcpToken) {
+      setSubmitError("Your access token is still being prepared. Please try again in a few seconds.");
+      return;
+    }
+    const ensuredConversationId = conversationId ?? (await onEnsureConversation());
+    if (!ensuredConversationId) {
+      setSubmitError("Could not create a conversation. Please try again.");
+      return;
+    }
+    sendMessage({ text });
+  }
 
   useEffect(() => {
     clearVizPayloads();
@@ -91,10 +112,10 @@ export function ChatView({
         {messages.length === 0 ? (
           <div className="space-y-4">
             <h2 className="font-display text-2xl">Ask a UK question</h2>
-            <p className="text-sm text-[var(--color-muted-foreground)]">
+            <p className="text-sm text-(--color-muted-foreground)">
               Answers are grounded in live UK data tools and rendered with maps, dashboards, and synthetic personas.
             </p>
-            <SuggestedMessages onPick={(text) => sendMessage({ text })} />
+            <SuggestedMessages onPick={(text) => void submitPrompt(text)} />
           </div>
         ) : (
           <Conversation>
@@ -104,7 +125,8 @@ export function ChatView({
           </Conversation>
         )}
       </Card>
-      <ChatInput onSubmit={(text) => sendMessage({ text })} isStreaming={status === "streaming" || status === "submitted"} />
+      {submitError ? <p className="text-xs text-(--color-muted-foreground)">{submitError}</p> : null}
+      <ChatInput onSubmit={(text) => void submitPrompt(text)} isStreaming={status === "streaming" || status === "submitted"} />
     </section>
   );
 }

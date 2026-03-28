@@ -5,18 +5,24 @@ export function HansardReader() {
     <VisualizationCard title="HansardReader">
       <p className="text-xs leading-relaxed">
         “We need stronger regional investment strategies...”<br />
-        <span className="text-[var(--color-muted-foreground)]">House of Commons, sample excerpt</span>
+        <span className="text-(--color-muted-foreground)">House of Commons, sample excerpt</span>
       </p>
     </VisualizationCard>
   );
 }
 
 export function VotingMatrix() {
+  const voteSwatch = [
+    "color-mix(in oklch, var(--color-primary) 70%, transparent)",
+    "color-mix(in oklch, var(--color-accent) 70%, transparent)",
+    "color-mix(in oklch, var(--color-muted-foreground) 70%, transparent)",
+  ] as const;
+
   return (
     <VisualizationCard title="VotingMatrix">
       <div className="grid grid-cols-6 gap-1">
         {Array.from({ length: 24 }).map((_, index) => (
-          <span key={index} className={`h-4 rounded ${index % 3 === 0 ? "bg-emerald-500/70" : index % 3 === 1 ? "bg-rose-500/70" : "bg-slate-400/70"}`} />
+          <span key={index} className="h-4 rounded" style={{ backgroundColor: voteSwatch[index % 3] }} />
         ))}
       </div>
     </VisualizationCard>

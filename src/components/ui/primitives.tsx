@@ -1,18 +1,20 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
 
-const buttonVariants: Record<"default" | "ghost" | "secondary", string> = {
+const buttonVariants: Record<"default" | "ghost" | "secondary" | "accent", string> = {
   default: "bg-[var(--color-primary)] text-[var(--color-primary-foreground)] hover:opacity-90",
-  secondary: "bg-[var(--color-card)] text-[var(--color-foreground)] border border-[var(--color-border)] hover:bg-[var(--color-card)]/80",
+  accent: "bg-[var(--color-accent)] text-[var(--color-accent-foreground)] hover:opacity-90",
+  secondary: "bg-[var(--color-card)] text-[var(--color-foreground)] border border-(--color-border) hover:bg-[var(--color-card)]/80",
   ghost: "text-[var(--color-foreground)] hover:bg-[var(--color-card)]",
 };
 
 export const Button = React.forwardRef<
   HTMLButtonElement,
-  React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: "default" | "ghost" | "secondary" }
+  React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: "default" | "ghost" | "secondary" | "accent" }
 >(function Button({ className, variant = "default", ...props }, ref) {
   const variants = {
     default: buttonVariants.default,
+    accent: buttonVariants.accent,
     secondary: buttonVariants.secondary,
     ghost: buttonVariants.ghost,
   } as const;
@@ -35,7 +37,7 @@ export const Card = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDi
   return (
     <div
       ref={ref}
-      className={cn("rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-4 shadow-sm", className)}
+      className={cn("rounded-xl border border-(--color-border) bg-(--color-card) p-4 shadow-sm", className)}
       {...props}
     />
   );
@@ -48,7 +50,7 @@ export const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttribute
       ref={ref}
       {...props}
       className={cn(
-        "h-10 w-full rounded-md border border-[var(--color-border)] bg-transparent px-3 text-sm outline-none focus:ring-2 focus:ring-[var(--color-ring)]",
+        "h-10 w-full rounded-md border border-(--color-border) bg-transparent px-3 text-sm outline-none focus:ring-2 focus:ring-(--color-ring)",
         props.className,
       )}
     />
@@ -65,7 +67,7 @@ export const Textarea = React.forwardRef<HTMLTextAreaElement, React.TextareaHTML
       ref={ref}
       {...props}
       className={cn(
-        "min-h-24 w-full rounded-md border border-[var(--color-border)] bg-transparent px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[var(--color-ring)]",
+        "min-h-24 w-full rounded-md border border-(--color-border) bg-transparent px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-(--color-ring)",
         props.className,
       )}
     />

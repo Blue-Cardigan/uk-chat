@@ -5,31 +5,35 @@
   --font-body: "DM Sans", ui-sans-serif, system-ui, sans-serif;
   --font-display: "Instrument Serif", serif;
 
-  --color-background: oklch(0.985 0.006 90);
-  --color-foreground: oklch(0.22 0.02 85);
-  --color-card: oklch(0.97 0.01 92);
-  --color-sidebar: oklch(0.955 0.01 92);
-  --color-border: oklch(0.87 0.02 92);
-  --color-muted-foreground: oklch(0.5 0.03 90);
-  --color-primary: oklch(0.55 0.12 195);
-  --color-primary-foreground: oklch(0.99 0.01 180);
-  --color-ring: oklch(0.62 0.1 200);
-  --color-water: oklch(0.93 0.03 220);
-  --color-water-line: oklch(0.66 0.09 220);
+  --color-background: oklch(0.985 0.006 250);
+  --color-foreground: oklch(0.18 0.02 250);
+  --color-card: oklch(0.97 0.008 250);
+  --color-sidebar: oklch(0.955 0.008 250);
+  --color-border: oklch(0.87 0.015 250);
+  --color-muted-foreground: oklch(0.5 0.02 250);
+  --color-primary: oklch(0.5 0.19 255);
+  --color-primary-foreground: oklch(0.98 0.005 255);
+  --color-accent: oklch(0.55 0.19 22);
+  --color-accent-foreground: oklch(0.98 0.005 22);
+  --color-ring: oklch(0.55 0.15 255);
+  --color-water: oklch(0.93 0.03 245);
+  --color-water-line: oklch(0.55 0.1 255);
 }
 
 :root[data-theme="dark"] {
-  --color-background: oklch(0.2 0.015 92);
-  --color-foreground: oklch(0.94 0.01 92);
-  --color-card: oklch(0.26 0.02 92);
-  --color-sidebar: oklch(0.24 0.02 92);
-  --color-border: oklch(0.36 0.02 92);
-  --color-muted-foreground: oklch(0.72 0.02 92);
-  --color-primary: oklch(0.62 0.1 195);
-  --color-primary-foreground: oklch(0.14 0.01 200);
-  --color-ring: oklch(0.66 0.09 205);
-  --color-water: oklch(0.24 0.03 220);
-  --color-water-line: oklch(0.6 0.08 220);
+  --color-background: oklch(0.16 0.015 250);
+  --color-foreground: oklch(0.93 0.01 250);
+  --color-card: oklch(0.22 0.02 250);
+  --color-sidebar: oklch(0.19 0.018 250);
+  --color-border: oklch(0.32 0.02 250);
+  --color-muted-foreground: oklch(0.7 0.02 250);
+  --color-primary: oklch(0.62 0.15 255);
+  --color-primary-foreground: oklch(0.14 0.015 255);
+  --color-accent: oklch(0.62 0.15 22);
+  --color-accent-foreground: oklch(0.14 0.01 22);
+  --color-ring: oklch(0.6 0.12 255);
+  --color-water: oklch(0.2 0.03 245);
+  --color-water-line: oklch(0.5 0.1 255);
 }
 
 * {

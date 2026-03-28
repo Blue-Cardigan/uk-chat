@@ -91,11 +91,12 @@ function ProtectedApp() {
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token ?? ""}` },
       body: JSON.stringify({ title: titleForNewConversation }),
     });
-    if (!response.ok) return;
+    if (!response.ok) return null;
     const created = await safeJson<ChatConversation>(response);
-    if (!created) return;
+    if (!created) return null;
     setConversations([created, ...conversations]);
     setActiveConversationId(created.id);
+    return created.id;
   }
 
   async function deleteConversation(id: string) {
@@ -126,7 +127,7 @@ function ProtectedApp() {
         onDeleteConversation={deleteConversation}
         onRenameConversation={renameConversation}
       />
-      <aside className="hidden border-l border-[var(--color-border)] bg-[var(--color-sidebar)] p-3 xl:block">
+      <aside className="hidden border-l border-(--color-border) bg-(--color-sidebar) p-3 xl:block">
         <div className="flex h-full flex-col gap-3 overflow-y-auto">
           <SettingsPanel theme={theme} onThemeChange={setTheme} mcpToken={mcpToken} />
           {isAdmin ? <AdminPanel /> : null}

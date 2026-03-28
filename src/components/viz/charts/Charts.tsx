@@ -29,7 +29,14 @@ const demoSeries = [
   { name: "May", value: 180 },
 ];
 
-const categorical = ["#0A7D7D", "#8BAE5A", "#275DAD", "#E08A22", "#B34C54", "#8E6CB6"];
+const categorical = [
+  "oklch(0.50 0.19 255)",
+  "oklch(0.55 0.19 22)",
+  "oklch(0.58 0.12 160)",
+  "oklch(0.60 0.14 55)",
+  "oklch(0.50 0.14 300)",
+  "oklch(0.55 0.10 130)",
+];
 
 export function TimeSeriesLine() {
   return (
@@ -41,7 +48,7 @@ export function TimeSeriesLine() {
             <XAxis dataKey="name" />
             <YAxis />
             <Tooltip />
-            <Line dataKey="value" stroke="#0A7D7D" strokeWidth={2} dot={false} />
+            <Line dataKey="value" stroke={categorical[0]} strokeWidth={2} dot={false} />
           </LineChart>
         </ResponsiveContainer>
       </div>
@@ -59,7 +66,7 @@ export function RankedBarChart() {
             <XAxis type="number" />
             <YAxis type="category" dataKey="name" />
             <Tooltip />
-            <Bar dataKey="value" fill="#275DAD" />
+            <Bar dataKey="value" fill={categorical[0]} />
           </BarChart>
         </ResponsiveContainer>
       </div>
@@ -84,9 +91,9 @@ export function CompositionStack() {
             <YAxis />
             <Tooltip />
             <Legend />
-            <Area dataKey="cars" stackId="1" fill="#8BAE5A" stroke="#8BAE5A" />
-            <Area dataKey="transit" stackId="1" fill="#275DAD" stroke="#275DAD" />
-            <Area dataKey="cycle" stackId="1" fill="#E08A22" stroke="#E08A22" />
+            <Area dataKey="cars" stackId="1" fill={categorical[2]} stroke={categorical[2]} />
+            <Area dataKey="transit" stackId="1" fill={categorical[0]} stroke={categorical[0]} />
+            <Area dataKey="cycle" stackId="1" fill={categorical[3]} stroke={categorical[3]} />
           </AreaChart>
         </ResponsiveContainer>
       </div>
@@ -128,7 +135,7 @@ export function ComparisonRadar() {
           <RadarChart data={data}>
             <PolarGrid />
             <PolarAngleAxis dataKey="domain" />
-            <Radar dataKey="value" stroke="#0A7D7D" fill="#0A7D7D" fillOpacity={0.35} />
+            <Radar dataKey="value" stroke={categorical[0]} fill={categorical[0]} fillOpacity={0.35} />
             <Tooltip />
           </RadarChart>
         </ResponsiveContainer>
@@ -142,10 +149,10 @@ export function SparklineGrid() {
     <VisualizationCard title="SparklineGrid">
       <div className="grid grid-cols-2 gap-2">
         {[1, 2, 3, 4].map((index) => (
-          <div key={index} className="h-20 rounded-md border border-[var(--color-border)] p-1">
+          <div key={index} className="h-20 rounded-md border border-(--color-border) p-1">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={demoSeries}>
-                <Line dataKey="value" stroke={categorical[index]} strokeWidth={2} dot={false} />
+                <Line dataKey="value" stroke={categorical[(index - 1) % categorical.length]} strokeWidth={2} dot={false} />
               </LineChart>
             </ResponsiveContainer>
           </div>

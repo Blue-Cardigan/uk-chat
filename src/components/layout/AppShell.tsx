@@ -20,7 +20,7 @@ export function AppShell({
   activeConversationId: string | null;
   mcpToken: string | null;
   authToken: string | null;
-  onCreateConversation: () => void;
+  onCreateConversation: () => Promise<string | null>;
   onSelectConversation: (id: string) => void;
   onDeleteConversation: (id: string) => void;
   onRenameConversation: (id: string, title: string) => void;
@@ -57,7 +57,12 @@ export function AppShell({
         </div>
         <main className="min-h-0 p-3">
           <Card className="h-full">
-            <ChatView conversationId={activeConversationId} mcpToken={mcpToken} authToken={authToken} />
+            <ChatView
+              conversationId={activeConversationId}
+              mcpToken={mcpToken}
+              authToken={authToken}
+              onEnsureConversation={onCreateConversation}
+            />
           </Card>
         </main>
         <div className={rightSidebarOpen ? "block" : "hidden md:hidden"}>
