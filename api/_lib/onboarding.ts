@@ -1,4 +1,9 @@
-import { getSupabaseAdmin } from "./server";
+import { getSupabaseAdmin } from "./server.js";
+
+function env(key: string): string | undefined {
+  const maybeProcess = globalThis as { process?: { env?: Record<string, string | undefined> } };
+  return maybeProcess.process?.env?.[key];
+}
 
 type OnboardUserInput = {
   email: string;
@@ -20,8 +25,8 @@ function normalizeEmail(email: string) {
 }
 
 async function issueMcpToken(email: string) {
-  const issueUrl = process.env.MCP_TOKEN_ISSUE_URL ?? "https://mcp.explorethekingdom.co.uk/api/tokens";
-  const issueSecret = process.env.MCP_TOKEN_ISSUE_SECRET ?? "";
+  const issueUrl = env("MCP_TOKEN_ISSUE_URL") ?? "https://mcp.explorethekingdom.co.uk/api/tokens";
+  const issueSecret = env("MCP_TOKEN_ISSUE_SECRET") ?? "";
   const response = await fetch(issueUrl, {
     method: "POST",
     headers: {
@@ -48,7 +53,8 @@ async function issueMcpToken(email: string) {
 
 async function createMagicLink(email: string) {
   const supabase = getSupabaseAdmin();
-  const redirectTo = process.env.APP_URL ? `${process.env.APP_URL}/auth/callback` : undefined;
+  const appUrl = env("APP_URL");
+  const redirectTo = appUrl ? `${appUrl}/auth/callback` : undefined;
   const { data, error } = await supabase.auth.admin.generateLink({
     type: "magiclink",
     email,
@@ -65,11 +71,11 @@ async function createMagicLink(email: string) {
 }
 
 async function sendResendMagicLink(email: string, actionLink: string) {
-  const resendApiKey = process.env.RESEND_API_KEY;
+  const resendApiKey = env("RESEND_API_KEY");
   if (!resendApiKey) {
     throw new Error("RESEND_API_KEY is required to send onboarding emails");
   }
-  const from = process.env.RESEND_FROM_EMAIL ?? "UK Chat <onboarding@resend.dev>";
+  const from = env("RESEND_FROM_EMAIL") ?? "UK Chat <onboarding@resend.dev>";
   const subject = "Your Explore the Kingdom Chat sign-in link";
   const html = `
     <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;line-height:1.5;color:#111;">
