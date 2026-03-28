@@ -27,10 +27,19 @@ export function LoginPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email }),
     });
-    const payload = (await response.json().catch(() => ({}))) as { error?: string; message?: string; redirectTo?: string };
+    const payload = (await response.json().catch(() => ({}))) as {
+      error?: string;
+      message?: string;
+      allowed?: boolean;
+      redirectTo?: string;
+    };
     setLoading(false);
     if (!response.ok) {
       setStatus(payload.error ?? payload.message ?? "Unable to verify email");
+      return;
+    }
+    if (payload.allowed === false) {
+      setStatus(payload.message ?? "Email not found. Ask Jethro to get you access.");
       return;
     }
     if (payload.redirectTo) {
@@ -76,7 +85,7 @@ export function LoginPage() {
               onChange={(event) => setEmail(event.target.value)}
             />
             <Button type="submit" disabled={loading || authLoading} className="w-full justify-between">
-              <span>{loading || authLoading ? "Signing in..." : "Continue with magic link"}</span>
+              <span>{loading || authLoading ? "Signing in..." : "Enter"}</span>
               <ArrowRight className="h-4 w-4" />
             </Button>
           </form>

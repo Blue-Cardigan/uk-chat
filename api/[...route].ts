@@ -14,6 +14,20 @@ function getConversationId(request: Request) {
   return parts.length >= 3 ? parts[2] ?? "" : "";
 }
 
+async function ensureProfileExists(user: { id: string; email?: string | null }) {
+  const supabase = getSupabaseAdmin();
+  const normalizedEmail = user.email?.toLowerCase() ?? null;
+  const { error } = await supabase.from("uk_chat_profiles").upsert(
+    {
+      id: user.id,
+      email: normalizedEmail,
+      display_name: user.email ?? null,
+    },
+    { onConflict: "id" },
+  );
+  if (error) throw new Error(`Failed to ensure profile exists: ${error.message}`);
+}
+
 async function handleChat(request: Request) {
   const user = await getUserFromRequest(request);
   if (!user) return json({ error: "Unauthorized" }, 401);
@@ -80,6 +94,12 @@ Use geography codes and UK postcodes carefully. Prefer tool calls when factual d
 async function handleConversationsIndex(request: Request) {
   const user = await getUserFromRequest(request);
   if (!user) return json({ error: "Unauthorized" }, 401);
+  try {
+    await ensureProfileExists(user);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to prepare user profile";
+    return json({ error: message }, 500);
+  }
   const supabase = getSupabaseAdmin();
 
   if (request.method === "GET") {
@@ -163,7 +183,7 @@ async function handleCheckEmail(request: Request) {
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase.from("uk_chat_email_gate").select("email").eq("email", normalizedEmail).maybeSingle();
   if (error) return json({ error: "Unable to verify email access right now" }, 500);
-  if (!data) return json({ allowed: false, message: "Email not found. Ask your admin to add you." }, 404);
+  if (!data) return json({ allowed: false, message: "Email not found. Ask Jethro to get you access." }, 404);
 
   return json({
     allowed: true,
@@ -185,7 +205,12 @@ async function handleRecognizedSignIn(request: Request) {
     .eq("email", normalizedEmail)
     .maybeSingle();
   if (gateError) return json({ error: "Unable to verify email access right now" }, 500);
-  if (!gateRow) return json({ error: "Email not found. Ask your admin to add you." }, 404);
+  if (!gateRow) {
+    return json({
+      allowed: false,
+      message: "Email not found. Ask Jethro to get you access.",
+    });
+  }
 
   const { data: linkData, error: linkError } = await supabase.auth.admin.generateLink({
     type: "magiclink",
@@ -198,7 +223,7 @@ async function handleRecognizedSignIn(request: Request) {
   const actionLink = linkData?.properties?.action_link;
   if (!actionLink) return json({ error: "Unable to sign in right now. Please try again." }, 500);
 
-  return json({ redirectTo: actionLink });
+  return json({ allowed: true, redirectTo: actionLink });
 }
 
 async function getProfileTokenMapByEmail(emails: string[]) {
