@@ -26,6 +26,53 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
+function hasGeminiIncompatibleSchema(value: unknown, seen: WeakSet<object> = new WeakSet()): boolean {
+  if (!value || typeof value !== "object") return false;
+  if (seen.has(value as object)) return false;
+  seen.add(value as object);
+
+  if (Array.isArray(value)) {
+    return value.some((item) => hasGeminiIncompatibleSchema(item, seen));
+  }
+
+  const record = value as Record<string, unknown>;
+  // Gemini function declarations reject tuple-style array schemas.
+  if (Array.isArray(record.items) || Array.isArray(record.prefixItems)) return true;
+
+  // Several MCP schemas ship JSON Schema composition that Gemini rejects.
+  if (Array.isArray(record.anyOf) || Array.isArray(record.oneOf) || Array.isArray(record.allOf)) return true;
+
+  return Object.values(record).some((entry) => hasGeminiIncompatibleSchema(entry, seen));
+}
+
+function filterGeminiCompatibleTools<T extends Record<string, unknown>>(tools: T): {
+  compatibleTools: T;
+  droppedToolNames: string[];
+} {
+  const compatible: Array<[string, unknown]> = [];
+  const droppedToolNames: string[] = [];
+
+  for (const [toolName, toolDefinition] of Object.entries(tools)) {
+    if (!toolDefinition || typeof toolDefinition !== "object") {
+      compatible.push([toolName, toolDefinition]);
+      continue;
+    }
+
+    const candidate = toolDefinition as Record<string, unknown>;
+    const schemaCandidate = candidate.inputSchema ?? candidate.parameters ?? candidate;
+    if (hasGeminiIncompatibleSchema(schemaCandidate)) {
+      droppedToolNames.push(toolName);
+      continue;
+    }
+    compatible.push([toolName, toolDefinition]);
+  }
+
+  return {
+    compatibleTools: Object.fromEntries(compatible) as T,
+    droppedToolNames,
+  };
+}
+
 function sanitizeToolName(name: unknown): string | null {
   if (typeof name !== "string") return null;
   const normalized = name.trim();
@@ -203,6 +250,14 @@ async function handleChat(request: Request) {
     }
   }
 
+  const { compatibleTools, droppedToolNames } = filterGeminiCompatibleTools(tools);
+  if (droppedToolNames.length > 0) {
+    console.warn("[api/chat] Dropping Gemini-incompatible MCP tools", {
+      droppedCount: droppedToolNames.length,
+      droppedToolNames,
+    });
+  }
+
   const latestUserMessage = [...(body.messages ?? [])].reverse().find((message) => message.role === "user");
   if (latestUserMessage) {
     const { error: insertUserError } = await supabase.from("uk_chat_messages").insert({
@@ -224,7 +279,7 @@ async function handleChat(request: Request) {
   const result = streamText({
     model: google("gemini-3-flash-preview"),
     messages: await convertToModelMessages((body.messages ?? []) as Parameters<typeof convertToModelMessages>[0]),
-    tools,
+    tools: compatibleTools,
     system: `You are a UK data analyst. Answer with precision and cite the relevant data source/tool.
 Use geography codes and UK postcodes carefully. Prefer tool calls when factual data is needed.`,
     onFinish: async (event) => {

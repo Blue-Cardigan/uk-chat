@@ -183,6 +183,12 @@ function ProtectedApp() {
       const knownConversation = useAppStore.getState().conversations.some((conversation) => conversation.id === missingId);
       if (!knownConversation) return;
 
+      const nextConversations = useAppStore.getState().conversations.filter((conversation) => conversation.id !== missingId);
+      setConversations(nextConversations);
+      if (useAppStore.getState().activeConversationId === missingId) {
+        setActiveConversationId(nextConversations[0]?.id ?? null);
+      }
+
       try {
         const refreshed = await loadConversations();
         if (refreshed.some((conversation) => conversation.id === missingId)) return;
