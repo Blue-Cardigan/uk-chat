@@ -114,12 +114,30 @@ async function handleConversationsIndex(request: Request) {
 
   if (request.method === "POST") {
     const { title } = (await request.json()) as { title?: string };
-    const { data, error } = await supabase
-      .from("uk_chat_conversations")
-      .insert({ user_id: user.id, title: title?.trim() || "New chat" })
-      .select("id,title,created_at,updated_at")
-      .single();
-    if (error) return json({ error: error.message }, 400);
+    const payload = { user_id: user.id, title: title?.trim() || "New chat" };
+    const createConversation = () =>
+      supabase.from("uk_chat_conversations").insert(payload).select("id,title,created_at,updated_at").single();
+
+    let { data, error } = await createConversation();
+
+    // If profile creation and first conversation insert race, recover once.
+    if (error && error.code === "23503") {
+      try {
+        await ensureProfileExists(user);
+      } catch (ensureError) {
+        const message = ensureError instanceof Error ? ensureError.message : "Failed to prepare user profile";
+        return json({ error: message }, 500);
+      }
+      const retry = await createConversation();
+      data = retry.data;
+      error = retry.error;
+    }
+
+    if (error) {
+      const status = error.code?.startsWith("22") ? 400 : 500;
+      return json({ error: error.message }, status);
+    }
+
     return json(data, 201);
   }
 
@@ -173,11 +191,20 @@ async function handleConversationById(request: Request) {
   return json({ error: "Method not allowed" }, 405);
 }
 
+function isDevBypassEnabled(): boolean {
+  const maybeProcess = globalThis as { process?: { env?: Record<string, string | undefined> } };
+  return maybeProcess.process?.env?.DEV_BYPASS_EMAIL_GATE === "true";
+}
+
 async function handleCheckEmail(request: Request) {
   const { email } = (await request.json()) as { email?: string };
   const normalizedEmail = email?.trim().toLowerCase();
   if (!normalizedEmail) {
     return json({ error: "Email is required" }, 400);
+  }
+
+  if (isDevBypassEnabled()) {
+    return json({ allowed: true, message: "Dev bypass: any email accepted." });
   }
 
   const supabase = getSupabaseAdmin();
@@ -199,17 +226,20 @@ async function handleRecognizedSignIn(request: Request) {
   }
 
   const supabase = getSupabaseAdmin();
-  const { data: gateRow, error: gateError } = await supabase
-    .from("uk_chat_email_gate")
-    .select("email")
-    .eq("email", normalizedEmail)
-    .maybeSingle();
-  if (gateError) return json({ error: "Unable to verify email access right now" }, 500);
-  if (!gateRow) {
-    return json({
-      allowed: false,
-      message: "Email not found. Ask Jethro to get you access.",
-    });
+
+  if (!isDevBypassEnabled()) {
+    const { data: gateRow, error: gateError } = await supabase
+      .from("uk_chat_email_gate")
+      .select("email")
+      .eq("email", normalizedEmail)
+      .maybeSingle();
+    if (gateError) return json({ error: "Unable to verify email access right now" }, 500);
+    if (!gateRow) {
+      return json({
+        allowed: false,
+        message: "Email not found. Ask Jethro to get you access.",
+      });
+    }
   }
 
   const { data: linkData, error: linkError } = await supabase.auth.admin.generateLink({

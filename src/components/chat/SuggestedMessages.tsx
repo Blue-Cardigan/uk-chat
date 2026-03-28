@@ -13,8 +13,14 @@ const prompts: SuggestedPrompt[] = [
 export function SuggestedMessages({ onPick }: { onPick: (prompt: string) => void }) {
   return (
     <div className="grid gap-2 md:grid-cols-2">
-      {prompts.map((prompt) => (
-        <Button key={prompt.id} variant="secondary" className="h-auto justify-start py-2 text-left" onClick={() => onPick(prompt.label)}>
+      {prompts.map((prompt, index) => (
+        <Button
+          key={prompt.id}
+          variant="secondary"
+          className="h-auto animate-[fadeIn_200ms_ease-out_both] justify-start py-2 text-left"
+          style={{ animationDelay: `${index * 50}ms` }}
+          onClick={() => onPick(prompt.label)}
+        >
           {prompt.label}
         </Button>
       ))}

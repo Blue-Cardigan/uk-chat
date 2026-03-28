@@ -1,6 +1,7 @@
 import { Plus, Trash2 } from "lucide-react";
 import { Button, Card, Input } from "@/components/ui/primitives";
 import type { ChatConversation } from "@/lib/types";
+import { cn } from "@/lib/utils";
 
 export function LeftSidebar({
   conversations,
@@ -12,7 +13,7 @@ export function LeftSidebar({
 }: {
   conversations: ChatConversation[];
   activeConversationId: string | null;
-  onCreate: () => void;
+  onCreate: () => Promise<string | null>;
   onSelect: (id: string) => void;
   onDelete: (id: string) => void;
   onRename: (id: string, title: string) => void;
@@ -29,7 +30,10 @@ export function LeftSidebar({
         {conversations.map((conversation) => {
           const isActive = conversation.id === activeConversationId;
           return (
-            <Card key={conversation.id} className={isActive ? "border-(--color-primary)" : ""}>
+            <Card
+              key={conversation.id}
+              className={cn("animate-[slideUp_200ms_ease-out_both] transition-colors duration-200 ease-out", isActive ? "border-(--color-primary)" : "")}
+            >
               <button type="button" className="mb-2 w-full text-left text-sm font-medium" onClick={() => onSelect(conversation.id)}>
                 {conversation.title}
               </button>

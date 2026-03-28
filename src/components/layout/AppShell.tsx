@@ -5,6 +5,7 @@ import { RightSidebar } from "@/components/layout/RightSidebar";
 import { ChatView } from "@/components/chat/ChatView";
 import { useAppStore } from "@/lib/store";
 import type { ChatConversation } from "@/lib/types";
+import { cn } from "@/lib/utils";
 
 export function AppShell({
   conversations,
@@ -29,6 +30,13 @@ export function AppShell({
   const rightSidebarOpen = useAppStore((state) => state.rightSidebarOpen);
   const setSidebarOpen = useAppStore((state) => state.setSidebarOpen);
   const setRightSidebarOpen = useAppStore((state) => state.setRightSidebarOpen);
+  const desktopGridClass = sidebarOpen
+    ? rightSidebarOpen
+      ? "md:grid-cols-[280px_minmax(0,1fr)_420px]"
+      : "md:grid-cols-[280px_minmax(0,1fr)_0px]"
+    : rightSidebarOpen
+      ? "md:grid-cols-[0px_minmax(0,1fr)_420px]"
+      : "md:grid-cols-[0px_minmax(0,1fr)_0px]";
 
   return (
     <div className="flex h-screen flex-col bg-(--color-background) text-(--color-foreground)">
@@ -44,8 +52,14 @@ export function AppShell({
         </Button>
       </header>
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[280px_1fr_420px]">
-        <div className={sidebarOpen ? "block" : "hidden md:hidden"}>
+      <div className={cn("grid min-h-0 flex-1 grid-cols-1 md:transition-[grid-template-columns] md:duration-300 md:ease-out", desktopGridClass)}>
+        <div
+          className={cn(
+            sidebarOpen ? "block md:block" : "hidden md:block",
+            "overflow-hidden md:transition-[opacity,transform] md:duration-250 md:ease-out",
+            sidebarOpen ? "md:translate-x-0 md:opacity-100" : "md:pointer-events-none md:-translate-x-3 md:opacity-0",
+          )}
+        >
           <LeftSidebar
             conversations={conversations}
             activeConversationId={activeConversationId}
@@ -65,7 +79,13 @@ export function AppShell({
             />
           </Card>
         </main>
-        <div className={rightSidebarOpen ? "block" : "hidden md:hidden"}>
+        <div
+          className={cn(
+            rightSidebarOpen ? "block md:block" : "hidden md:block",
+            "overflow-hidden md:transition-[opacity,transform] md:duration-250 md:ease-out",
+            rightSidebarOpen ? "md:translate-x-0 md:opacity-100" : "md:pointer-events-none md:translate-x-3 md:opacity-0",
+          )}
+        >
           <RightSidebar />
         </div>
       </div>

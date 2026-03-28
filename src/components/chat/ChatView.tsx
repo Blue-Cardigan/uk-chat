@@ -45,8 +45,6 @@ export function ChatView({
   const { messages, sendMessage, status, setMessages } = useChat({
     transport: new DefaultChatTransport({
       api: "/api/chat",
-      headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
-      body: { conversationId, mcpToken },
     }),
   });
 
@@ -65,7 +63,13 @@ export function ChatView({
       setSubmitError("Could not create a conversation. Please try again.");
       return;
     }
-    sendMessage({ text });
+    sendMessage(
+      { text },
+      {
+        headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
+        body: { conversationId: ensuredConversationId, mcpToken },
+      },
+    );
   }
 
   useEffect(() => {
