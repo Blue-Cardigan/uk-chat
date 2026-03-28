@@ -2,13 +2,12 @@ import { useEffect, useRef, useState } from "react";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import type { UIMessage } from "ai";
-import { Star } from "lucide-react";
 import { Conversation } from "@/components/ai-elements/conversation";
 import { Message } from "@/components/ai-elements/message";
 import { ChatInput } from "@/components/chat/ChatInput";
 import { SuggestedMessages } from "@/components/chat/SuggestedMessages";
 import { useAppStore } from "@/lib/store";
-import { Button, Input } from "@/components/ui/primitives";
+import { Input } from "@/components/ui/primitives";
 import type { ChatConversation } from "@/lib/types";
 
 type Part = { type: string; [key: string]: unknown };
@@ -36,7 +35,6 @@ export function ChatView({
   authToken,
   onEnsureConversation,
   onRenameConversation,
-  onToggleStarConversation,
   onConversationMissing,
 }: {
   conversation: ChatConversation | null;
@@ -45,7 +43,6 @@ export function ChatView({
   authToken: string | null;
   onEnsureConversation: () => Promise<string | null>;
   onRenameConversation: (id: string, title: string) => void;
-  onToggleStarConversation: (id: string, starred: boolean) => void;
   onConversationMissing: (id: string) => Promise<void> | void;
 }) {
   const pushVizPayload = useAppStore((state) => state.pushVizPayload);
@@ -157,8 +154,8 @@ export function ChatView({
 
   return (
     <section className="flex h-full flex-col">
-      <div className="sticky top-0 z-20 border-b border-(--color-border) bg-(--color-background)/95 px-4 py-3 backdrop-blur-sm">
-        <div className="flex items-center justify-between gap-3">
+      <div className="sticky top-0 z-20 bg-(--color-background)/95 px-6 py-3 backdrop-blur-sm md:px-12">
+        <div className="flex items-center gap-3">
           {editingTitle && conversation ? (
             <form
               className="min-w-0 flex-1"
@@ -197,20 +194,10 @@ export function ChatView({
               {conversation?.title ?? "New conversation"}
             </button>
           )}
-          {conversation ? (
-            <Button
-              variant="ghost"
-              aria-label={conversation.starred ? "Unstar conversation" : "Star conversation"}
-              className={conversation.starred ? "text-amber-400" : ""}
-              onClick={() => onToggleStarConversation(conversation.id, !conversation.starred)}
-            >
-              <Star className="h-4 w-4" fill={conversation.starred ? "currentColor" : "none"} />
-            </Button>
-          ) : null}
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-4 py-6">
+      <div className="flex-1 overflow-y-auto px-6 py-6 md:px-12">
         {messages.length === 0 ? (
           <div className="mx-auto max-w-2xl space-y-4 pt-[20vh]">
             <h2 className="font-display text-2xl">Ask a UK question</h2>
@@ -228,7 +215,7 @@ export function ChatView({
         )}
       </div>
 
-      <div className="sticky bottom-0 border-t border-(--color-border) bg-(--color-background) px-4 py-3">
+      <div className="sticky bottom-0 border-t border-(--color-border) bg-(--color-background) px-6 py-3 md:px-12">
         {submitError ? <p className="mb-2 text-xs text-(--color-muted-foreground)">{submitError}</p> : null}
         <ChatInput onSubmit={(text) => void submitPrompt(text)} isStreaming={status === "streaming" || status === "submitted"} />
       </div>

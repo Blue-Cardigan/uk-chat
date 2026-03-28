@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { PanelLeftOpen, PanelRightClose, PanelRightOpen, X } from "lucide-react";
+import { Columns2, PanelLeftOpen, X } from "lucide-react";
 import { Button } from "@/components/ui/primitives";
 import { LeftSidebar } from "@/components/layout/LeftSidebar";
 import { RightSidebar } from "@/components/layout/RightSidebar";
@@ -137,11 +137,10 @@ export function AppShell({
           <Button
             variant="ghost"
             aria-label={rightSidebarOpen ? "Hide artifacts" : "Show artifacts"}
-            className="absolute right-3 top-3 z-30 h-8 gap-2 px-2 text-xs"
+            className="absolute right-3 top-3 z-30 h-8 w-8 p-0"
             onClick={() => setRightSidebarOpen(!rightSidebarOpen)}
           >
-            {rightSidebarOpen ? <PanelRightClose className="h-4 w-4" /> : <PanelRightOpen className="h-4 w-4" />}
-            Artifacts
+            <Columns2 className="h-4 w-4" />
           </Button>
           <ChatView
             conversation={activeConversation}
@@ -150,7 +149,6 @@ export function AppShell({
             authToken={authToken}
             onEnsureConversation={onCreateConversation}
             onRenameConversation={onRenameConversation}
-            onToggleStarConversation={onStarConversation}
             onConversationMissing={onConversationMissing}
           />
         </main>
