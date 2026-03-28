@@ -69,51 +69,109 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-function hasGeminiIncompatibleSchema(value: unknown, seen: WeakSet<object> = new WeakSet()): boolean {
-  if (!value || typeof value !== "object") return false;
-  if (seen.has(value as object)) return false;
-  seen.add(value as object);
-
-  if (Array.isArray(value)) {
-    return value.some((item) => hasGeminiIncompatibleSchema(item, seen));
-  }
-
-  const record = value as Record<string, unknown>;
-  // Gemini function declarations reject tuple-style array schemas.
-  if (Array.isArray(record.items) || Array.isArray(record.prefixItems)) return true;
-
-  // Several MCP schemas ship JSON Schema composition that Gemini rejects.
-  if (Array.isArray(record.anyOf) || Array.isArray(record.oneOf) || Array.isArray(record.allOf)) return true;
-
-  return Object.values(record).some((entry) => hasGeminiIncompatibleSchema(entry, seen));
+function inferArrayItemsFromPath(path: string[]): Record<string, unknown> {
+  const key = path[path.length - 1]?.toLowerCase() ?? "";
+  if (key === "bbox") return { type: "number" };
+  if (key.includes("record")) return { type: "object", additionalProperties: true };
+  return { type: "string" };
 }
 
-function filterGeminiCompatibleTools<T extends Record<string, unknown>>(tools: T): {
-  compatibleTools: T;
-  droppedToolNames: string[];
-} {
-  const compatible: Array<[string, unknown]> = [];
-  const droppedToolNames: string[] = [];
+function inferTupleItemsSchema(items: unknown[]): Record<string, unknown> {
+  const schemaTypes = items
+    .filter((item): item is Record<string, unknown> => isRecord(item))
+    .map((item) => item.type)
+    .filter((value): value is string => typeof value === "string");
+  if (schemaTypes.length === 0) return { type: "string" };
+  if (schemaTypes.every((kind) => kind === "integer" || kind === "number")) return { type: "number" };
+  if (schemaTypes.every((kind) => kind === "string")) return { type: "string" };
+  return { type: "string" };
+}
 
-  for (const [toolName, toolDefinition] of Object.entries(tools)) {
-    if (!toolDefinition || typeof toolDefinition !== "object") {
-      compatible.push([toolName, toolDefinition]);
-      continue;
-    }
+function normalizeGeminiSchemaInPlace(node: unknown, path: string[] = []): boolean {
+  let changed = false;
 
-    const candidate = toolDefinition as Record<string, unknown>;
-    const schemaCandidate = candidate.inputSchema ?? candidate.parameters ?? candidate;
-    if (hasGeminiIncompatibleSchema(schemaCandidate)) {
-      droppedToolNames.push(toolName);
-      continue;
+  if (Array.isArray(node)) {
+    for (const item of node) {
+      if (normalizeGeminiSchemaInPlace(item, path)) changed = true;
     }
-    compatible.push([toolName, toolDefinition]);
+    return changed;
+  }
+  if (!isRecord(node)) return false;
+
+  for (const unionKey of ["anyOf", "oneOf", "allOf"] as const) {
+    const unionValue = node[unionKey];
+    if (!Array.isArray(unionValue) || unionValue.length === 0) continue;
+    const preferred = unionValue.find((entry) => isRecord(entry)) ?? unionValue[0];
+    if (isRecord(preferred)) {
+      for (const [key, value] of Object.entries(preferred)) {
+        if (node[key] === undefined) node[key] = value;
+      }
+    }
+    delete node[unionKey];
+    changed = true;
   }
 
-  return {
-    compatibleTools: Object.fromEntries(compatible) as T,
-    droppedToolNames,
-  };
+  if (Array.isArray(node.prefixItems)) {
+    if (node.items === undefined) {
+      node.items = inferTupleItemsSchema(node.prefixItems);
+    }
+    delete node.prefixItems;
+    changed = true;
+  }
+
+  if (Array.isArray(node.items)) {
+    node.items = inferTupleItemsSchema(node.items);
+    changed = true;
+  }
+  if (node.type === "array" && !isRecord(node.items)) {
+    node.items = inferArrayItemsFromPath(path);
+    changed = true;
+  }
+
+  for (const [key, value] of Object.entries(node)) {
+    if (normalizeGeminiSchemaInPlace(value, [...path, key])) changed = true;
+  }
+
+  return changed;
+}
+
+function normalizeGeminiTools<T extends Record<string, unknown>>(tools: T): {
+  normalizedTools: T;
+  normalizedToolNames: string[];
+} {
+  const entries: Array<[string, unknown]> = [];
+  const normalizedToolNames: string[] = [];
+
+  for (const [toolName, toolDefinition] of Object.entries(tools)) {
+    if (!isRecord(toolDefinition)) {
+      entries.push([toolName, toolDefinition]);
+      continue;
+    }
+    const schemaKey = isRecord(toolDefinition.inputSchema)
+      ? "inputSchema"
+      : isRecord(toolDefinition.parameters)
+        ? "parameters"
+        : null;
+    if (!schemaKey) {
+      entries.push([toolName, toolDefinition]);
+      continue;
+    }
+
+    const schemaValue = toolDefinition[schemaKey];
+    let schemaCopy: unknown = schemaValue;
+    try {
+      schemaCopy = structuredClone(schemaValue);
+    } catch {
+      // Keep original schema object if clone fails.
+    }
+
+    const toolCopy: Record<string, unknown> = { ...toolDefinition, [schemaKey]: schemaCopy };
+    const changed = normalizeGeminiSchemaInPlace(toolCopy[schemaKey], [toolName, schemaKey]);
+    if (changed) normalizedToolNames.push(toolName);
+    entries.push([toolName, toolCopy]);
+  }
+
+  return { normalizedTools: Object.fromEntries(entries) as T, normalizedToolNames };
 }
 
 function sanitizeToolName(name: unknown): string | null {
@@ -293,11 +351,11 @@ async function handleChat(request: Request) {
     }
   }
 
-  const { compatibleTools, droppedToolNames } = filterGeminiCompatibleTools(tools);
-  if (droppedToolNames.length > 0) {
-    console.warn("[api/chat] Dropping Gemini-incompatible MCP tools", {
-      droppedCount: droppedToolNames.length,
-      droppedToolNames,
+  const { normalizedTools, normalizedToolNames } = normalizeGeminiTools(tools);
+  if (normalizedToolNames.length > 0) {
+    console.warn("[api/chat] Normalized Gemini-incompatible MCP schemas", {
+      normalizedCount: normalizedToolNames.length,
+      normalizedToolNames,
     });
   }
 
@@ -322,7 +380,7 @@ async function handleChat(request: Request) {
   const result = streamText({
     model: google("gemini-3-flash-preview"),
     messages: await convertToModelMessages((body.messages ?? []) as Parameters<typeof convertToModelMessages>[0]),
-    tools: compatibleTools,
+    tools: normalizedTools,
     system: `You are a UK data analyst. Answer with precision and cite the relevant data source/tool.
 Use geography codes and UK postcodes carefully. Prefer tool calls when factual data is needed.`,
     onFinish: async (event) => {
