@@ -70,9 +70,85 @@ function getAuthRedirectBase(request: Request): string {
 }
 
 type PersistedMessagePart = { type: string; [key: string]: unknown };
+type McpTransportType = "sse" | "http";
+type McpCandidate = { type: McpTransportType; url: string };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function buildMcpCandidates(configuredUrl: string): McpCandidate[] {
+  const raw = configuredUrl.trim();
+  const url = parseHttpUrl(raw);
+  if (!url) {
+    return [{ type: "sse", url: raw }];
+  }
+
+  const root = new URL(url.toString());
+  root.pathname = root.pathname.replace(/\/+$/, "");
+  const rootUrl = root.toString();
+  const path = root.pathname;
+  const looksLikeSse = /\/sse$/i.test(path);
+  const looksLikeMcp = /\/mcp$/i.test(path);
+
+  const candidates: McpCandidate[] = [];
+  const seen = new Set<string>();
+  const add = (type: McpTransportType, candidateUrl: string) => {
+    const key = `${type}:${candidateUrl}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    candidates.push({ type, url: candidateUrl });
+  };
+
+  add("sse", url.toString());
+  add("http", url.toString());
+
+  if (looksLikeSse) {
+    const base = url.toString().replace(/\/sse\/?$/i, "");
+    add("http", `${base}/mcp`);
+    add("http", base);
+  } else if (looksLikeMcp) {
+    const base = url.toString().replace(/\/mcp\/?$/i, "");
+    add("sse", `${base}/sse`);
+    add("sse", base);
+  } else {
+    add("sse", `${rootUrl}/sse`);
+    add("http", `${rootUrl}/mcp`);
+    add("http", rootUrl);
+  }
+
+  return candidates;
+}
+
+async function loadMcpToolsWithFallback(configuredUrl: string, token: string) {
+  const candidates = buildMcpCandidates(configuredUrl);
+  const attempts: Array<{ type: McpTransportType; url: string; error: string }> = [];
+
+  for (const candidate of candidates) {
+    try {
+      const mcpClient = await createMCPClient({
+        transport: {
+          type: candidate.type,
+          url: candidate.url,
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      });
+      const tools = await mcpClient.tools();
+      return { tools, connectedVia: candidate, attempts };
+    } catch (error) {
+      attempts.push({
+        type: candidate.type,
+        url: candidate.url,
+        error: errorMessage(error),
+      });
+    }
+  }
+
+  return { tools: null, connectedVia: null, attempts };
 }
 
 function inferArrayItemsFromPath(path: string[]): Record<string, unknown> {
@@ -329,37 +405,18 @@ async function handleChat(request: Request) {
   if (!conversation) return json({ error: "Conversation not found" }, 404);
 
   const configuredMcpUrl = env("MCP_SERVER_URL") ?? "https://mcp.explorethekingdom.co.uk/sse";
-  let tools: Awaited<ReturnType<Awaited<ReturnType<typeof createMCPClient>>["tools"]>>;
-  try {
-    const mcpClient = await createMCPClient({
-      transport: {
-        type: "sse",
-        url: configuredMcpUrl,
-        headers: { Authorization: `Bearer ${token}` },
-      },
+  const mcpLoad = await loadMcpToolsWithFallback(configuredMcpUrl, token);
+  if (!mcpLoad.tools) {
+    console.error("[api/chat] MCP tool connection failed", {
+      userId: user.id,
+      conversationId: body.conversationId,
+      configuredMcpUrl,
+      attempts: mcpLoad.attempts,
     });
-    tools = await mcpClient.tools();
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    const fallbackUrl = configuredMcpUrl.endsWith("/sse") ? null : `${configuredMcpUrl.replace(/\/+$/, "")}/sse`;
-    if (fallbackUrl && message.includes("404")) {
-      try {
-        const mcpClient = await createMCPClient({
-          transport: {
-            type: "sse",
-            url: fallbackUrl,
-            headers: { Authorization: `Bearer ${token}` },
-          },
-        });
-        tools = await mcpClient.tools();
-      } catch (fallbackError) {
-        const fallbackMessage = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
-        return json({ error: `Unable to connect to MCP tools (${fallbackMessage}).` }, 502);
-      }
-    } else {
-      return json({ error: `Unable to connect to MCP tools (${message}).` }, 502);
-    }
+    const details = mcpLoad.attempts.map((attempt) => `${attempt.type}:${attempt.url} -> ${attempt.error}`).join(" | ");
+    return json({ error: `Unable to connect to MCP tools (${details || "no attempts"}).` }, 502);
   }
+  const tools = mcpLoad.tools;
 
   const { normalizedTools, normalizedToolNames } = normalizeGeminiTools(tools);
   if (normalizedToolNames.length > 0) {
