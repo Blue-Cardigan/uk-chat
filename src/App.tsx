@@ -84,25 +84,25 @@ function ProtectedApp() {
       .maybeSingle()
       .then(async ({ data, error }) => {
         if (error) return;
-        if (data?.mcp_token) {
-          setMcpToken(data.mcp_token);
-          return;
-        }
         const email = session.user.email?.toLowerCase();
-        if (!email) return;
-        const { data: gate } = await supabase
-          .from("uk_chat_email_gate")
-          .select("pending_mcp_token")
-          .eq("email", email)
-          .maybeSingle();
-        const pendingToken = gate?.pending_mcp_token as string | null | undefined;
-        if (!pendingToken) return;
-        setMcpToken(pendingToken);
-        await supabase.from("uk_chat_profiles").update({ mcp_token: pendingToken }).eq("id", session.user.id);
-        await supabase
-          .from("uk_chat_email_gate")
-          .update({ claimed_at: new Date().toISOString() })
-          .eq("email", email);
+        let resolvedToken = (data?.mcp_token as string | null | undefined) ?? null;
+        if (email) {
+          const { data: gate } = await supabase
+            .from("uk_chat_email_gate")
+            .select("pending_mcp_token")
+            .eq("email", email)
+            .maybeSingle();
+          const pendingToken = gate?.pending_mcp_token as string | null | undefined;
+          if (pendingToken && pendingToken !== resolvedToken) {
+            resolvedToken = pendingToken;
+            await supabase.from("uk_chat_profiles").update({ mcp_token: pendingToken }).eq("id", session.user.id);
+            await supabase
+              .from("uk_chat_email_gate")
+              .update({ claimed_at: new Date().toISOString() })
+              .eq("email", email);
+          }
+        }
+        if (resolvedToken) setMcpToken(resolvedToken);
       });
   }, [loadConversations, session?.user.id, setActiveConversationId, setConversations]);
 

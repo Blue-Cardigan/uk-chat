@@ -72,9 +72,15 @@ function getAuthRedirectBase(request: Request): string {
 type PersistedMessagePart = { type: string; [key: string]: unknown };
 type McpTransportType = "sse" | "http";
 type McpCandidate = { type: McpTransportType; url: string };
+type McpAttempt = { type: McpTransportType; url: string; error: string };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function isSchemaWrapper(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  return "validate" in value || "jsonSchema" in value || "~standard" in value;
 }
 
 function errorMessage(error: unknown): string {
@@ -126,7 +132,7 @@ function buildMcpCandidates(configuredUrl: string): McpCandidate[] {
 
 async function loadMcpToolsWithFallback(configuredUrl: string, token: string) {
   const candidates = buildMcpCandidates(configuredUrl);
-  const attempts: Array<{ type: McpTransportType; url: string; error: string }> = [];
+  const attempts: McpAttempt[] = [];
 
   for (const candidate of candidates) {
     try {
@@ -149,6 +155,13 @@ async function loadMcpToolsWithFallback(configuredUrl: string, token: string) {
   }
 
   return { tools: null, connectedVia: null, attempts };
+}
+
+function isMcpUnauthorized(attempts: McpAttempt[]): boolean {
+  return attempts.some((attempt) => {
+    const message = attempt.error.toLowerCase();
+    return message.includes("401") || message.includes("unauthorized");
+  });
 }
 
 function inferArrayItemsFromPath(path: string[]): Record<string, unknown> {
@@ -229,10 +242,13 @@ function normalizeGeminiTools<T extends Record<string, unknown>>(tools: T): {
       entries.push([toolName, toolDefinition]);
       continue;
     }
-    const schemaKey = isRecord(toolDefinition.inputSchema)
-      ? "inputSchema"
-      : isRecord(toolDefinition.parameters)
-        ? "parameters"
+    // Normalize only raw JSON schema objects.
+    // Do not touch AI SDK schema wrappers (`inputSchema`) because cloning/mutating
+    // those can strip internal schema symbols and break tool preparation.
+    const schemaKey = isRecord(toolDefinition.parameters)
+      ? "parameters"
+      : isRecord(toolDefinition.inputSchema) && !isSchemaWrapper(toolDefinition.inputSchema)
+        ? "inputSchema"
         : null;
     if (!schemaKey) {
       entries.push([toolName, toolDefinition]);
@@ -393,7 +409,7 @@ async function handleChat(request: Request) {
   };
   const supabase = getSupabaseAdmin();
   const { data: profile } = await supabase.from("uk_chat_profiles").select("mcp_token").eq("id", user.id).single();
-  const token = body.mcpToken ?? profile?.mcp_token;
+  let token = body.mcpToken ?? profile?.mcp_token;
   if (!token) return json({ error: "Missing MCP token" }, 400);
   if (!body.conversationId) return json({ error: "Missing conversationId" }, 400);
   const { data: conversation } = await supabase
@@ -405,15 +421,66 @@ async function handleChat(request: Request) {
   if (!conversation) return json({ error: "Conversation not found" }, 404);
 
   const configuredMcpUrl = env("MCP_SERVER_URL") ?? "https://mcp.explorethekingdom.co.uk/sse";
-  const mcpLoad = await loadMcpToolsWithFallback(configuredMcpUrl, token);
+  let mcpLoad = await loadMcpToolsWithFallback(configuredMcpUrl, token);
+  if (!mcpLoad.tools && isMcpUnauthorized(mcpLoad.attempts)) {
+    const normalizedEmail = user.email?.trim().toLowerCase();
+    if (normalizedEmail) {
+      const { data: gate } = await supabase
+        .from("uk_chat_email_gate")
+        .select("pending_mcp_token")
+        .eq("email", normalizedEmail)
+        .maybeSingle();
+      const pendingToken = gate?.pending_mcp_token as string | null | undefined;
+
+      // Recover automatically when the pending token differs from the stale profile/body token.
+      if (pendingToken && pendingToken !== token) {
+        const retryLoad = await loadMcpToolsWithFallback(configuredMcpUrl, pendingToken);
+        if (retryLoad.tools) {
+          token = pendingToken;
+          mcpLoad = retryLoad;
+          await supabase.from("uk_chat_profiles").update({ mcp_token: pendingToken }).eq("id", user.id);
+          console.warn("[api/chat] Recovered from unauthorized MCP token using pending token", {
+            userId: user.id,
+            conversationId: body.conversationId,
+          });
+        } else {
+          console.error("[api/chat] Pending MCP token retry failed", {
+            userId: user.id,
+            conversationId: body.conversationId,
+            configuredMcpUrl,
+            attempts: retryLoad.attempts,
+          });
+        }
+      }
+    }
+  }
+
   if (!mcpLoad.tools) {
+    const details = mcpLoad.attempts.map((attempt) => `${attempt.type}:${attempt.url} -> ${attempt.error}`).join(" | ");
+    if (isMcpUnauthorized(mcpLoad.attempts)) {
+      await supabase.from("uk_chat_profiles").update({ mcp_token: null }).eq("id", user.id);
+      console.error("[api/chat] MCP token unauthorized after recovery attempts", {
+        userId: user.id,
+        conversationId: body.conversationId,
+        configuredMcpUrl,
+        attempts: mcpLoad.attempts,
+      });
+      return json(
+        {
+          error:
+            "Your MCP token is no longer valid. Please ask an admin to rotate your token, then refresh and try again.",
+          code: "MCP_TOKEN_UNAUTHORIZED",
+        },
+        401,
+      );
+    }
+
     console.error("[api/chat] MCP tool connection failed", {
       userId: user.id,
       conversationId: body.conversationId,
       configuredMcpUrl,
       attempts: mcpLoad.attempts,
     });
-    const details = mcpLoad.attempts.map((attempt) => `${attempt.type}:${attempt.url} -> ${attempt.error}`).join(" | ");
     return json({ error: `Unable to connect to MCP tools (${details || "no attempts"}).` }, 502);
   }
   const tools = mcpLoad.tools;
