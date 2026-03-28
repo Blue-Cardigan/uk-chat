@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen } from "lucide-react";
+import { useEffect, useState } from "react";
+import { PanelLeftClose, PanelLeftOpen, X } from "lucide-react";
 import { Button } from "@/components/ui/primitives";
 import { LeftSidebar } from "@/components/layout/LeftSidebar";
 import { RightSidebar } from "@/components/layout/RightSidebar";
@@ -36,21 +36,14 @@ export function AppShell({
   const setSidebarOpen = useAppStore((state) => state.setSidebarOpen);
   const setRightSidebarOpen = useAppStore((state) => state.setRightSidebarOpen);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const settingsRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!settingsOpen) return;
-    function onMouseDown(e: MouseEvent) {
-      if (settingsRef.current?.contains(e.target as Node)) return;
-      setSettingsOpen(false);
-    }
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape") setSettingsOpen(false);
     }
-    document.addEventListener("mousedown", onMouseDown);
     document.addEventListener("keydown", onKeyDown);
     return () => {
-      document.removeEventListener("mousedown", onMouseDown);
       document.removeEventListener("keydown", onKeyDown);
     };
   }, [settingsOpen]);
@@ -80,17 +73,6 @@ export function AppShell({
             Chat
           </h1>
         </div>
-        <Button
-          variant="ghost"
-          className="group transition-transform duration-200 ease-out hover:scale-105 active:scale-95"
-          onClick={() => setRightSidebarOpen(!rightSidebarOpen)}
-        >
-          {rightSidebarOpen ? (
-            <PanelRightClose className="h-4 w-4 transition-transform duration-200 ease-out group-hover:rotate-6" />
-          ) : (
-            <PanelRightOpen className="h-4 w-4 transition-transform duration-200 ease-out group-hover:-rotate-6" />
-          )}
-        </Button>
       </header>
 
       <div className={cn("grid min-h-0 flex-1 grid-cols-1 md:transition-[grid-template-columns] md:duration-300 md:ease-out", desktopGridClass)}>
@@ -130,16 +112,6 @@ export function AppShell({
             onEnsureConversation={onCreateConversation}
             onConversationMissing={onConversationMissing}
           />
-          {settingsOpen ? (
-            <div
-              ref={settingsRef}
-              className="absolute inset-0 z-30 flex items-start justify-center overflow-y-auto bg-(--color-background)/95 backdrop-blur-sm"
-            >
-              <div className="w-full max-w-md px-4 py-12">
-                {settingsContent}
-              </div>
-            </div>
-          ) : null}
         </main>
 
         <div className={cn(rightSidebarOpen ? "fixed inset-0 z-40 md:relative md:inset-auto md:z-auto md:block" : "hidden md:block")}>
@@ -162,6 +134,24 @@ export function AppShell({
           </div>
         </div>
       </div>
+      {settingsOpen ? (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-(--color-background)/95 backdrop-blur-sm">
+          <div className="flex justify-end p-3">
+            <Button
+              type="button"
+              variant="ghost"
+              aria-label="Close settings"
+              className="h-8 w-8 p-0 opacity-70 hover:opacity-100"
+              onClick={() => setSettingsOpen(false)}
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
+          <div className="mx-auto w-full max-w-md px-4 pb-8">
+            {settingsContent}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

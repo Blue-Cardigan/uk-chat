@@ -90,7 +90,9 @@ export function LeftSidebar({
                   "group relative flex items-center gap-1 rounded-md px-2 py-2 sm:py-1 transition-colors duration-200 ease-out",
                   isActive
                     ? "bg-[color-mix(in_oklch,var(--color-primary)_14%,var(--color-sidebar)_86%)]"
-                    : "hover:bg-[color-mix(in_oklch,var(--color-foreground)_6%,transparent)]",
+                    : isMenuOpen
+                      ? ""
+                      : "hover:bg-[color-mix(in_oklch,var(--color-foreground)_6%,transparent)]",
                 )}
               >
                 <button
@@ -124,7 +126,7 @@ export function LeftSidebar({
                 </Button>
 
                 {isMenuOpen ? (
-                  <div ref={menuRef} className="absolute right-0 top-10 z-10 min-w-36 rounded-md border border-(--color-border) bg-(--color-card) p-1 shadow-sm">
+                  <div ref={menuRef} className="absolute right-0 top-10 z-10 min-w-36 rounded-md border border-(--color-border) bg-(--color-card) p-1 shadow-lg">
                     <button
                       type="button"
                       className="w-full rounded px-2 py-1 text-left text-xs font-medium hover:bg-[color-mix(in_oklch,var(--color-foreground)_6%,transparent)]"

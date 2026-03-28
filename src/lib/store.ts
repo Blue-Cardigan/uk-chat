@@ -32,6 +32,7 @@ export const useAppStore = create<AppState>((set) => ({
   pushVizPayload: (payload) =>
     set((state) => ({
       vizPayloads: [payload, ...state.vizPayloads].slice(0, 20),
+      rightSidebarOpen: true,
     })),
   clearVizPayloads: () => set({ vizPayloads: [] }),
 }));
