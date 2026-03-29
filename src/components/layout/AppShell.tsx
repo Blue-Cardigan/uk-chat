@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Columns2, PanelLeftOpen, X } from "lucide-react";
+import { BarChart3, ChevronLeft, PanelLeftOpen, X } from "lucide-react";
 import { Button } from "@/components/ui/primitives";
 import { LeftSidebar } from "@/components/layout/LeftSidebar";
 import { RightSidebar } from "@/components/layout/RightSidebar";
@@ -131,17 +131,20 @@ export function AppShell({
               className="absolute left-3 top-3 z-30 h-8 w-8 p-0"
               onClick={() => setSidebarOpen(true)}
             >
-              <PanelLeftOpen className="h-4 w-4" />
+              <ChevronLeft className="h-4 w-4 md:hidden" />
+              <PanelLeftOpen className="hidden h-4 w-4 md:block" />
             </Button>
           ) : null}
-          <Button
-            variant="ghost"
-            aria-label={rightSidebarOpen ? "Hide artifacts" : "Show artifacts"}
-            className="absolute right-3 top-3 z-30 h-8 w-8 p-0"
-            onClick={() => setRightSidebarOpen(!rightSidebarOpen)}
-          >
-            <Columns2 className="h-4 w-4" />
-          </Button>
+          {!rightSidebarOpen ? (
+            <Button
+              variant="ghost"
+              aria-label="Show artifacts"
+              className="absolute right-3 top-3 z-30 h-8 w-8 p-0"
+              onClick={() => setRightSidebarOpen(true)}
+            >
+              <BarChart3 className="h-4 w-4" />
+            </Button>
+          ) : null}
           <ChatView
             conversation={activeConversation}
             conversationId={activeConversationId}
@@ -164,8 +167,8 @@ export function AppShell({
           ) : null}
           <div
             className={cn(
-              "absolute right-0 top-0 h-full max-w-[92vw] md:relative md:h-full md:w-full md:max-w-none md:transition-[opacity,transform] md:duration-250 md:ease-out",
-              "w-[320px]",
+              "absolute right-0 top-0 h-full w-full md:relative md:h-full md:w-full md:max-w-none md:transition-[opacity,transform] md:duration-250 md:ease-out",
+              "md:w-[320px]",
               rightSidebarOpen ? "translate-x-0 opacity-100" : "translate-x-full opacity-0",
               rightSidebarOpen ? "md:translate-x-0 md:opacity-100" : "md:pointer-events-none md:translate-x-3 md:opacity-0",
             )}

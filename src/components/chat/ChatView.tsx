@@ -11,6 +11,8 @@ import { useAppStore } from "@/lib/store";
 import { isChartArtifactCandidate } from "@/lib/viz-registry";
 import { Input } from "@/components/ui/primitives";
 import type { ChatConversation } from "@/lib/types";
+import { parseDocuments, type ParsedDocument } from "@/lib/document-parser";
+import type { PromptInputSubmitPayload } from "@/components/ai-elements/prompt-input";
 
 type Part = { type: string; [key: string]: unknown };
 type PersistedMessage = {
@@ -26,6 +28,12 @@ type ToolsCatalogResponse = {
   nextOffset?: number | null;
   hasMore?: boolean;
 };
+type ToolsCacheEntry = {
+  items: ChatToolOption[];
+  totalCount: number;
+  nextOffset: number | null;
+  hasMore: boolean;
+};
 type ModelUsageResponse = {
   banner: string | null;
   approaching: boolean;
@@ -40,6 +48,13 @@ async function safeJson<T>(response: Response): Promise<T | null> {
   } catch {
     return null;
   }
+}
+
+function formatDocumentFailures(failures: Array<{ name: string; error: string }>): string {
+  if (failures.length === 0) return "";
+  const topFailures = failures.slice(0, 3).map((failure) => `${failure.name}: ${failure.error}`);
+  const suffix = failures.length > 3 ? ` (+${failures.length - 3} more)` : "";
+  return `Some documents could not be used: ${topFailures.join(" | ")}${suffix}`;
 }
 
 export function ChatView({
@@ -65,15 +80,16 @@ export function ChatView({
   const [editingTitle, setEditingTitle] = useState(false);
   const [draftTitle, setDraftTitle] = useState("");
   const [selectedModelId, setSelectedModelId] = useState<ChatModelId>(DEFAULT_CHAT_MODEL_ID);
-  const [toolsLoading, setToolsLoading] = useState(true);
+  const [toolsLoading, setToolsLoading] = useState(false);
   const [toolsLoadingMore, setToolsLoadingMore] = useState(false);
-  const [toolsQuery, setToolsQuery] = useState("");
+  const [toolsQuery, setToolsQuery] = useState<string | null>(null);
   const [tools, setTools] = useState<ChatToolOption[]>([]);
   const [toolsTotalCount, setToolsTotalCount] = useState(0);
   const [toolsNextOffset, setToolsNextOffset] = useState<number | null>(0);
   const [toolsHasMore, setToolsHasMore] = useState(false);
   const [selectedTools, setSelectedTools] = useState<ChatToolOption[]>([]);
   const [usageBanner, setUsageBanner] = useState<string | null>(null);
+  const toolsCacheRef = useRef<Map<string, ToolsCacheEntry>>(new Map());
   const onMissingRef = useRef(onConversationMissing);
   onMissingRef.current = onConversationMissing;
 
@@ -81,15 +97,15 @@ export function ChatView({
     async ({
       query,
       offset,
-      append,
       signal,
     }: {
       query: string;
       offset: number;
-      append: boolean;
       signal: AbortSignal;
-    }) => {
-      if (!authToken || !mcpToken) return;
+    }): Promise<ToolsCacheEntry> => {
+      if (!authToken || !mcpToken) {
+        throw new Error("Missing auth or MCP token.");
+      }
       const response = await fetch("/api/chat/tools", {
         method: "POST",
         headers: {
@@ -101,22 +117,22 @@ export function ChatView({
       });
       if (!response.ok) throw new Error(`Failed to load tools (${response.status})`);
       const payload = (await safeJson<ToolsCatalogResponse>(response)) ?? {};
-      const incoming = payload.items ?? payload.tools ?? [];
-      setTools((prev) => {
-        if (!append) return incoming;
-        const map = new Map(prev.map((tool) => [tool.name, tool] as const));
-        incoming.forEach((tool) => map.set(tool.name, tool));
-        return [...map.values()];
-      });
-      const totalCount = payload.totalCount ?? (append ? toolsTotalCount : incoming.length);
+      const items = payload.items ?? payload.tools ?? [];
+      const totalCount = payload.totalCount ?? items.length;
       const nextOffset = payload.nextOffset ?? null;
       const hasMore = payload.hasMore ?? nextOffset !== null;
-      setToolsTotalCount(totalCount);
-      setToolsNextOffset(nextOffset);
-      setToolsHasMore(hasMore);
+      return { items, totalCount, nextOffset, hasMore };
     },
-    [authToken, mcpToken, toolsTotalCount],
+    [authToken, mcpToken],
   );
+
+  useEffect(() => {
+    toolsCacheRef.current.clear();
+    setTools([]);
+    setToolsTotalCount(0);
+    setToolsNextOffset(0);
+    setToolsHasMore(false);
+  }, [authToken, mcpToken]);
 
   useEffect(() => {
     if (!authToken || !mcpToken) {
@@ -127,29 +143,58 @@ export function ChatView({
       setToolsNextOffset(0);
       return;
     }
+    if (toolsQuery === null) {
+      setToolsLoading(false);
+      setToolsLoadingMore(false);
+      return;
+    }
+    const queryKey = toolsQuery.trim().toLowerCase();
+    const cached = toolsCacheRef.current.get(queryKey);
+    if (cached) {
+      setTools(cached.items);
+      setToolsTotalCount(cached.totalCount);
+      setToolsNextOffset(cached.nextOffset);
+      setToolsHasMore(cached.hasMore);
+      setToolsLoading(false);
+      return;
+    }
+
     const abortController = new AbortController();
+    const timeoutId = window.setTimeout(() => {
+      void fetchToolsPage({
+        query: queryKey,
+        offset: 0,
+        signal: abortController.signal,
+      })
+        .then((page) => {
+          if (abortController.signal.aborted || !page) return;
+          toolsCacheRef.current.set(queryKey, page);
+          setTools(page.items);
+          setToolsTotalCount(page.totalCount);
+          setToolsNextOffset(page.nextOffset);
+          setToolsHasMore(page.hasMore);
+        })
+        .catch(() => {
+          if (abortController.signal.aborted) return;
+          setTools([]);
+          setToolsHasMore(false);
+          setToolsNextOffset(null);
+        })
+        .finally(() => {
+          if (!abortController.signal.aborted) setToolsLoading(false);
+        });
+    }, 160);
+
     setToolsLoading(true);
     setToolsLoadingMore(false);
     setTools([]);
     setToolsNextOffset(0);
     setToolsHasMore(false);
     setToolsTotalCount(0);
-    void fetchToolsPage({
-      query: toolsQuery,
-      offset: 0,
-      append: false,
-      signal: abortController.signal,
-    })
-      .catch(() => {
-        if (abortController.signal.aborted) return;
-        setTools([]);
-        setToolsHasMore(false);
-        setToolsNextOffset(null);
-      })
-      .finally(() => {
-        if (!abortController.signal.aborted) setToolsLoading(false);
-      });
-    return () => abortController.abort();
+    return () => {
+      window.clearTimeout(timeoutId);
+      abortController.abort();
+    };
   }, [authToken, mcpToken, fetchToolsPage, toolsQuery]);
 
   useEffect(() => {
@@ -183,7 +228,8 @@ export function ChatView({
     },
   });
 
-  async function submitPrompt(text: string) {
+  async function submitPrompt(payload: PromptInputSubmitPayload) {
+    const text = payload.text;
     setSubmitError(null);
     if (!authToken) {
       setSubmitError("You need to sign in before sending a message.");
@@ -202,11 +248,26 @@ export function ChatView({
       selectedTools.length > 0
         ? `Use these tools when relevant: ${selectedTools.map((tool) => `/${tool.name}`).join(" ")}\n\n`
         : "";
+    let parsedDocuments: ParsedDocument[] = [];
+    if (payload.documents.length > 0) {
+      const parsedResult = await parseDocuments(payload.documents);
+      parsedDocuments = parsedResult.documents;
+      if (parsedResult.failures.length > 0) {
+        setSubmitError(formatDocumentFailures(parsedResult.failures));
+      }
+      if (parsedDocuments.length === 0) {
+        if (parsedResult.failures.length === 0) {
+          setSubmitError("No readable text could be extracted from the selected documents.");
+        }
+        return;
+      }
+    }
+
     sendMessage(
       { text: `${toolPrefix}${text}` },
       {
         headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
-        body: { conversationId: ensuredConversationId, mcpToken, modelId: selectedModelId },
+        body: { conversationId: ensuredConversationId, mcpToken, modelId: selectedModelId, documents: parsedDocuments },
       },
     );
     setSelectedTools([]);
@@ -223,23 +284,46 @@ export function ChatView({
     });
   }
 
-  function handleToolsQueryChange(query: string) {
+  function handleToolsQueryChange(query: string | null) {
     setToolsQuery(query);
   }
 
   function handleLoadMoreTools() {
     if (!authToken || !mcpToken) return;
+    if (toolsQuery === null) return;
     if (!toolsHasMore || toolsLoadingMore || toolsNextOffset == null) return;
     const abortController = new AbortController();
     setToolsLoadingMore(true);
+    const queryKey = toolsQuery.trim().toLowerCase();
     void fetchToolsPage({
-      query: toolsQuery,
+      query: queryKey,
       offset: toolsNextOffset,
-      append: true,
       signal: abortController.signal,
-    }).finally(() => {
-      setToolsLoadingMore(false);
-    });
+    })
+      .then((page) => {
+        if (abortController.signal.aborted || !page) return;
+        setTools((prev) => {
+          const map = new Map(prev.map((tool) => [tool.name, tool] as const));
+          page.items.forEach((tool) => map.set(tool.name, tool));
+          const merged = [...map.values()];
+          toolsCacheRef.current.set(queryKey, {
+            items: merged,
+            totalCount: page.totalCount,
+            nextOffset: page.nextOffset,
+            hasMore: page.hasMore,
+          });
+          return merged;
+        });
+        setToolsTotalCount(page.totalCount);
+        setToolsNextOffset(page.nextOffset);
+        setToolsHasMore(page.hasMore);
+      })
+      .catch(() => {
+        // Non-blocking incremental load.
+      })
+      .finally(() => {
+        setToolsLoadingMore(false);
+      });
   }
 
   async function refreshUsageBanner() {
@@ -357,8 +441,8 @@ export function ChatView({
 
   return (
     <section className="flex h-full flex-col">
-      <div className="sticky top-0 z-20 bg-(--color-background)/95 px-6 py-3 backdrop-blur-sm md:px-12">
-        <div className="flex items-center gap-3">
+      <div className="sticky top-0 z-20 bg-(--color-background)/95 px-12 py-3 backdrop-blur-sm md:px-12">
+        <div className="flex items-center justify-center gap-3 text-center md:justify-start md:text-left">
           {editingTitle && conversation ? (
             <form
               className="min-w-0 flex-1"
@@ -385,7 +469,7 @@ export function ChatView({
           ) : (
             <button
               type="button"
-              className="min-w-0 truncate text-left text-sm font-medium hover:opacity-80"
+              className="min-w-0 truncate text-center text-sm font-medium hover:opacity-80 md:text-left"
               onClick={() => {
                 if (!conversation) return;
                 setDraftTitle(conversation.title);
@@ -407,7 +491,7 @@ export function ChatView({
             <p className="text-sm text-(--color-muted-foreground)">
               Answers are grounded in live UK data tools and rendered with maps, dashboards, and synthetic personas.
             </p>
-            <SuggestedMessages onPick={(text) => void submitPrompt(text)} />
+            <SuggestedMessages onPick={(text) => void submitPrompt({ text, documents: [] })} />
           </div>
         ) : (
           <Conversation>
@@ -425,7 +509,7 @@ export function ChatView({
         ) : null}
         {submitError ? <p className="mb-2 text-xs text-(--color-muted-foreground)">{submitError}</p> : null}
         <ChatInput
-          onSubmit={(text) => void submitPrompt(text)}
+          onSubmit={(payload) => void submitPrompt(payload)}
           isStreaming={status === "streaming" || status === "submitted"}
           modelId={selectedModelId}
           onModelChange={setSelectedModelId}

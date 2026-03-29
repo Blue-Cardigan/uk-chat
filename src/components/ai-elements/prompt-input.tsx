@@ -1,8 +1,56 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUp, AudioLines, Check, Plus, Wrench, X } from "lucide-react";
+import { ArrowUp, Check, Plus, Wrench, X } from "lucide-react";
 import { Button, Textarea } from "@/components/ui/primitives";
 import type { ChatModelConfig, ChatModelId } from "@/lib/chat-models";
 import type { ChatToolOption } from "@/components/chat/ChatInput";
+
+const ACCEPTED_DOCUMENT_EXTENSIONS = new Set(["pdf", "txt", "md", "markdown", "csv", "json", "docx", "xlsx"]);
+const ACCEPTED_DOCUMENT_MIME_TYPES = new Set([
+  "application/pdf",
+  "text/plain",
+  "text/markdown",
+  "text/csv",
+  "application/csv",
+  "application/json",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.ms-excel",
+  "application/octet-stream",
+]);
+const MAX_DOCUMENT_SIZE_BYTES = 10 * 1024 * 1024;
+
+export type PromptInputSubmitPayload = {
+  text: string;
+  documents: File[];
+};
+
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  const exponent = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  const value = bytes / 1024 ** exponent;
+  return `${value >= 10 || exponent === 0 ? Math.round(value) : value.toFixed(1)} ${units[exponent]}`;
+}
+
+function getExtension(fileName: string): string {
+  const segments = fileName.toLowerCase().split(".");
+  return segments.length > 1 ? (segments.at(-1) ?? "") : "";
+}
+
+function validateDocument(file: File): string | null {
+  const extension = getExtension(file.name);
+  const mimeType = file.type.toLowerCase();
+  if (!ACCEPTED_DOCUMENT_EXTENSIONS.has(extension)) {
+    return `${file.name} is not supported. Upload PDF, TXT, Markdown, CSV, JSON, DOCX, or XLSX files.`;
+  }
+  if (mimeType && !ACCEPTED_DOCUMENT_MIME_TYPES.has(mimeType)) {
+    return `${file.name} has an unsupported format (${mimeType}).`;
+  }
+  if (file.size > MAX_DOCUMENT_SIZE_BYTES) {
+    return `${file.name} is too large (${formatBytes(file.size)}). Max file size is ${formatBytes(MAX_DOCUMENT_SIZE_BYTES)}.`;
+  }
+  return null;
+}
 
 export function PromptInput({
   onSubmit,
@@ -20,7 +68,7 @@ export function PromptInput({
   onToolsQueryChange,
   onLoadMoreTools,
 }: {
-  onSubmit: (text: string) => void;
+  onSubmit: (payload: PromptInputSubmitPayload) => void;
   isLoading?: boolean;
   placeholder?: string;
   modelId: ChatModelId;
@@ -32,7 +80,7 @@ export function PromptInput({
   toolsLoadingMore: boolean;
   selectedTools: ChatToolOption[];
   onToggleToolSelection: (tool: ChatToolOption) => void;
-  onToolsQueryChange: (query: string) => void;
+  onToolsQueryChange: (query: string | null) => void;
   onLoadMoreTools: () => void;
 }) {
   const MENU_HEIGHT = 256;
@@ -41,10 +89,13 @@ export function PromptInput({
   const OVERSCAN = 120;
 
   const [value, setValue] = useState("");
+  const [selectedDocuments, setSelectedDocuments] = useState<File[]>([]);
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [slashMenuIndex, setSlashMenuIndex] = useState(0);
   const [menuScrollTop, setMenuScrollTop] = useState(0);
   const formRef = useRef<HTMLFormElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const canSubmit = value.trim().length > 0 && !isLoading;
   const slashQuery = useMemo(() => {
     const trimmed = value.trimStart();
@@ -69,7 +120,7 @@ export function PromptInput({
     const groups: Array<{ id: string; label: string; tools: ChatToolOption[] }> = [];
     if (isEmptySlashQuery) {
       const recommended = slashMatches.filter((tool) => tool.recommended);
-      if (recommended.length > 0) groups.push({ id: "recommended", label: "Recommended", tools: recommended });
+      if (recommended.length > 0) groups.push({ id: "recommended", label: "", tools: recommended });
       const byType: Record<"data" | "analysis" | "system", ChatToolOption[]> = {
         data: nonRecommended.filter((tool) => tool.category === "data"),
         analysis: nonRecommended.filter((tool) => tool.category === "analysis"),
@@ -121,8 +172,11 @@ export function PromptInput({
   function handleSubmit() {
     const trimmed = value.trim();
     if (!trimmed) return;
-    onSubmit(trimmed);
+    onSubmit({ text: trimmed, documents: selectedDocuments });
     setValue("");
+    setSelectedDocuments([]);
+    setAttachmentError(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
   function clearSlashPrefix(current: string) {
@@ -134,12 +188,32 @@ export function PromptInput({
     setValue((current) => clearSlashPrefix(current));
   }
 
+  function handleFileSelection(list: FileList | null) {
+    if (!list || list.length === 0) return;
+    const nextFiles = Array.from(list);
+    const firstError = nextFiles.map(validateDocument).find((error): error is string => Boolean(error)) ?? null;
+    if (firstError) {
+      setAttachmentError(firstError);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      return;
+    }
+    setAttachmentError(null);
+    setSelectedDocuments((current) => {
+      const byKey = new Map(current.map((file) => [`${file.name}:${file.size}:${file.lastModified}`, file] as const));
+      nextFiles.forEach((file) => {
+        byKey.set(`${file.name}:${file.size}:${file.lastModified}`, file);
+      });
+      return [...byKey.values()];
+    });
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
   useEffect(() => {
     setSlashMenuIndex(0);
   }, [slashQuery, itemRows.length]);
 
   useEffect(() => {
-    onToolsQueryChange(showSlashMenu ? slashQuery?.trim() ?? "" : "");
+    onToolsQueryChange(showSlashMenu ? slashQuery?.trim() ?? "" : null);
   }, [onToolsQueryChange, showSlashMenu, slashQuery]);
 
   useEffect(() => {
@@ -174,6 +248,28 @@ export function PromptInput({
               onClick={() => onToggleToolSelection(tool)}
             >
               <span>/{tool.name}</span>
+              <X className="h-3 w-3" />
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {selectedDocuments.length > 0 ? (
+        <div className="mb-2 flex flex-wrap gap-1.5">
+          {selectedDocuments.map((document) => (
+            <button
+              key={`${document.name}:${document.size}:${document.lastModified}`}
+              type="button"
+              className="inline-flex items-center gap-1 rounded-full border border-(--color-border) bg-(--color-card) px-2 py-1 text-xs"
+              onClick={() =>
+                setSelectedDocuments((current) =>
+                  current.filter(
+                    (file) => !(file.name === document.name && file.size === document.size && file.lastModified === document.lastModified),
+                  ),
+                )
+              }
+            >
+              <span className="max-w-[180px] truncate">{document.name}</span>
+              <span className="text-(--color-muted-foreground)">({formatBytes(document.size)})</span>
               <X className="h-3 w-3" />
             </button>
           ))}
@@ -293,14 +389,25 @@ export function PromptInput({
             handleSubmit();
           }
         }}
-        className="min-h-[86px] resize-none border-0 bg-transparent px-1 py-1.5 text-[15px] leading-relaxed placeholder:text-(--color-muted-foreground) focus:ring-0"
+        className="min-h-[52px] resize-none border-0 bg-transparent px-1 py-1.5 text-[15px] leading-relaxed placeholder:text-(--color-muted-foreground) focus:ring-0 md:min-h-[86px]"
       />
+      {attachmentError ? <p className="mt-1 text-xs text-(--color-muted-foreground)">{attachmentError}</p> : null}
       <div className="mt-2 flex items-center justify-between">
+        <input
+          ref={fileInputRef}
+          type="file"
+          className="sr-only"
+          multiple
+          accept=".pdf,.txt,.md,.markdown,.csv,.json,.docx,.xlsx,text/plain,text/markdown,text/csv,application/json,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+          onChange={(event) => handleFileSelection(event.currentTarget.files)}
+        />
         <Button
           type="button"
           variant="ghost"
           aria-label="Add attachment"
           className="h-8 w-8 rounded-full p-0 text-(--color-muted-foreground) hover:bg-[color-mix(in_oklch,var(--color-card)_60%,var(--color-foreground)_12%)]"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={Boolean(isLoading)}
         >
           <Plus className="h-4 w-4" />
         </Button>
@@ -331,17 +438,7 @@ export function PromptInput({
             >
               <ArrowUp className="h-4 w-4" />
             </Button>
-          ) : (
-            <Button
-              type="button"
-              variant="ghost"
-              disabled
-              className="h-9 w-9 rounded-xl p-0 text-(--color-muted-foreground)"
-              aria-label={isLoading ? "Streaming response" : "Ready to type"}
-            >
-              <AudioLines className="h-4 w-4" />
-            </Button>
-          )}
+          ) : null}
         </div>
       </div>
     </form>
