@@ -797,7 +797,7 @@ async function handleChat(request: Request) {
       ignoreIncompleteToolCalls: true,
     }),
     tools: normalizedTools as Parameters<typeof streamText>[0]["tools"],
-    stopWhen: stepCountIs(5),
+    stopWhen: stepCountIs(10),
     system: `You are a UK data analyst. Answer with precision and cite the relevant data source/tool.
 Use geography codes and UK postcodes carefully. Prefer tool calls when factual data is needed.`,
     onFinish: async (event) => {
