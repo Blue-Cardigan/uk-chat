@@ -5,6 +5,7 @@ import { waitUntil } from "@vercel/functions";
 import { CHAT_SUPPORT_CONTACT, getChatModelConfig } from "./_lib/chat-models.js";
 import { onboardUser } from "./_lib/onboarding.js";
 import { ensureAdmin, ensureAdminOrBootstrap, getSupabaseAdmin, getUserFromRequest, json } from "./_lib/server.js";
+import { getSystemPrompt } from "./_lib/system-prompt.js";
 
 function pathParts(request: Request) {
   const pathname = new URL(request.url).pathname;
@@ -798,8 +799,7 @@ async function handleChat(request: Request) {
     }),
     tools: normalizedTools as Parameters<typeof streamText>[0]["tools"],
     stopWhen: stepCountIs(10),
-    system: `You are a UK data analyst. Answer with precision and cite the relevant data source/tool.
-Use geography codes and UK postcodes carefully. Prefer tool calls when factual data is needed.`,
+    system: getSystemPrompt(),
     onFinish: async (event) => {
       const persistPromise = (async () => {
         const assistantParts = buildAssistantPartsFromFinishEvent(event);
