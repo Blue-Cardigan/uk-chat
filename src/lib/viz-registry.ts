@@ -72,6 +72,13 @@ export const showcaseVisualizations: React.ComponentType[] = [
 
 const chartToolNames = new Set<string>(["boe_series", "metoffice_fetchSeries", "dft_roadTraffic"]);
 
+export function normalizeVizToolName(toolName: string): string {
+  return toolName
+    .trim()
+    .replace(/[^a-zA-Z0-9_]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
@@ -84,6 +91,6 @@ function hasChartLikeShape(value: unknown): boolean {
 }
 
 export function isChartArtifactCandidate(toolName: string, data: unknown): boolean {
-  if (chartToolNames.has(toolName)) return true;
+  if (chartToolNames.has(normalizeVizToolName(toolName))) return true;
   return hasChartLikeShape(data);
 }

@@ -1,13 +1,14 @@
 import type { VizPayload } from "@/lib/types";
-import { toolToVisualization } from "@/lib/viz-registry";
+import { normalizeVizToolName, toolToVisualization } from "@/lib/viz-registry";
 import { VisualizationCard } from "@/components/viz/VisualizationCard";
 
 export function VizRouter({ payload }: { payload: VizPayload }) {
-  const Component = toolToVisualization[payload.toolName];
+  const normalizedToolName = normalizeVizToolName(payload.toolName);
+  const Component = toolToVisualization[normalizedToolName];
   if (!Component) {
     return (
       <VisualizationCard title={payload.title ?? payload.toolName}>
-        <pre className="overflow-x-auto rounded-md bg-[var(--color-background)] p-2 text-xs">
+        <pre className="overflow-x-auto rounded-md bg-(--color-background) p-2 text-xs">
           {JSON.stringify(payload.data, null, 2)}
         </pre>
       </VisualizationCard>

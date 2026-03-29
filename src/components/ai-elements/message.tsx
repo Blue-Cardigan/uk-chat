@@ -140,10 +140,16 @@ function ReasoningPartView({ part }: { part: UiPart }) {
     p.text ??
     (p.details?.filter((d) => d.type === "text").map((d) => d.text ?? d.data ?? "").join("") || "");
   if (!text) return null;
+  const trimmed = text.trim();
+  const isProviderRedacted =
+    trimmed === "[REDACTED]" ||
+    trimmed.toLowerCase() === "redacted" ||
+    trimmed.toLowerCase().includes("[redacted]");
+  const displayText = isProviderRedacted ? "Reasoning is hidden by the model provider." : text;
   return (
     <details className="text-xs" open>
       <summary className="cursor-pointer text-(--color-muted-foreground)">Thinking</summary>
-      <div className="mt-1 whitespace-pre-wrap text-(--color-muted-foreground)">{text}</div>
+      <div className="mt-1 whitespace-pre-wrap text-(--color-muted-foreground)">{displayText}</div>
     </details>
   );
 }

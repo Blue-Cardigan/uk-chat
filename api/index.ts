@@ -1479,9 +1479,14 @@ async function handleRecognizedSignIn(request: Request) {
     }
   }
 
+  const redirectBase = getAuthRedirectBase(request);
+  const callbackUrl = `${redirectBase.replace(/\/+$/, "")}/auth/callback`;
   const { data: linkData, error: linkError } = await supabase.auth.admin.generateLink({
     type: "magiclink",
     email: normalizedEmail,
+    options: {
+      redirectTo: callbackUrl,
+    },
   });
   if (linkError) {
     return json({ error: "Unable to sign in right now. Please try again." }, 500);
@@ -1490,10 +1495,9 @@ async function handleRecognizedSignIn(request: Request) {
   const actionLink = linkData?.properties?.action_link;
   if (!actionLink) return json({ error: "Unable to sign in right now. Please try again." }, 500);
 
-  const redirectBase = getAuthRedirectBase(request);
   let finalLink = actionLink;
   const parsed = new URL(actionLink);
-  parsed.searchParams.set("redirect_to", `${redirectBase.replace(/\/+$/, "")}/auth/callback`);
+  parsed.searchParams.set("redirect_to", callbackUrl);
   finalLink = parsed.toString();
 
   return json({ allowed: true, redirectTo: finalLink });
