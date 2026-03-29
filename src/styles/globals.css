@@ -117,6 +117,8 @@ body {
   font-size: 0.82rem;
   font-weight: 600;
   line-height: 1;
+  color: oklch(0.62 0.2 24);
+  text-shadow: 0 0 12px color-mix(in oklch, oklch(0.62 0.2 24) 45%, transparent);
   animation: algoCorePulse 1.4s ease-in-out infinite;
 }
 
@@ -127,7 +129,8 @@ body {
   width: 2px;
   height: 2px;
   border-radius: 9999px;
-  background: var(--color-primary);
+  background: oklch(0.62 0.2 24);
+  box-shadow: 0 0 8px color-mix(in oklch, oklch(0.62 0.2 24) 55%, transparent);
 }
 
 .algo-thinking-orbit-a {

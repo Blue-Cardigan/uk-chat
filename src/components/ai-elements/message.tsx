@@ -205,7 +205,7 @@ export function AssistantThinkingMessage() {
     <div className="flex justify-start">
       <div className="inline-flex items-center gap-3 py-1 text-(--color-muted-foreground)">
         <span className="algo-thinking-glyph" aria-hidden>
-          <span className="algo-thinking-core">@</span>
+          <span className="algo-thinking-core">◆</span>
           <span className="algo-thinking-orbit algo-thinking-orbit-a" />
           <span className="algo-thinking-orbit algo-thinking-orbit-b" />
         </span>
