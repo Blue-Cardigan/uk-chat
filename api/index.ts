@@ -466,11 +466,12 @@ const CREATE_CHART_INPUT_SCHEMA: Record<string, unknown> = {
     type: { type: "string", enum: ["line", "bar", "scatter", "area", "pie", "table"] },
     title: { type: "string" },
     xField: { type: "string" },
-    yFields: { type: "array", items: { type: "string" }, minItems: 1 },
+    yFields: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 6 },
     labelField: { type: "string" },
     groupField: { type: "string" },
     data: {
       type: "array",
+      maxItems: 160,
       items: {
         type: "object",
         additionalProperties: true,
@@ -480,6 +481,46 @@ const CREATE_CHART_INPUT_SCHEMA: Record<string, unknown> = {
     note: { type: "string" },
   },
 };
+
+const MAX_CREATE_CHART_ROWS = 120;
+const MAX_CREATE_CHART_COLUMNS = 14;
+const MAX_CREATE_CHART_STRING_LENGTH = 220;
+
+function compactCreateChartSpec(input: unknown): unknown {
+  if (!isRecord(input)) return input;
+
+  const compactedData = Array.isArray(input.data)
+    ? input.data
+        .slice(0, MAX_CREATE_CHART_ROWS)
+        .map((row) => {
+          if (!isRecord(row)) return row;
+          const compactedRow: Record<string, unknown> = {};
+          for (const [index, [key, value]] of Object.entries(row).entries()) {
+            if (index >= MAX_CREATE_CHART_COLUMNS) break;
+            if (typeof value === "string" && value.length > MAX_CREATE_CHART_STRING_LENGTH) {
+              compactedRow[key] = `${value.slice(0, MAX_CREATE_CHART_STRING_LENGTH)}...`;
+            } else {
+              compactedRow[key] = value;
+            }
+          }
+          return compactedRow;
+        })
+    : input.data;
+
+  const yFields = Array.isArray(input.yFields)
+    ? input.yFields.filter((item): item is string => typeof item === "string").slice(0, 6)
+    : input.yFields;
+  const sources = Array.isArray(input.sources)
+    ? input.sources.filter((item): item is string => typeof item === "string").slice(0, 8)
+    : input.sources;
+
+  return {
+    ...input,
+    data: compactedData,
+    yFields,
+    sources,
+  };
+}
 
 function toProviderSafeToolName(name: string): string {
   const normalized = name.trim().replace(/[^a-zA-Z0-9_-]/g, "_").replace(/_+/g, "_");
@@ -924,7 +965,7 @@ function createSyntheticChartTool() {
   return {
     description: "Create a chart specification from one or more tool outputs.",
     inputSchema: jsonSchema(CREATE_CHART_INPUT_SCHEMA),
-    execute: async (input: unknown) => input,
+    execute: async (input: unknown) => compactCreateChartSpec(input),
   };
 }
 

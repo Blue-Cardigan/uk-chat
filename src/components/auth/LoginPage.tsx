@@ -64,7 +64,7 @@ export function LoginPage() {
 
       <Card className="relative w-full max-w-xl overflow-hidden p-0">
         <div className="border-b border-(--color-border) bg-[linear-gradient(120deg,color-mix(in_oklch,var(--color-primary)_14%,var(--color-card)_86%)_0%,color-mix(in_oklch,var(--color-accent)_10%,var(--color-card)_90%)_100%)] px-6 py-6">
-          <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-(--color-muted-foreground)">Explore the Kingdom</p>
+          <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-(--color-muted-foreground)">ChatGB</p>
           <h1 className="font-display text-3xl leading-none sm:text-4xl">Sign in</h1>
           <p className="mt-3 max-w-md text-sm text-(--color-muted-foreground)">
             Ask UK questions and get answers grounded in live data, maps, and policy context.

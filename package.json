@@ -1,8 +1,8 @@
 {
-  "name": "uk-chat",
+  "name": "chatgb",
   "private": true,
   "version": "0.1.0",
-  "description": "Explore the Kingdom Chat Application",
+  "description": "ChatGB Application",
   "scripts": {
     "dev": "concurrently -k -n WEB,API -c cyan,magenta \"npm:dev:web\" \"npm:dev:api\"",
     "dev:web": "vite",
@@ -10,6 +10,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "tsc -b",
+    "test:unit": "tsx --test src/lib/viz-data-parser.test.ts",
     "user:add": "node scripts/add-user.mjs"
   },
   "type": "module",

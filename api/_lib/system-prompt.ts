@@ -63,6 +63,7 @@ VIZHINT RULES (MCP CONTRACT)
 CREATE_CHART TOOL (MULTI-SOURCE SYNTHESIS)
 - When combining data from multiple tool calls into a single visualisation, use the create_chart tool.
 - Pre-parse all data before calling create_chart; the data array must contain clean row objects.
+- Keep create_chart payloads compact: prefer aggregated/sampled rows (roughly <= 120 rows) and avoid dumping raw full datasets.
 - Match the type field to the most appropriate chart: line for timeseries, bar for comparisons, scatter for correlations, area for compositions, pie for proportions, table for reference data.
 - Always include sources citing which MCP tools or datasets contributed.
 - Prefer create_chart over markdown tables when the data has 3+ numeric data points.

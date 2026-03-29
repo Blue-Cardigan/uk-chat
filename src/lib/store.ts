@@ -31,7 +31,8 @@ export const useAppStore = create<AppState>((set) => ({
   setThemePreference: (themePreference) => set({ themePreference }),
   pushVizPayload: (payload) =>
     set((state) => ({
-      vizPayloads: [payload, ...state.vizPayloads].slice(0, 20),
+      // Upsert by ID so streaming updates don't duplicate artifacts.
+      vizPayloads: [payload, ...state.vizPayloads.filter((existing) => existing.id !== payload.id)].slice(0, 20),
       rightSidebarOpen: true,
     })),
   clearVizPayloads: () => set({ vizPayloads: [] }),

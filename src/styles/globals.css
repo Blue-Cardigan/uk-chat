@@ -48,15 +48,18 @@ body,
   height: 100%;
 }
 
+#root {
+  padding-top: env(safe-area-inset-top);
+  padding-right: env(safe-area-inset-right);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+}
+
 body {
   font-family: var(--font-body);
   background: var(--color-background);
   color: var(--color-foreground);
   overflow: hidden;
-  padding-top: env(safe-area-inset-top);
-  padding-right: env(safe-area-inset-right);
-  padding-bottom: env(safe-area-inset-bottom);
-  padding-left: env(safe-area-inset-left);
   transition:
     background-color 300ms ease-out,
     color 200ms ease-out,
