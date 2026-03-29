@@ -740,7 +740,7 @@ async function handleChat(request: Request) {
   const result = streamText({
     model: google(selectedModel.providerModel),
     messages: await convertToModelMessages((body.messages ?? []) as Parameters<typeof convertToModelMessages>[0]),
-    tools: normalizedTools,
+    tools: normalizedTools as Parameters<typeof streamText>[0]["tools"],
     stopWhen: stepCountIs(5),
     system: `You are a UK data analyst. Answer with precision and cite the relevant data source/tool.
 Use geography codes and UK postcodes carefully. Prefer tool calls when factual data is needed.`,
