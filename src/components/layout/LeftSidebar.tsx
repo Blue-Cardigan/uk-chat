@@ -31,12 +31,14 @@ export function LeftSidebar({
   onToggleSettings: () => void;
 }) {
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const [openMenuPlacement, setOpenMenuPlacement] = useState<"up" | "down">("down");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draftTitle, setDraftTitle] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [visibleStarredCount, setVisibleStarredCount] = useState(DEFAULT_VISIBLE_COUNT);
   const [visibleRecentCount, setVisibleRecentCount] = useState(DEFAULT_VISIBLE_COUNT);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const listRef = useRef<HTMLDivElement | null>(null);
   const conversationById = useMemo(() => new Map(conversations.map((conversation) => [conversation.id, conversation])), [conversations]);
   const starredConversations = useMemo(() => conversations.filter((conversation) => conversation.starred), [conversations]);
   const recentConversations = useMemo(() => conversations.filter((conversation) => !conversation.starred), [conversations]);
@@ -87,6 +89,20 @@ export function LeftSidebar({
     setVisibleStarredCount(DEFAULT_VISIBLE_COUNT);
     setVisibleRecentCount(DEFAULT_VISIBLE_COUNT);
   }, [normalizedSearchQuery]);
+
+  useEffect(() => {
+    if (!openMenuId) return;
+
+    function handleListScroll() {
+      setOpenMenuId(null);
+    }
+
+    const listElement = listRef.current;
+    listElement?.addEventListener("scroll", handleListScroll, { passive: true });
+    return () => {
+      listElement?.removeEventListener("scroll", handleListScroll);
+    };
+  }, [openMenuId]);
 
   function startRename(id: string) {
     const conversation = conversationById.get(id);
@@ -190,7 +206,18 @@ export function LeftSidebar({
             aria-label={`Open actions for ${conversation.title}`}
             onClick={(event) => {
               event.stopPropagation();
-              setOpenMenuId((current) => (current === conversation.id ? null : conversation.id));
+              setOpenMenuId((current) => {
+                if (current === conversation.id) return null;
+
+                const triggerRect = event.currentTarget.getBoundingClientRect();
+                const estimatedMenuHeight = 140;
+                const spaceBelow = window.innerHeight - triggerRect.bottom;
+                const spaceAbove = triggerRect.top;
+                const shouldOpenDown = spaceBelow >= estimatedMenuHeight || spaceBelow >= spaceAbove;
+                setOpenMenuPlacement(shouldOpenDown ? "down" : "up");
+
+                return conversation.id;
+              });
             }}
           >
             <MoreHorizontal className="h-4 w-4" />
@@ -199,7 +226,10 @@ export function LeftSidebar({
           {isMenuOpen ? (
             <div
               ref={menuRef}
-              className="absolute right-0 top-10 z-120 min-w-40 rounded-md border border-(--color-border) bg-(--color-background) p-1 shadow-xl"
+              className={cn(
+                "absolute right-0 z-120 min-w-40 rounded-md border border-(--color-border) bg-(--color-background) p-1 shadow-xl",
+                openMenuPlacement === "up" ? "bottom-10" : "top-10",
+              )}
             >
               <button
                 type="button"
@@ -246,7 +276,7 @@ export function LeftSidebar({
     <aside className="flex h-full min-h-0 w-full flex-col gap-3 border-r border-(--color-border) bg-(--color-sidebar) p-3">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1">
-          <span className="font-display text-lg font-semibold">
+          <span className="font-display text-xl font-semibold">
             Chat
             <span className="text-(--color-accent)">G</span>
             <span className="text-(--color-primary)">B</span>
@@ -282,7 +312,7 @@ export function LeftSidebar({
           aria-label="Search chats"
         />
       </div>
-      <div className="relative isolate flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
+      <div ref={listRef} className="relative isolate flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
         {filteredStarredConversations.length > 0 ? (
           <div className="space-y-1">
             <p className="px-2 text-[11px] font-semibold uppercase tracking-wide text-(--color-muted-foreground)">Starred</p>

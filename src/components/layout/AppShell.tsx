@@ -91,7 +91,7 @@ export function AppShell({
           desktopGridClass,
         )}
       >
-        <div className={cn(sidebarOpen ? "fixed inset-0 z-40 md:relative md:inset-auto md:z-auto md:block" : "hidden md:block")}>
+        <div className={cn("min-h-0", sidebarOpen ? "fixed inset-0 z-40 md:relative md:inset-auto md:z-auto md:block" : "hidden md:block")}>
           {sidebarOpen ? (
             <button
               type="button"
@@ -102,7 +102,7 @@ export function AppShell({
           ) : null}
           <div
             className={cn(
-              "absolute left-0 top-0 h-full w-[280px] max-w-[88vw] md:relative md:h-full md:w-full md:max-w-none md:transition-[opacity,transform] md:duration-250 md:ease-out",
+              "absolute left-0 top-0 h-full w-[280px] max-w-[88vw] md:relative md:min-h-0 md:h-full md:w-full md:max-w-none md:transition-[opacity,transform] md:duration-250 md:ease-out",
               sidebarOpen ? "translate-x-0 opacity-100" : "-translate-x-full opacity-0",
               sidebarOpen ? "md:translate-x-0 md:opacity-100" : "md:pointer-events-none md:-translate-x-3 md:opacity-0",
             )}
