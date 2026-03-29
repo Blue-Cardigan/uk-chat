@@ -1,4 +1,4 @@
-import { convertToModelMessages, jsonSchema, streamText } from "ai";
+import { convertToModelMessages, jsonSchema, stepCountIs, streamText } from "ai";
 import { google } from "@ai-sdk/google";
 import { createMCPClient } from "@ai-sdk/mcp";
 import { waitUntil } from "@vercel/functions";
@@ -741,6 +741,7 @@ async function handleChat(request: Request) {
     model: google(selectedModel.providerModel),
     messages: await convertToModelMessages((body.messages ?? []) as Parameters<typeof convertToModelMessages>[0]),
     tools: normalizedTools,
+    stopWhen: stepCountIs(5),
     system: `You are a UK data analyst. Answer with precision and cite the relevant data source/tool.
 Use geography codes and UK postcodes carefully. Prefer tool calls when factual data is needed.`,
     onFinish: async (event) => {
