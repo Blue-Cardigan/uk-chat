@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUp, AudioLines, Plus, Wrench } from "lucide-react";
+import { ArrowUp, AudioLines, Check, Plus, Wrench, X } from "lucide-react";
 import { Button, Textarea } from "@/components/ui/primitives";
 import type { ChatModelConfig, ChatModelId } from "@/lib/chat-models";
 import type { ChatToolOption } from "@/components/chat/ChatInput";
@@ -13,6 +13,12 @@ export function PromptInput({
   modelOptions,
   tools,
   toolsLoading,
+  toolsHasMore,
+  toolsLoadingMore,
+  selectedTools,
+  onToggleToolSelection,
+  onToolsQueryChange,
+  onLoadMoreTools,
 }: {
   onSubmit: (text: string) => void;
   isLoading?: boolean;
@@ -22,29 +28,95 @@ export function PromptInput({
   modelOptions: ChatModelConfig[];
   tools: ChatToolOption[];
   toolsLoading: boolean;
+  toolsHasMore: boolean;
+  toolsLoadingMore: boolean;
+  selectedTools: ChatToolOption[];
+  onToggleToolSelection: (tool: ChatToolOption) => void;
+  onToolsQueryChange: (query: string) => void;
+  onLoadMoreTools: () => void;
 }) {
+  const MENU_HEIGHT = 256;
+  const HEADER_HEIGHT = 28;
+  const ITEM_HEIGHT = 52;
+  const OVERSCAN = 120;
+
   const [value, setValue] = useState("");
   const [slashMenuIndex, setSlashMenuIndex] = useState(0);
+  const [menuScrollTop, setMenuScrollTop] = useState(0);
   const formRef = useRef<HTMLFormElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
   const canSubmit = value.trim().length > 0 && !isLoading;
   const slashQuery = useMemo(() => {
     const trimmed = value.trimStart();
     if (!trimmed.startsWith("/")) return null;
     return trimmed.slice(1).toLowerCase();
   }, [value]);
+  const selectedToolNames = useMemo(() => new Set(selectedTools.map((tool) => tool.name)), [selectedTools]);
   const slashMatches = useMemo(() => {
     if (slashQuery === null) return [];
     const normalized = slashQuery.trim();
-    if (!normalized) return tools.slice(0, 8);
-    return tools
-      .filter((tool) => {
-        const haystack = `${tool.name} ${tool.description} ${tool.category}`.toLowerCase();
-        return haystack.includes(normalized);
-      })
-      .slice(0, 24);
+    if (!normalized) return tools;
+    return tools.filter((tool) => {
+      const haystack = `${tool.name} ${tool.description} ${tool.category}`.toLowerCase();
+      return haystack.includes(normalized);
+    });
   }, [slashQuery, tools]);
   const showSlashMenu = slashQuery !== null;
   const isEmptySlashQuery = slashQuery !== null && slashQuery.trim().length === 0;
+  const groupedTools = useMemo(() => {
+    if (!showSlashMenu) return [];
+    const nonRecommended = slashMatches.filter((tool) => !tool.recommended);
+    const groups: Array<{ id: string; label: string; tools: ChatToolOption[] }> = [];
+    if (isEmptySlashQuery) {
+      const recommended = slashMatches.filter((tool) => tool.recommended);
+      if (recommended.length > 0) groups.push({ id: "recommended", label: "Recommended", tools: recommended });
+      const byType: Record<"data" | "analysis" | "system", ChatToolOption[]> = {
+        data: nonRecommended.filter((tool) => tool.category === "data"),
+        analysis: nonRecommended.filter((tool) => tool.category === "analysis"),
+        system: nonRecommended.filter((tool) => tool.category === "system"),
+      };
+      if (byType.data.length > 0) groups.push({ id: "data", label: "Data", tools: byType.data });
+      if (byType.analysis.length > 0) groups.push({ id: "analysis", label: "Analysis", tools: byType.analysis });
+      if (byType.system.length > 0) groups.push({ id: "system", label: "System", tools: byType.system });
+      return groups;
+    }
+    const byType: Record<"data" | "analysis" | "system", ChatToolOption[]> = {
+      data: slashMatches.filter((tool) => tool.category === "data"),
+      analysis: slashMatches.filter((tool) => tool.category === "analysis"),
+      system: slashMatches.filter((tool) => tool.category === "system"),
+    };
+    if (byType.data.length > 0) groups.push({ id: "data", label: "Data", tools: byType.data });
+    if (byType.analysis.length > 0) groups.push({ id: "analysis", label: "Analysis", tools: byType.analysis });
+    if (byType.system.length > 0) groups.push({ id: "system", label: "System", tools: byType.system });
+    return groups;
+  }, [isEmptySlashQuery, showSlashMenu, slashMatches]);
+  const itemRows = useMemo(() => groupedTools.flatMap((group) => group.tools), [groupedTools]);
+  const virtualRows = useMemo(() => {
+    const rows: Array<
+      | { kind: "header"; key: string; label: string; top: number; height: number }
+      | { kind: "item"; key: string; tool: ChatToolOption; itemIndex: number; top: number; height: number }
+    > = [];
+    let y = 0;
+    let itemIndex = 0;
+    groupedTools.forEach((group) => {
+      rows.push({ kind: "header", key: `header-${group.id}`, label: group.label, top: y, height: HEADER_HEIGHT });
+      y += HEADER_HEIGHT;
+      group.tools.forEach((tool) => {
+        rows.push({ kind: "item", key: `tool-${tool.name}-${itemIndex}`, tool, itemIndex, top: y, height: ITEM_HEIGHT });
+        y += ITEM_HEIGHT;
+        itemIndex += 1;
+      });
+    });
+    return { rows, totalHeight: y };
+  }, [groupedTools]);
+  const visibleRows = useMemo(
+    () =>
+      virtualRows.rows.filter(
+        (row) =>
+          row.top + row.height >= menuScrollTop - OVERSCAN && row.top <= menuScrollTop + MENU_HEIGHT + OVERSCAN,
+      ),
+    [menuScrollTop, virtualRows.rows],
+  );
 
   function handleSubmit() {
     const trimmed = value.trim();
@@ -53,20 +125,29 @@ export function PromptInput({
     setValue("");
   }
 
-  function insertTool(tool: ChatToolOption) {
-    setValue(`/${tool.name} `);
+  function clearSlashPrefix(current: string) {
+    return current.replace(/^\s*\/\S*\s*/, "");
+  }
+
+  function toggleToolSelection(tool: ChatToolOption) {
+    onToggleToolSelection(tool);
+    setValue((current) => clearSlashPrefix(current));
   }
 
   useEffect(() => {
     setSlashMenuIndex(0);
-  }, [slashQuery]);
+  }, [slashQuery, itemRows.length]);
+
+  useEffect(() => {
+    onToolsQueryChange(showSlashMenu ? slashQuery?.trim() ?? "" : "");
+  }, [onToolsQueryChange, showSlashMenu, slashQuery]);
 
   useEffect(() => {
     if (!showSlashMenu) return;
     function onPointerDown(event: PointerEvent) {
       if (!formRef.current) return;
       if (formRef.current.contains(event.target as Node)) return;
-      setValue((current) => (current.trimStart().startsWith("/") ? current.replace(/^\s*\/\S*\s*/, "") : current));
+      setValue((current) => (current.trimStart().startsWith("/") ? clearSlashPrefix(current) : current));
     }
     window.addEventListener("pointerdown", onPointerDown);
     return () => window.removeEventListener("pointerdown", onPointerDown);
@@ -83,42 +164,88 @@ export function PromptInput({
         handleSubmit();
       }}
     >
+      {selectedTools.length > 0 ? (
+        <div className="mb-2 flex flex-wrap gap-1.5">
+          {selectedTools.map((tool) => (
+            <button
+              key={`selected-${tool.name}`}
+              type="button"
+              className="inline-flex items-center gap-1 rounded-full border border-(--color-border) bg-(--color-card) px-2 py-1 text-xs"
+              onClick={() => onToggleToolSelection(tool)}
+            >
+              <span>/{tool.name}</span>
+              <X className="h-3 w-3" />
+            </button>
+          ))}
+        </div>
+      ) : null}
       {showSlashMenu ? (
-        <div className="mb-2 max-h-64 overflow-y-auto rounded-2xl border border-(--color-border) bg-(--color-card) p-1.5 shadow-lg">
+        <div className="mb-2 rounded-2xl border border-(--color-border) bg-(--color-card) p-1.5 shadow-lg">
           <p className="px-2 py-1 text-[11px] uppercase tracking-wide text-(--color-muted-foreground)">
-            {isEmptySlashQuery ? "Suggested tools" : `Tool matches (${slashMatches.length})`}
+            {isEmptySlashQuery ? "Recommended and grouped tools" : `Tool matches (${slashMatches.length})`}
           </p>
           {toolsLoading ? (
             <p className="px-2 py-2 text-sm text-(--color-muted-foreground)">Loading tools...</p>
-          ) : slashMatches.length === 0 ? (
+          ) : itemRows.length === 0 ? (
             <p className="px-2 py-2 text-sm text-(--color-muted-foreground)">No tool matches. Keep typing to refine.</p>
           ) : (
-            slashMatches.map((tool, index) => (
-              <button
-                key={`${tool.name}-${index}`}
-                type="button"
-                className={`flex w-full items-start gap-2 rounded-xl px-2 py-2 text-left hover:bg-[color-mix(in_oklch,var(--color-card)_50%,var(--color-foreground)_10%)] ${
-                  index === slashMenuIndex ? "bg-[color-mix(in_oklch,var(--color-card)_50%,var(--color-foreground)_10%)]" : ""
-                }`}
-                onMouseEnter={() => setSlashMenuIndex(index)}
-                onClick={() => insertTool(tool)}
-              >
-                <Wrench className="mt-0.5 h-3.5 w-3.5 shrink-0 text-(--color-muted-foreground)" />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm text-(--color-foreground)">
-                    /{tool.name}
-                  </span>
-                  <span className="line-clamp-1 block text-xs text-(--color-muted-foreground)">{tool.description}</span>
-                </span>
-                <span className="rounded-full border border-(--color-border) px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-(--color-muted-foreground)">
-                  {tool.category}
-                </span>
-              </button>
-            ))
+            <div
+              ref={menuRef}
+              className="h-64 overflow-y-auto"
+              role="listbox"
+              onScroll={(event) => {
+                const target = event.currentTarget;
+                setMenuScrollTop(target.scrollTop);
+                const nearBottom = target.scrollHeight - (target.scrollTop + target.clientHeight) < 120;
+                if (nearBottom && toolsHasMore && !toolsLoadingMore) onLoadMoreTools();
+              }}
+            >
+              <div className="relative" style={{ height: `${virtualRows.totalHeight}px` }}>
+                {visibleRows.map((row) =>
+                  row.kind === "header" ? (
+                    <div
+                      key={row.key}
+                      className="absolute left-0 right-0 px-2 py-1 text-[11px] uppercase tracking-wide text-(--color-muted-foreground)"
+                      style={{ top: `${row.top}px`, height: `${row.height}px` }}
+                    >
+                      {row.label}
+                    </div>
+                  ) : (
+                    <button
+                      key={row.key}
+                      type="button"
+                      className={`absolute left-0 right-0 flex items-start gap-2 rounded-xl px-2 py-2 text-left transition-colors ${
+                        selectedToolNames.has(row.tool.name)
+                          ? "bg-[color-mix(in_oklch,var(--color-primary)_18%,var(--color-card)_82%)]"
+                          : row.itemIndex === slashMenuIndex
+                            ? "bg-[color-mix(in_oklch,var(--color-card)_50%,var(--color-foreground)_10%)]"
+                            : "hover:bg-[color-mix(in_oklch,var(--color-card)_50%,var(--color-foreground)_10%)]"
+                      }`}
+                      style={{ top: `${row.top}px`, height: `${row.height}px` }}
+                      onMouseEnter={() => setSlashMenuIndex(row.itemIndex)}
+                      onClick={() => toggleToolSelection(row.tool)}
+                    >
+                      <Wrench className="mt-0.5 h-3.5 w-3.5 shrink-0 text-(--color-muted-foreground)" />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm text-(--color-foreground)">/{row.tool.name}</span>
+                        <span className="line-clamp-1 block text-xs text-(--color-muted-foreground)">{row.tool.description}</span>
+                      </span>
+                      <span className="inline-flex items-center gap-1">
+                        {selectedToolNames.has(row.tool.name) ? <Check className="h-3.5 w-3.5 text-(--color-primary)" /> : null}
+                        <span className="rounded-full border border-(--color-border) px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-(--color-muted-foreground)">
+                          {row.tool.category}
+                        </span>
+                      </span>
+                    </button>
+                  ),
+                )}
+              </div>
+            </div>
           )}
-          {isEmptySlashQuery && tools.length > 8 ? (
+          {toolsLoadingMore ? <p className="px-2 pt-1 text-xs text-(--color-muted-foreground)">Loading more tools...</p> : null}
+          {isEmptySlashQuery && toolsHasMore ? (
             <p className="px-2 pt-1 text-xs text-(--color-muted-foreground)">
-              Showing top tools. Type after <code>/</code> to filter the full list.
+              Scroll for more tools. Type after <code>/</code> to refine.
             </p>
           ) : null}
         </div>
@@ -128,31 +255,37 @@ export function PromptInput({
         value={value}
         onChange={(event) => setValue(event.target.value)}
         onKeyDown={(event) => {
-          if (showSlashMenu && slashMatches.length > 0) {
+          if (event.key === "Backspace" && value.length === 0 && selectedTools.length > 0) {
+            event.preventDefault();
+            const last = selectedTools[selectedTools.length - 1];
+            if (last) onToggleToolSelection(last);
+            return;
+          }
+          if (showSlashMenu && itemRows.length > 0) {
             if (event.key === "ArrowDown") {
               event.preventDefault();
-              setSlashMenuIndex((current) => (current + 1) % slashMatches.length);
+              setSlashMenuIndex((current) => (current + 1) % itemRows.length);
               return;
             }
             if (event.key === "ArrowUp") {
               event.preventDefault();
-              setSlashMenuIndex((current) => (current - 1 + slashMatches.length) % slashMatches.length);
+              setSlashMenuIndex((current) => (current - 1 + itemRows.length) % itemRows.length);
               return;
             }
             if (event.key === "Tab") {
               event.preventDefault();
-              insertTool(slashMatches[slashMenuIndex] ?? slashMatches[0]);
+              toggleToolSelection(itemRows[slashMenuIndex] ?? itemRows[0]);
               return;
             }
             if (event.key === "Enter" && !event.shiftKey) {
               event.preventDefault();
-              insertTool(slashMatches[slashMenuIndex] ?? slashMatches[0]);
+              toggleToolSelection(itemRows[slashMenuIndex] ?? itemRows[0]);
               return;
             }
           }
           if (event.key === "Escape" && showSlashMenu) {
             event.preventDefault();
-            setValue((current) => current.replace(/^\s*\/\S*\s*/, ""));
+            setValue((current) => clearSlashPrefix(current));
             return;
           }
           if (event.key === "Enter" && !event.shiftKey) {

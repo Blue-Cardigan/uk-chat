@@ -4,7 +4,8 @@ import { CHAT_MODEL_CONFIGS, type ChatModelId } from "@/lib/chat-models";
 export type ChatToolOption = {
   name: string;
   description: string;
-  category: "suggested" | "data" | "analysis" | "system";
+  category: "data" | "analysis" | "system";
+  recommended: boolean;
 };
 
 export function ChatInput({
@@ -14,6 +15,12 @@ export function ChatInput({
   onModelChange,
   tools,
   toolsLoading,
+  toolsHasMore,
+  toolsLoadingMore,
+  selectedTools,
+  onToggleToolSelection,
+  onToolsQueryChange,
+  onLoadMoreTools,
 }: {
   onSubmit: (text: string) => void;
   isStreaming: boolean;
@@ -21,6 +28,12 @@ export function ChatInput({
   onModelChange: (modelId: ChatModelId) => void;
   tools: ChatToolOption[];
   toolsLoading: boolean;
+  toolsHasMore: boolean;
+  toolsLoadingMore: boolean;
+  selectedTools: ChatToolOption[];
+  onToggleToolSelection: (tool: ChatToolOption) => void;
+  onToolsQueryChange: (query: string) => void;
+  onLoadMoreTools: () => void;
 }) {
   return (
     <PromptInput
@@ -32,6 +45,12 @@ export function ChatInput({
       modelOptions={CHAT_MODEL_CONFIGS}
       tools={tools}
       toolsLoading={toolsLoading}
+      toolsHasMore={toolsHasMore}
+      toolsLoadingMore={toolsLoadingMore}
+      selectedTools={selectedTools}
+      onToggleToolSelection={onToggleToolSelection}
+      onToolsQueryChange={onToolsQueryChange}
+      onLoadMoreTools={onLoadMoreTools}
     />
   );
 }

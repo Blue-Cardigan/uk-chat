@@ -77,8 +77,9 @@ type McpAttempt = { type: McpTransportType; url: string; error: string };
 type ToolCatalogItem = {
   name: string;
   description: string;
-  category: "suggested" | "data" | "analysis" | "system";
-  priority: number;
+  category: "data" | "analysis" | "system";
+  score: number;
+  recommended: boolean;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -528,37 +529,55 @@ async function getModelUsageStatus({
   return { ok: true as const, error: null, used, remaining, approaching, reached };
 }
 
-function classifyTool(name: string, description: string): { category: ToolCatalogItem["category"]; priority: number } {
+function classifyTool(name: string, description: string): { category: ToolCatalogItem["category"]; baseScore: number } {
   const text = `${name} ${description}`.toLowerCase();
   if (/search|query|lookup|find|dataset|postcode|geocode|boundary|stats|fetch|get/.test(text)) {
-    return { category: "suggested", priority: 120 };
+    return { category: "data", baseScore: 120 };
   }
   if (/chart|summar|compare|aggregate|trend|rank|analysis|insight/.test(text)) {
-    return { category: "analysis", priority: 95 };
+    return { category: "analysis", baseScore: 95 };
   }
   if (/token|admin|email|onboard|invite|delete|rotate|auth/.test(text)) {
-    return { category: "system", priority: 40 };
+    return { category: "system", baseScore: 40 };
   }
-  return { category: "data", priority: 70 };
+  return { category: "data", baseScore: 70 };
 }
 
-function buildToolCatalog(tools: Record<string, unknown>) {
-  const catalog: ToolCatalogItem[] = Object.entries(tools).map(([name, definition]) => {
+function buildToolCatalog(tools: Record<string, unknown>, query: string) {
+  const normalizedQuery = query.trim().toLowerCase();
+  const catalog = Object.entries(tools)
+    .map(([name, definition]) => {
     const description =
       (isRecord(definition) && typeof definition.description === "string" ? definition.description : "Model tool") ?? "Model tool";
     const shortDescription = description.length > 120 ? `${description.slice(0, 117)}...` : description;
-    const { category, priority } = classifyTool(name, shortDescription);
+      const { category, baseScore } = classifyTool(name, shortDescription);
     const startsWithVerb = /^(get|list|search|query|find|fetch)/i.test(name) ? 10 : 0;
     const conciseBonus = Math.max(0, 12 - Math.min(12, name.length));
+      const trustedDataBonus = /ons|nomis|nhs|boe|postcodes|parliament|metoffice|dft|fsa/i.test(name) ? 14 : 0;
+      const adminPenalty = category === "system" ? -40 : 0;
+      const score = baseScore + startsWithVerb + conciseBonus + trustedDataBonus + adminPenalty;
     return {
       name,
       description: shortDescription,
       category,
-      priority: priority + startsWithVerb + conciseBonus,
+        score,
+        recommended: false,
     };
-  });
+    })
+    .filter((tool) => {
+      if (!normalizedQuery) return true;
+      const haystack = `${tool.name} ${tool.description} ${tool.category}`.toLowerCase();
+      return haystack.includes(normalizedQuery);
+    });
 
-  catalog.sort((a, b) => b.priority - a.priority || a.name.localeCompare(b.name));
+  catalog.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
+  let recommendedCount = 0;
+  for (const tool of catalog) {
+    if (recommendedCount >= 12) break;
+    if (tool.category === "system") continue;
+    tool.recommended = true;
+    recommendedCount += 1;
+  }
   return catalog;
 }
 
@@ -646,14 +665,26 @@ async function loadAuthorizedMcpTools({
 async function handleChatTools(request: Request) {
   const user = await getUserFromRequest(request);
   if (!user) return json({ error: "Unauthorized" }, 401);
-  const body = (await request.json()) as { mcpToken?: string | null };
+  const body = (await request.json()) as {
+    mcpToken?: string | null;
+    query?: string;
+    offset?: number;
+    limit?: number;
+  };
   const supabase = getSupabaseAdmin();
   const toolLoad = await loadAuthorizedMcpTools({ supabase, user, mcpToken: body.mcpToken });
   if ("response" in toolLoad) return toolLoad.response;
-  const catalog = buildToolCatalog(toolLoad.tools);
+  const query = typeof body.query === "string" ? body.query : "";
+  const offset = Math.max(0, body.offset ?? 0);
+  const limit = Math.min(100, Math.max(20, body.limit ?? 50));
+  const catalog = buildToolCatalog(toolLoad.tools, query);
+  const items = catalog.slice(offset, offset + limit);
+  const nextOffset = offset + items.length < catalog.length ? offset + items.length : null;
   return json({
     totalCount: catalog.length,
-    tools: catalog.slice(0, 80).map(({ name, description, category }) => ({ name, description, category })),
+    items: items.map(({ name, description, category, recommended }) => ({ name, description, category, recommended })),
+    nextOffset,
+    hasMore: nextOffset !== null,
   });
 }
 

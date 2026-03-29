@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import type { UIMessage } from "ai";
@@ -20,7 +20,11 @@ type PersistedMessage = {
   created_at: string;
 };
 type ToolsCatalogResponse = {
-  tools: ChatToolOption[];
+  items?: ChatToolOption[];
+  tools?: ChatToolOption[];
+  totalCount?: number;
+  nextOffset?: number | null;
+  hasMore?: boolean;
 };
 type ModelUsageResponse = {
   banner: string | null;
@@ -61,46 +65,96 @@ export function ChatView({
   const [editingTitle, setEditingTitle] = useState(false);
   const [draftTitle, setDraftTitle] = useState("");
   const [selectedModelId, setSelectedModelId] = useState<ChatModelId>(DEFAULT_CHAT_MODEL_ID);
-  const [toolsLoading, setToolsLoading] = useState(false);
+  const [toolsLoading, setToolsLoading] = useState(true);
+  const [toolsLoadingMore, setToolsLoadingMore] = useState(false);
+  const [toolsQuery, setToolsQuery] = useState("");
   const [tools, setTools] = useState<ChatToolOption[]>([]);
+  const [toolsTotalCount, setToolsTotalCount] = useState(0);
+  const [toolsNextOffset, setToolsNextOffset] = useState<number | null>(0);
+  const [toolsHasMore, setToolsHasMore] = useState(false);
+  const [selectedTools, setSelectedTools] = useState<ChatToolOption[]>([]);
   const [usageBanner, setUsageBanner] = useState<string | null>(null);
   const onMissingRef = useRef(onConversationMissing);
   onMissingRef.current = onConversationMissing;
+
+  const fetchToolsPage = useCallback(
+    async ({
+      query,
+      offset,
+      append,
+      signal,
+    }: {
+      query: string;
+      offset: number;
+      append: boolean;
+      signal: AbortSignal;
+    }) => {
+      if (!authToken || !mcpToken) return;
+      const response = await fetch("/api/chat/tools", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${authToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ mcpToken, query, offset, limit: 50 }),
+        signal,
+      });
+      if (!response.ok) throw new Error(`Failed to load tools (${response.status})`);
+      const payload = (await safeJson<ToolsCatalogResponse>(response)) ?? {};
+      const incoming = payload.items ?? payload.tools ?? [];
+      setTools((prev) => {
+        if (!append) return incoming;
+        const map = new Map(prev.map((tool) => [tool.name, tool] as const));
+        incoming.forEach((tool) => map.set(tool.name, tool));
+        return [...map.values()];
+      });
+      const totalCount = payload.totalCount ?? (append ? toolsTotalCount : incoming.length);
+      const nextOffset = payload.nextOffset ?? null;
+      const hasMore = payload.hasMore ?? nextOffset !== null;
+      setToolsTotalCount(totalCount);
+      setToolsNextOffset(nextOffset);
+      setToolsHasMore(hasMore);
+    },
+    [authToken, mcpToken, toolsTotalCount],
+  );
 
   useEffect(() => {
     if (!authToken || !mcpToken) {
       setTools([]);
       setToolsLoading(false);
+      setToolsLoadingMore(false);
+      setToolsHasMore(false);
+      setToolsNextOffset(0);
       return;
     }
     const abortController = new AbortController();
     setToolsLoading(true);
-    fetch("/api/chat/tools", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${authToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ mcpToken }),
+    setToolsLoadingMore(false);
+    setTools([]);
+    setToolsNextOffset(0);
+    setToolsHasMore(false);
+    setToolsTotalCount(0);
+    void fetchToolsPage({
+      query: toolsQuery,
+      offset: 0,
+      append: false,
       signal: abortController.signal,
     })
-      .then(async (response) => {
-        if (!response.ok) throw new Error(`Failed to load tools (${response.status})`);
-        return (await safeJson<ToolsCatalogResponse>(response)) ?? { tools: [] };
-      })
-      .then((payload) => {
-        if (abortController.signal.aborted) return;
-        setTools(payload.tools ?? []);
-      })
       .catch(() => {
         if (abortController.signal.aborted) return;
         setTools([]);
+        setToolsHasMore(false);
+        setToolsNextOffset(null);
       })
       .finally(() => {
         if (!abortController.signal.aborted) setToolsLoading(false);
       });
     return () => abortController.abort();
-  }, [authToken, mcpToken]);
+  }, [authToken, mcpToken, fetchToolsPage, toolsQuery]);
+
+  useEffect(() => {
+    setSelectedTools((current) => current.filter((selected) => tools.some((tool) => tool.name === selected.name)));
+  }, [tools]);
 
   useEffect(() => {
     setDraftTitle(conversation?.title ?? "");
@@ -144,16 +198,48 @@ export function ChatView({
       setSubmitError("Could not create a conversation. Please try again.");
       return;
     }
+    const toolPrefix =
+      selectedTools.length > 0
+        ? `Use these tools when relevant: ${selectedTools.map((tool) => `/${tool.name}`).join(" ")}\n\n`
+        : "";
     sendMessage(
-      { text },
+      { text: `${toolPrefix}${text}` },
       {
         headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
         body: { conversationId: ensuredConversationId, mcpToken, modelId: selectedModelId },
       },
     );
+    setSelectedTools([]);
     window.setTimeout(() => {
       void refreshUsageBanner();
     }, 1200);
+  }
+
+  function toggleToolSelection(tool: ChatToolOption) {
+    setSelectedTools((current) => {
+      const exists = current.some((selected) => selected.name === tool.name);
+      if (exists) return current.filter((selected) => selected.name !== tool.name);
+      return [...current, tool];
+    });
+  }
+
+  function handleToolsQueryChange(query: string) {
+    setToolsQuery(query);
+  }
+
+  function handleLoadMoreTools() {
+    if (!authToken || !mcpToken) return;
+    if (!toolsHasMore || toolsLoadingMore || toolsNextOffset == null) return;
+    const abortController = new AbortController();
+    setToolsLoadingMore(true);
+    void fetchToolsPage({
+      query: toolsQuery,
+      offset: toolsNextOffset,
+      append: true,
+      signal: abortController.signal,
+    }).finally(() => {
+      setToolsLoadingMore(false);
+    });
   }
 
   async function refreshUsageBanner() {
@@ -345,6 +431,12 @@ export function ChatView({
           onModelChange={setSelectedModelId}
           tools={tools}
           toolsLoading={toolsLoading}
+          toolsHasMore={toolsHasMore}
+          toolsLoadingMore={toolsLoadingMore}
+          selectedTools={selectedTools}
+          onToggleToolSelection={toggleToolSelection}
+          onToolsQueryChange={handleToolsQueryChange}
+          onLoadMoreTools={handleLoadMoreTools}
         />
       </div>
     </section>
