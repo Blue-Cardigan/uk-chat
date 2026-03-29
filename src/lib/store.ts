@@ -30,10 +30,22 @@ export const useAppStore = create<AppState>((set) => ({
   setRightSidebarOpen: (rightSidebarOpen) => set({ rightSidebarOpen }),
   setThemePreference: (themePreference) => set({ themePreference }),
   pushVizPayload: (payload) =>
-    set((state) => ({
-      // Upsert by ID so streaming updates don't duplicate artifacts.
-      vizPayloads: [payload, ...state.vizPayloads.filter((existing) => existing.id !== payload.id)].slice(0, 20),
-      rightSidebarOpen: true,
-    })),
+    set((state) => {
+      const existing = state.vizPayloads.find((item) => item.id === payload.id);
+      if (
+        existing &&
+        existing.toolName === payload.toolName &&
+        existing.title === payload.title &&
+        existing.data === payload.data &&
+        existing.chartSpec === payload.chartSpec
+      ) {
+        return state;
+      }
+      return {
+        // Upsert by ID so streaming updates don't duplicate artifacts.
+        vizPayloads: [payload, ...state.vizPayloads.filter((item) => item.id !== payload.id)].slice(0, 20),
+        rightSidebarOpen: true,
+      };
+    }),
   clearVizPayloads: () => set({ vizPayloads: [] }),
 }));

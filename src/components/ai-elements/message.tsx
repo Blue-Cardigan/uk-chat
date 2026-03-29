@@ -57,6 +57,14 @@ type NormalisedTool = {
   stateLabel: string;
 };
 
+function normalizeToolName(name: string): string {
+  return name
+    .trim()
+    .replace(/[^a-zA-Z0-9_]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toLowerCase();
+}
+
 function normaliseToolPart(part: UiPart, index: number): NormalisedTool | null {
   if (part.type === "tool-invocation") {
     const inv = (part as ToolInvocationPart).toolInvocation;
@@ -87,12 +95,13 @@ function normaliseToolPart(part: UiPart, index: number): NormalisedTool | null {
 function ToolPartView({ tool, index }: { tool: NormalisedTool; index: number }) {
   const hasInput = tool.input != null;
   const hasOutput = tool.output != null;
+  const isCreateChartTool = normalizeToolName(tool.toolName) === "create_chart";
 
   return (
     <details
       key={`${tool.toolName}-${tool.toolCallId ?? index}`}
       className="rounded-md border border-(--color-border) bg-(--color-card)/60 p-2 text-xs"
-      open={tool.stateLabel === "output-available"}
+      open={tool.stateLabel === "output-available" && !isCreateChartTool}
     >
       <summary className="cursor-pointer list-none">
         <div className="flex items-center justify-between gap-2">

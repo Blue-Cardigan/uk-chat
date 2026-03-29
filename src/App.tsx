@@ -258,6 +258,7 @@ function ProtectedApp() {
   const settingsPanelProps = {
     theme,
     onThemeChange: setTheme,
+    authToken: session?.access_token ?? null,
     mcpToken,
     onExportChats: exportChats,
     onSignOut: signOut,
