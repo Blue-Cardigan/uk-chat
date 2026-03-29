@@ -1,6 +1,6 @@
-import { convertToModelMessages, jsonSchema, stepCountIs, streamText } from "ai";
-import { google } from "@ai-sdk/google";
+import { jsonSchema, stepCountIs, streamText } from "ai";
 import { createMCPClient } from "@ai-sdk/mcp";
+import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { waitUntil } from "@vercel/functions";
 import { CHAT_SUPPORT_CONTACT, getChatModelConfig } from "./_lib/chat-models.js";
 import { onboardUser } from "./_lib/onboarding.js";
@@ -37,6 +37,21 @@ function getSharedToken(request: Request) {
 function env(key: string): string | undefined {
   const maybeProcess = globalThis as { process?: { env?: Record<string, string | undefined> } };
   return maybeProcess.process?.env?.[key];
+}
+
+const openrouter = createOpenRouter({
+  apiKey: env("OPENROUTER_API_KEY"),
+});
+
+function getOpenRouterFallbackModels(modelId: string): string[] {
+  switch (modelId) {
+    case "flash":
+      return ["google/gemini-2.5-flash-lite", "google/gemini-2.5-flash"];
+    case "pro":
+      return ["google/gemini-2.5-pro", "google/gemini-2.5-flash"];
+    default:
+      return [];
+  }
 }
 
 function isLoopbackHostname(hostname: string): boolean {
@@ -302,12 +317,12 @@ function inferTupleItemsSchema(items: unknown[]): Record<string, unknown> {
   return { type: "string" };
 }
 
-function normalizeGeminiSchemaInPlace(node: unknown, path: string[] = []): boolean {
+function normalizeToolSchemaInPlace(node: unknown, path: string[] = []): boolean {
   let changed = false;
 
   if (Array.isArray(node)) {
     for (const item of node) {
-      if (normalizeGeminiSchemaInPlace(item, path)) changed = true;
+      if (normalizeToolSchemaInPlace(item, path)) changed = true;
     }
     return changed;
   }
@@ -344,13 +359,13 @@ function normalizeGeminiSchemaInPlace(node: unknown, path: string[] = []): boole
   }
 
   for (const [key, value] of Object.entries(node)) {
-    if (normalizeGeminiSchemaInPlace(value, [...path, key])) changed = true;
+    if (normalizeToolSchemaInPlace(value, [...path, key])) changed = true;
   }
 
   return changed;
 }
 
-function normalizeGeminiTools<T extends Record<string, unknown>>(tools: T): {
+function normalizeToolSchemas<T extends Record<string, unknown>>(tools: T): {
   normalizedTools: T;
   normalizedToolNames: string[];
 } {
@@ -384,7 +399,7 @@ function normalizeGeminiTools<T extends Record<string, unknown>>(tools: T): {
       } catch {
         // Keep original schema object if clone fails.
       }
-      const changed = normalizeGeminiSchemaInPlace(rawSchema, [toolName, schemaKey, "jsonSchema"]);
+      const changed = normalizeToolSchemaInPlace(rawSchema, [toolName, schemaKey, "jsonSchema"]);
       if (changed) {
         const validate = typeof wrapper.validate === "function" ? (wrapper.validate as (value: unknown) => unknown) : undefined;
         toolCopy[schemaKey] = jsonSchema(
@@ -405,7 +420,7 @@ function normalizeGeminiTools<T extends Record<string, unknown>>(tools: T): {
     } catch {
       // Keep original schema object if clone fails.
     }
-    const changed = normalizeGeminiSchemaInPlace(schemaCopy, [toolName, schemaKey]);
+    const changed = normalizeToolSchemaInPlace(schemaCopy, [toolName, schemaKey]);
     toolCopy[schemaKey] = schemaCopy;
     if (changed) normalizedToolNames.push(toolName);
     entries.push([toolName, toolCopy]);
@@ -414,18 +429,103 @@ function normalizeGeminiTools<T extends Record<string, unknown>>(tools: T): {
   return { normalizedTools: Object.fromEntries(entries) as T, normalizedToolNames };
 }
 
+const PROVIDER_TOOL_NAME_MAX_LENGTH = 128;
+const PROVIDER_TOOL_NAME_PATTERN = /^[a-zA-Z0-9_-]{1,128}$/;
+const MAX_MODEL_CONTEXT_MESSAGES = 12;
+const MAX_MODEL_MESSAGE_PARTS = 10;
+const MAX_MODEL_TEXT_PART_CHARS = 4_000;
+type CompactModelMessage = { role: "user" | "assistant" | "system"; content: string };
+
+function toProviderSafeToolName(name: string): string {
+  const normalized = name.trim().replace(/[^a-zA-Z0-9_-]/g, "_").replace(/_+/g, "_");
+  const fallback = normalized || "tool";
+  return fallback.slice(0, PROVIDER_TOOL_NAME_MAX_LENGTH);
+}
+
+function buildProviderSafeTools<T extends Record<string, unknown>>(tools: T): {
+  safeTools: T;
+  safeToOriginal: Map<string, string>;
+  renamedPairs: Array<{ original: string; safe: string }>;
+} {
+  const safeToOriginal = new Map<string, string>();
+  const renamedPairs: Array<{ original: string; safe: string }> = [];
+  const entries: Array<[string, unknown]> = [];
+  const usedNames = new Set<string>();
+
+  for (const [originalName, definition] of Object.entries(tools)) {
+    let safeName = PROVIDER_TOOL_NAME_PATTERN.test(originalName) ? originalName : toProviderSafeToolName(originalName);
+    let suffix = 2;
+    while (usedNames.has(safeName) || !PROVIDER_TOOL_NAME_PATTERN.test(safeName)) {
+      const suffixText = `_${suffix}`;
+      const baseLength = Math.max(1, PROVIDER_TOOL_NAME_MAX_LENGTH - suffixText.length);
+      safeName = `${toProviderSafeToolName(originalName).slice(0, baseLength)}${suffixText}`;
+      suffix += 1;
+    }
+    usedNames.add(safeName);
+    safeToOriginal.set(safeName, originalName);
+    if (safeName !== originalName) renamedPairs.push({ original: originalName, safe: safeName });
+    entries.push([safeName, definition]);
+  }
+
+  return {
+    safeTools: Object.fromEntries(entries) as T,
+    safeToOriginal,
+    renamedPairs,
+  };
+}
+
+function truncateText(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  return `${text.slice(0, maxChars)}\n\n[truncated for context window]`;
+}
+
+function compactMessagesForModel(messages: unknown): CompactModelMessage[] {
+  if (!Array.isArray(messages)) return [];
+
+  const compacted: CompactModelMessage[] = [];
+  for (const message of messages.slice(-MAX_MODEL_CONTEXT_MESSAGES)) {
+    if (!isRecord(message)) continue;
+    const role = message.role === "assistant" || message.role === "system" ? message.role : "user";
+    const rawParts = Array.isArray(message.parts) ? message.parts : [];
+    const textChunks: string[] = [];
+
+    for (const part of rawParts.slice(0, MAX_MODEL_MESSAGE_PARTS)) {
+      if (!isRecord(part) || typeof part.type !== "string") continue;
+      if (part.type === "text" && typeof part.text === "string") {
+        textChunks.push(truncateText(part.text, MAX_MODEL_TEXT_PART_CHARS));
+        continue;
+      }
+      // Exclude heavy reasoning/tool payloads from replay context.
+      if (part.type === "reasoning" || part.type.startsWith("tool-")) continue;
+    }
+
+    if (textChunks.length === 0 && typeof message.content === "string" && message.content.trim()) {
+      textChunks.push(truncateText(message.content, MAX_MODEL_TEXT_PART_CHARS));
+    }
+
+    const content = textChunks.join("\n\n").trim();
+    if (!content) continue;
+    compacted.push({ role, content });
+  }
+
+  return compacted;
+}
+
 function sanitizeToolName(name: unknown): string | null {
   if (typeof name !== "string") return null;
   const normalized = name.trim();
   if (!normalized) return null;
-  return normalized.replace(/[^a-zA-Z0-9_-]/g, "-");
+  return normalized.replace(/[^a-zA-Z0-9_.-]/g, "-");
 }
 
 function createShareToken() {
   return `share_${crypto.randomUUID().replace(/-/g, "")}`;
 }
 
-function extractPartsFromResponseMessage(message: unknown): PersistedMessagePart[] {
+function extractPartsFromResponseMessage(
+  message: unknown,
+  resolveToolName?: (name: string) => string,
+): PersistedMessagePart[] {
   if (!isRecord(message)) return [];
 
   const directParts = message.parts;
@@ -453,7 +553,8 @@ function extractPartsFromResponseMessage(message: unknown): PersistedMessagePart
     }
 
     if (segment.type === "tool-call") {
-      const toolName = sanitizeToolName(segment.toolName);
+      const resolvedName = typeof segment.toolName === "string" ? resolveToolName?.(segment.toolName) ?? segment.toolName : segment.toolName;
+      const toolName = sanitizeToolName(resolvedName);
       if (!toolName) continue;
       const callId = (segment.toolCallId as string) ?? null;
       const part: PersistedMessagePart = {
@@ -468,7 +569,8 @@ function extractPartsFromResponseMessage(message: unknown): PersistedMessagePart
     }
 
     if (segment.type === "tool-result") {
-      const toolName = sanitizeToolName(segment.toolName);
+      const resolvedName = typeof segment.toolName === "string" ? resolveToolName?.(segment.toolName) ?? segment.toolName : segment.toolName;
+      const toolName = sanitizeToolName(resolvedName);
       if (!toolName) continue;
       const callId = (segment.toolCallId as string) ?? null;
       const existing = callId ? toolIndex.get(callId) : undefined;
@@ -491,7 +593,10 @@ function extractPartsFromResponseMessage(message: unknown): PersistedMessagePart
   return parts;
 }
 
-function buildAssistantPartsFromFinishEvent(event: unknown): PersistedMessagePart[] {
+function buildAssistantPartsFromFinishEvent(
+  event: unknown,
+  resolveToolName?: (name: string) => string,
+): PersistedMessagePart[] {
   if (!isRecord(event)) return [{ type: "text", text: "" }];
 
   const response = event.response;
@@ -499,7 +604,7 @@ function buildAssistantPartsFromFinishEvent(event: unknown): PersistedMessagePar
     const assistantResponseMessage = [...response.messages]
       .reverse()
       .find((message) => isRecord(message) && message.role === "assistant");
-    const responseParts = extractPartsFromResponseMessage(assistantResponseMessage);
+    const responseParts = extractPartsFromResponseMessage(assistantResponseMessage, resolveToolName);
     if (responseParts.length > 0) return responseParts;
   }
 
@@ -513,7 +618,8 @@ function buildAssistantPartsFromFinishEvent(event: unknown): PersistedMessagePar
   const toolCalls = Array.isArray(event.toolCalls) ? event.toolCalls : [];
   for (const call of toolCalls) {
     if (!isRecord(call)) continue;
-    const toolName = sanitizeToolName(call.toolName);
+    const resolvedName = typeof call.toolName === "string" ? resolveToolName?.(call.toolName) ?? call.toolName : call.toolName;
+    const toolName = sanitizeToolName(resolvedName);
     if (!toolName) continue;
     const callId = (call.toolCallId as string) ?? null;
     const part: PersistedMessagePart = {
@@ -529,7 +635,8 @@ function buildAssistantPartsFromFinishEvent(event: unknown): PersistedMessagePar
   const toolResults = Array.isArray(event.toolResults) ? event.toolResults : [];
   for (const result of toolResults) {
     if (!isRecord(result)) continue;
-    const toolName = sanitizeToolName(result.toolName);
+    const resolvedName = typeof result.toolName === "string" ? resolveToolName?.(result.toolName) ?? result.toolName : result.toolName;
+    const toolName = sanitizeToolName(resolvedName);
     if (!toolName) continue;
     const callId = (result.toolCallId as string) ?? null;
     const existing = callId ? fallbackToolIndex.get(callId) : undefined;
@@ -691,6 +798,38 @@ function buildToolCatalog(tools: Record<string, unknown>, query: string) {
     recommendedCount += 1;
   }
   return catalog;
+}
+
+function extractLatestUserText(messages: Array<{ role?: string; parts?: unknown[] }> | undefined): string {
+  if (!Array.isArray(messages)) return "";
+  const latestUser = [...messages].reverse().find((message) => message?.role === "user");
+  if (!latestUser || !Array.isArray(latestUser.parts)) return "";
+  const text = latestUser.parts
+    .filter((part): part is Record<string, unknown> => isRecord(part))
+    .filter((part) => part.type === "text" && typeof part.text === "string")
+    .map((part) => String(part.text))
+    .join(" ")
+    .trim();
+  return text;
+}
+
+function selectToolsForChat(tools: Record<string, unknown>, query: string, limit: number): Record<string, unknown> {
+  const catalog = buildToolCatalog(tools, "");
+  const keywords = query
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((keyword) => keyword.length >= 3);
+  const ranked = [...catalog].sort((a, b) => {
+    const aHaystack = `${a.name} ${a.description}`.toLowerCase();
+    const bHaystack = `${b.name} ${b.description}`.toLowerCase();
+    const aMatches = keywords.reduce((sum, keyword) => sum + (aHaystack.includes(keyword) ? 1 : 0), 0);
+    const bMatches = keywords.reduce((sum, keyword) => sum + (bHaystack.includes(keyword) ? 1 : 0), 0);
+    return bMatches - aMatches || b.score - a.score;
+  });
+  const selectedNames = new Set(ranked.slice(0, Math.max(8, limit)).map((item) => item.name));
+
+  const selectedEntries = Object.entries(tools).filter(([name]) => selectedNames.has(name));
+  return Object.fromEntries(selectedEntries);
 }
 
 async function loadAuthorizedMcpTools({
@@ -876,12 +1015,26 @@ async function handleChat(request: Request) {
   });
   if ("response" in toolLoad) return toolLoad.response;
   const tools = toolLoad.tools;
+  const latestUserQuery = extractLatestUserText(body.messages);
+  const scopedTools = selectToolsForChat(tools, latestUserQuery, 18);
 
-  const { normalizedTools, normalizedToolNames } = normalizeGeminiTools(tools);
+  const { normalizedTools, normalizedToolNames } = normalizeToolSchemas(scopedTools);
+  const { safeTools, safeToOriginal, renamedPairs } = buildProviderSafeTools(normalizedTools);
   if (normalizedToolNames.length > 0) {
     console.warn("[api/chat] Normalized Gemini-incompatible MCP schemas", {
       normalizedCount: normalizedToolNames.length,
       normalizedToolNames,
+    });
+  }
+  console.warn("[api/chat] Scoped tool catalog for request", {
+    totalTools: Object.keys(tools).length,
+    selectedTools: Object.keys(scopedTools).length,
+    query: latestUserQuery.slice(0, 180),
+  });
+  if (renamedPairs.length > 0) {
+    console.warn("[api/chat] Remapped tool names for provider compatibility", {
+      renamedCount: renamedPairs.length,
+      renamedPairs: renamedPairs.slice(0, 12),
     });
   }
 
@@ -911,18 +1064,33 @@ async function handleChat(request: Request) {
     conversationId: body.conversationId,
   });
   const systemPrompt = documentContext ? `${getSystemPrompt()}\n\n${documentContext}` : getSystemPrompt();
+  const compactedMessages = compactMessagesForModel(body.messages ?? []);
+  if (Array.isArray(body.messages) && compactedMessages.length !== body.messages.length) {
+    console.warn("[api/chat] Compacted message history for model context", {
+      originalCount: body.messages.length,
+      compactedCount: compactedMessages.length,
+    });
+  }
+  const compactedChars = compactedMessages.reduce((sum, message) => sum + message.content.length, 0);
+  if (compactedChars > 40_000) {
+    console.warn("[api/chat] Compacted message payload is still large", {
+      compactedCount: compactedMessages.length,
+      compactedChars,
+    });
+  }
 
+  const fallbackModels = getOpenRouterFallbackModels(selectedModel.id);
   const result = streamText({
-    model: google(selectedModel.providerModel),
-    messages: await convertToModelMessages((body.messages ?? []) as Parameters<typeof convertToModelMessages>[0], {
-      ignoreIncompleteToolCalls: true,
+    model: openrouter.chat(selectedModel.providerModel, {
+      extraBody: fallbackModels.length > 0 ? { models: fallbackModels } : undefined,
     }),
-    tools: normalizedTools as Parameters<typeof streamText>[0]["tools"],
+    messages: compactedMessages,
+    tools: safeTools as Parameters<typeof streamText>[0]["tools"],
     stopWhen: stepCountIs(10),
     system: systemPrompt,
     onFinish: async (event) => {
       const persistPromise = (async () => {
-        const assistantParts = buildAssistantPartsFromFinishEvent(event);
+        const assistantParts = buildAssistantPartsFromFinishEvent(event, (name) => safeToOriginal.get(name) ?? name);
         const { error: assistantInsertError } = await supabase.from("uk_chat_messages").insert({
           conversation_id: body.conversationId!,
           role: "assistant",
