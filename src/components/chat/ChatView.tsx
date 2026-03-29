@@ -6,7 +6,7 @@ import { Conversation } from "@/components/ai-elements/conversation";
 import { AssistantThinkingMessage, Message } from "@/components/ai-elements/message";
 import { ChatInput, type ChatToolOption } from "@/components/chat/ChatInput";
 import { SuggestedMessages } from "@/components/chat/SuggestedMessages";
-import { DEFAULT_CHAT_MODEL_ID, type ChatModelId } from "@/lib/chat-models";
+import { DEFAULT_CHAT_MODEL_ID, getChatModelConfig, type ChatModelId } from "@/shared/chat-models";
 import { useAppStore } from "@/lib/store";
 import { isChartArtifactCandidate, normalizeVizToolName } from "@/lib/viz-registry";
 import { Input } from "@/components/ui/primitives";
@@ -103,6 +103,7 @@ export function ChatView({
   const [editingTitle, setEditingTitle] = useState(false);
   const [draftTitle, setDraftTitle] = useState("");
   const [selectedModelId, setSelectedModelId] = useState<ChatModelId>(DEFAULT_CHAT_MODEL_ID);
+  const selectedModel = getChatModelConfig(selectedModelId);
   const [toolsLoading, setToolsLoading] = useState(false);
   const [toolsLoadingMore, setToolsLoadingMore] = useState(false);
   const [toolsQuery, setToolsQuery] = useState<string | null>(null);
@@ -113,6 +114,7 @@ export function ChatView({
   const [selectedTools, setSelectedTools] = useState<ChatToolOption[]>([]);
   const [usageBanner, setUsageBanner] = useState<string | null>(null);
   const toolsCacheRef = useRef<Map<string, ToolsCacheEntry>>(new Map());
+  const pushedArtifactKeysRef = useRef<Set<string>>(new Set());
   const onMissingRef = useRef(onConversationMissing);
   onMissingRef.current = onConversationMissing;
 
@@ -291,7 +293,7 @@ export function ChatView({
       { text: `${toolPrefix}${text}` },
       {
         headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
-        body: { conversationId: ensuredConversationId, mcpToken, modelId: selectedModelId, documents: parsedDocuments },
+        body: { conversationId: ensuredConversationId, mcpToken, modelId: selectedModel.id, documents: parsedDocuments },
       },
     );
     if (shouldRefreshAutoTitle && authToken) {
@@ -380,7 +382,7 @@ export function ChatView({
       return;
     }
     try {
-      const response = await fetch(`/api/chat/usage?modelId=${encodeURIComponent(selectedModelId)}`, {
+      const response = await fetch(`/api/chat/usage?modelId=${encodeURIComponent(selectedModel.id)}`, {
         headers: { Authorization: `Bearer ${authToken}` },
       });
       if (!response.ok) return;
@@ -392,6 +394,7 @@ export function ChatView({
   }
 
   useEffect(() => {
+    pushedArtifactKeysRef.current.clear();
     clearVizPayloads();
     if (!conversationId || !authToken) {
       setMessages([]);
@@ -430,43 +433,48 @@ export function ChatView({
   }, [authToken, clearVizPayloads, conversationId, setMessages]);
 
   useEffect(() => {
-    const latest = messages.at(-1);
-    if (!latest?.parts) return;
-    (latest.parts as Part[]).forEach((part, index) => {
-      let toolName: string | undefined;
-      let toolCallId: string | undefined;
-      let output: unknown;
+    for (const message of messages) {
+      if (message.role !== "assistant" || !Array.isArray(message.parts)) continue;
 
-      if (part.type === "tool-invocation") {
-        const inv = (part as { toolInvocation?: { toolName: string; toolCallId: string; state: string; result?: unknown } }).toolInvocation;
-        if (!inv || inv.state !== "result" || inv.result == null) return;
-        toolName = inv.toolName;
-        toolCallId = inv.toolCallId;
-        output = inv.result;
-      } else if (part.type.startsWith("tool-")) {
-        if (part.state !== "output-available" || !("output" in part) || part.output == null) return;
-        toolName = part.type.replace("tool-", "");
-        toolCallId = typeof part.toolCallId === "string" ? part.toolCallId : undefined;
-        output = part.output;
-      } else {
-        return;
-      }
+      (message.parts as Part[]).forEach((part, index) => {
+        let toolName: string | undefined;
+        let toolCallId: string | undefined;
+        let output: unknown;
 
-      if (!toolName || !isChartArtifactCandidate(toolName, output)) return;
-      const normalizedToolName = normalizeVizToolName(toolName);
-      const chartSpec =
-        normalizedToolName === "create_chart" && isChartSpec(output)
-          ? output
-          : buildChartSpecFromVizHint(output);
-      const id = toolCallId ?? `idx-${index}`;
-      pushVizPayload({
-        id: `${latest.id}:${normalizedToolName}:${id}`,
-        toolName: normalizedToolName,
-        data: output,
-        title: `Chart: ${normalizedToolName}`,
-        chartSpec: chartSpec ?? undefined,
+        if (part.type === "tool-invocation") {
+          const inv = (part as { toolInvocation?: { toolName: string; toolCallId: string; state: string; result?: unknown } }).toolInvocation;
+          if (!inv || inv.state !== "result" || inv.result == null) return;
+          toolName = inv.toolName;
+          toolCallId = inv.toolCallId;
+          output = inv.result;
+        } else if (part.type.startsWith("tool-")) {
+          if (part.state !== "output-available" || !("output" in part) || part.output == null) return;
+          toolName = part.type.replace("tool-", "");
+          toolCallId = typeof part.toolCallId === "string" ? part.toolCallId : undefined;
+          output = part.output;
+        } else {
+          return;
+        }
+
+        if (!toolName || !isChartArtifactCandidate(toolName, output)) return;
+        const normalizedToolName = normalizeVizToolName(toolName);
+        const chartSpec =
+          normalizedToolName === "create_chart" && isChartSpec(output)
+            ? output
+            : buildChartSpecFromVizHint(output);
+        const id = toolCallId ?? `idx-${index}`;
+        const artifactKey = `${message.id}:${normalizedToolName}:${id}`;
+        if (pushedArtifactKeysRef.current.has(artifactKey)) return;
+        pushedArtifactKeysRef.current.add(artifactKey);
+        pushVizPayload({
+          id: artifactKey,
+          toolName: normalizedToolName,
+          data: output,
+          title: `Chart: ${normalizedToolName}`,
+          chartSpec: chartSpec ?? undefined,
+        });
       });
-    });
+    }
   }, [messages, pushVizPayload]);
 
   function submitTitleRename() {

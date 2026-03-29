@@ -1,5 +1,5 @@
 import { PromptInput, type PromptInputSubmitPayload } from "@/components/ai-elements/prompt-input";
-import { CHAT_MODEL_CONFIGS, type ChatModelId } from "@/lib/chat-models";
+import { CHAT_MODEL_CONFIGS, type ChatModelId } from "@/shared/chat-models";
 
 export type ChatToolOption = {
   name: string;

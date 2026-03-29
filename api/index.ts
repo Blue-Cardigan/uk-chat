@@ -2,7 +2,7 @@ import { generateText, jsonSchema, stepCountIs, streamText } from "ai";
 import { createMCPClient } from "@ai-sdk/mcp";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { waitUntil } from "@vercel/functions";
-import { CHAT_SUPPORT_CONTACT, getChatModelConfig } from "./_lib/chat-models.js";
+import { CHAT_MODEL_CONFIGS, CHAT_SUPPORT_CONTACT, getChatModelConfig } from "../src/shared/chat-models.js";
 import { onboardUser } from "./_lib/onboarding.js";
 import { ensureAdmin, ensureAdminOrBootstrap, getSupabaseAdmin, getUserFromRequest, json } from "./_lib/server.js";
 import { getSystemPrompt } from "./_lib/system-prompt.js";
@@ -239,6 +239,42 @@ function isSchemaWrapper(value: unknown): boolean {
   return "validate" in value || "jsonSchema" in value || "~standard" in value;
 }
 
+const MAX_TOOL_OUTPUT_DEPTH = 5;
+const MAX_TOOL_OUTPUT_STRING = 8_000;
+const MAX_TOOL_OUTPUT_ARRAY_ITEMS = 180;
+const MAX_TOOL_OUTPUT_OBJECT_KEYS = 60;
+
+function compactToolOutputForModel(value: unknown, depth = 0): unknown {
+  if (depth > MAX_TOOL_OUTPUT_DEPTH) return "[truncated: depth]";
+
+  if (typeof value === "string") {
+    if (value.length <= MAX_TOOL_OUTPUT_STRING) return value;
+    return `${value.slice(0, MAX_TOOL_OUTPUT_STRING)}\n\n[truncated for model context]`;
+  }
+  if (typeof value === "number" || typeof value === "boolean" || value == null) return value;
+
+  if (Array.isArray(value)) {
+    const compacted = value.slice(0, MAX_TOOL_OUTPUT_ARRAY_ITEMS).map((item) => compactToolOutputForModel(item, depth + 1));
+    if (value.length > MAX_TOOL_OUTPUT_ARRAY_ITEMS) {
+      compacted.push(`[truncated: ${value.length - MAX_TOOL_OUTPUT_ARRAY_ITEMS} more items]`);
+    }
+    return compacted;
+  }
+
+  if (!isRecord(value)) return value;
+
+  const entries = Object.entries(value);
+  const compactedObject: Record<string, unknown> = {};
+  for (const [index, [key, entry]] of entries.entries()) {
+    if (index >= MAX_TOOL_OUTPUT_OBJECT_KEYS) {
+      compactedObject.__truncated__ = `${entries.length - MAX_TOOL_OUTPUT_OBJECT_KEYS} more keys omitted`;
+      break;
+    }
+    compactedObject[key] = compactToolOutputForModel(entry, depth + 1);
+  }
+  return compactedObject;
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -311,6 +347,24 @@ async function loadMcpToolsWithFallback(configuredUrl: string, token: string) {
   }
 
   return { tools: null, connectedVia: null, attempts };
+}
+
+function compactMcpToolsForModelContext(tools: Record<string, unknown>): Record<string, unknown> {
+  const compactedEntries = Object.entries(tools).map(([toolName, definition]) => {
+    if (!isRecord(definition) || typeof definition.execute !== "function") return [toolName, definition] as const;
+
+    const originalExecute = definition.execute as (...args: unknown[]) => unknown;
+    const wrappedDefinition = {
+      ...definition,
+      execute: async (...args: unknown[]) => {
+        const result = await originalExecute(...args);
+        return compactToolOutputForModel(result);
+      },
+    };
+    return [toolName, wrappedDefinition] as const;
+  });
+
+  return Object.fromEntries(compactedEntries);
 }
 
 function isMcpUnauthorized(attempts: McpAttempt[]): boolean {
@@ -679,6 +733,72 @@ function extractPartsFromResponseMessage(
   return parts;
 }
 
+function mergeToolCallsAndResultsIntoParts(
+  parts: PersistedMessagePart[],
+  event: unknown,
+  resolveToolName?: (name: string) => string,
+): PersistedMessagePart[] {
+  if (!isRecord(event)) return parts;
+
+  const merged = [...parts];
+  const toolIndex = new Map<string, PersistedMessagePart>();
+  const existingSignatures = new Set<string>();
+
+  for (const [index, part] of merged.entries()) {
+    if (!isRecord(part) || typeof part.type !== "string" || !part.type.startsWith("tool-")) continue;
+    const callId = typeof part.toolCallId === "string" ? part.toolCallId : null;
+    if (callId) toolIndex.set(callId, part);
+    existingSignatures.add(`${part.type}:${callId ?? `idx-${index}`}`);
+  }
+
+  const toolCalls = Array.isArray(event.toolCalls) ? event.toolCalls : [];
+  for (const call of toolCalls) {
+    if (!isRecord(call)) continue;
+    const resolvedName = typeof call.toolName === "string" ? resolveToolName?.(call.toolName) ?? call.toolName : call.toolName;
+    const toolName = sanitizeToolName(resolvedName);
+    if (!toolName) continue;
+    const callId = (call.toolCallId as string) ?? null;
+    const signature = `tool-${toolName}:${callId ?? "no-call-id"}`;
+    if (existingSignatures.has(signature)) continue;
+    const part: PersistedMessagePart = {
+      type: `tool-${toolName}`,
+      state: "input-available",
+      input: call.input ?? null,
+      toolCallId: callId,
+    };
+    merged.push(part);
+    if (callId) toolIndex.set(callId, part);
+    existingSignatures.add(signature);
+  }
+
+  const toolResults = Array.isArray(event.toolResults) ? event.toolResults : [];
+  for (const result of toolResults) {
+    if (!isRecord(result)) continue;
+    const resolvedName = typeof result.toolName === "string" ? resolveToolName?.(result.toolName) ?? result.toolName : result.toolName;
+    const toolName = sanitizeToolName(resolvedName);
+    if (!toolName) continue;
+    const callId = (result.toolCallId as string) ?? null;
+    const existing = callId ? toolIndex.get(callId) : undefined;
+    if (existing) {
+      existing.state = "output-available";
+      existing.output = result.output ?? null;
+      continue;
+    }
+
+    const signature = `tool-${toolName}:${callId ?? "no-call-id"}`;
+    if (existingSignatures.has(signature)) continue;
+    merged.push({
+      type: `tool-${toolName}`,
+      state: "output-available",
+      output: result.output ?? null,
+      toolCallId: callId,
+    });
+    existingSignatures.add(signature);
+  }
+
+  return merged;
+}
+
 function buildAssistantPartsFromFinishEvent(
   event: unknown,
   resolveToolName?: (name: string) => string,
@@ -691,7 +811,9 @@ function buildAssistantPartsFromFinishEvent(
       .reverse()
       .find((message) => isRecord(message) && message.role === "assistant");
     const responseParts = extractPartsFromResponseMessage(assistantResponseMessage, resolveToolName);
-    if (responseParts.length > 0) return responseParts;
+    if (responseParts.length > 0) {
+      return mergeToolCallsAndResultsIntoParts(responseParts, event, resolveToolName);
+    }
   }
 
   const text = typeof event.text === "string" ? event.text : "";
@@ -1106,6 +1228,45 @@ async function handleChatUsage(request: Request) {
   });
 }
 
+async function handleChatUsageAll(request: Request) {
+  const user = await getUserFromRequest(request);
+  if (!user) return json({ error: "Unauthorized" }, 401);
+
+  const usageDate = utcDateStamp();
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase
+    .from("uk_chat_model_usage")
+    .select("model_id,request_count")
+    .eq("user_id", user.id)
+    .eq("usage_date", usageDate);
+
+  if (error) return json({ error: error.message }, 500);
+
+  const usageByModelId = new Map<string, number>();
+  for (const row of data ?? []) {
+    const existing = usageByModelId.get(row.model_id) ?? 0;
+    usageByModelId.set(row.model_id, existing + row.request_count);
+  }
+
+  const models = CHAT_MODEL_CONFIGS.map((model) => {
+    const used = usageByModelId.get(model.id) ?? 0;
+    const remaining = Math.max(0, model.dailyLimit - used);
+    const reached = remaining <= 0;
+    const approaching = !reached && remaining <= approachingThreshold(model.dailyLimit);
+    return {
+      id: model.id,
+      label: model.label,
+      dailyLimit: model.dailyLimit,
+      used,
+      remaining,
+      approaching,
+      reached,
+    };
+  });
+
+  return json({ models });
+}
+
 async function handleChat(request: Request) {
   const user = await getUserFromRequest(request);
   if (!user) return json({ error: "Unauthorized" }, 401);
@@ -1151,7 +1312,7 @@ async function handleChat(request: Request) {
     conversationId: body.conversationId,
   });
   if ("response" in toolLoad) return toolLoad.response;
-  const tools = toolLoad.tools;
+  const tools = compactMcpToolsForModelContext(toolLoad.tools);
   const latestUserQuery = extractLatestUserText(body.messages);
   const scopedTools = {
     ...selectToolsForChat(tools, latestUserQuery, 18),
@@ -1244,7 +1405,8 @@ async function handleChat(request: Request) {
     supabase,
     conversationId: body.conversationId,
   });
-  const systemPrompt = documentContext ? `${getSystemPrompt()}\n\n${documentContext}` : getSystemPrompt();
+  const systemPromptBase = getSystemPrompt(new Date(), selectedModel.id);
+  const systemPrompt = documentContext ? `${systemPromptBase}\n\n${documentContext}` : systemPromptBase;
   const compactedMessages = compactMessagesForModel(body.messages ?? []);
   if (Array.isArray(body.messages) && compactedMessages.length !== body.messages.length) {
     console.warn("[api/chat] Compacted message history for model context", {
@@ -1785,6 +1947,10 @@ async function routeRequest(request: Request) {
     if (parts.length === 2 && parts[1] === "tools") {
       if (request.method !== "POST") return methodNotAllowed();
       return handleChatTools(request);
+    }
+    if (parts.length === 3 && parts[1] === "usage" && parts[2] === "all") {
+      if (request.method !== "GET") return methodNotAllowed();
+      return handleChatUsageAll(request);
     }
     if (parts.length === 2 && parts[1] === "usage") {
       if (request.method !== "GET") return methodNotAllowed();

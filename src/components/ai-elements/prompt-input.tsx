@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUp, Check, Plus, Wrench, X } from "lucide-react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { ArrowUp, Check, ChevronDown, Plus, Wrench, X } from "lucide-react";
 import { Button, Textarea } from "@/components/ui/primitives";
-import type { ChatModelConfig, ChatModelId } from "@/lib/chat-models";
+import type { ChatModelConfig, ChatModelId } from "@/shared/chat-models";
 import type { ChatToolOption } from "@/components/chat/ChatInput";
 
 const ACCEPTED_DOCUMENT_EXTENSIONS = new Set(["pdf", "txt", "md", "markdown", "csv", "json", "docx", "xlsx"]);
@@ -93,9 +93,15 @@ export function PromptInput({
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [slashMenuIndex, setSlashMenuIndex] = useState(0);
   const [menuScrollTop, setMenuScrollTop] = useState(0);
+  const [isModelMenuOpen, setIsModelMenuOpen] = useState(false);
+  const [modelMenuIndex, setModelMenuIndex] = useState(0);
   const formRef = useRef<HTMLFormElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const modelMenuRef = useRef<HTMLDivElement | null>(null);
+  const modelMenuTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const modelOptionRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const modelListboxId = useId();
   const canSubmit = value.trim().length > 0 && !isLoading;
   const slashQuery = useMemo(() => {
     const trimmed = value.trimStart();
@@ -103,6 +109,14 @@ export function PromptInput({
     return trimmed.slice(1).toLowerCase();
   }, [value]);
   const selectedToolNames = useMemo(() => new Set(selectedTools.map((tool) => tool.name)), [selectedTools]);
+  const selectedModel = useMemo(
+    () => modelOptions.find((option) => option.id === modelId) ?? modelOptions[0],
+    [modelId, modelOptions],
+  );
+  const selectedModelIndex = useMemo(
+    () => modelOptions.findIndex((option) => option.id === selectedModel?.id),
+    [modelOptions, selectedModel?.id],
+  );
   const slashMatches = useMemo(() => {
     if (slashQuery === null) return [];
     const normalized = slashQuery.trim();
@@ -169,6 +183,24 @@ export function PromptInput({
     [menuScrollTop, virtualRows.rows],
   );
 
+  function closeModelMenu({ restoreFocus }: { restoreFocus: boolean }) {
+    setIsModelMenuOpen(false);
+    if (restoreFocus) {
+      window.requestAnimationFrame(() => modelMenuTriggerRef.current?.focus());
+    }
+  }
+
+  function openModelMenu() {
+    setModelMenuIndex(Math.max(0, selectedModelIndex));
+    setIsModelMenuOpen(true);
+  }
+
+  function moveModelMenuFocus(index: number) {
+    const nextIndex = Math.max(0, Math.min(index, modelOptions.length - 1));
+    setModelMenuIndex(nextIndex);
+    modelOptionRefs.current[nextIndex]?.focus();
+  }
+
   function handleSubmit() {
     const trimmed = value.trim();
     if (!trimmed) return;
@@ -226,6 +258,34 @@ export function PromptInput({
     window.addEventListener("pointerdown", onPointerDown);
     return () => window.removeEventListener("pointerdown", onPointerDown);
   }, [showSlashMenu]);
+
+  useEffect(() => {
+    if (!isModelMenuOpen) return;
+    function onPointerDown(event: PointerEvent) {
+      if (!modelMenuRef.current) return;
+      if (modelMenuRef.current.contains(event.target as Node)) return;
+      closeModelMenu({ restoreFocus: false });
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") closeModelMenu({ restoreFocus: true });
+    }
+    window.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [isModelMenuOpen]);
+
+  useEffect(() => {
+    if (!isLoading) return;
+    setIsModelMenuOpen(false);
+  }, [isLoading]);
+
+  useEffect(() => {
+    if (!isModelMenuOpen) return;
+    moveModelMenuFocus(Math.max(0, selectedModelIndex));
+  }, [isModelMenuOpen, selectedModelIndex]);
 
   return (
     <form
@@ -412,23 +472,100 @@ export function PromptInput({
           <Plus className="h-4 w-4" />
         </Button>
         <div className="flex items-center gap-2">
-          <label
-            className="relative inline-flex h-8 items-center rounded-full pl-2.5 pr-6 text-sm text-(--color-muted-foreground) transition-colors hover:bg-[color-mix(in_oklch,var(--color-card)_60%,var(--color-foreground)_12%)]"
-            aria-label="Select model"
-          >
-            <select
-              value={modelId}
-              onChange={(event) => onModelChange(event.target.value as ChatModelId)}
-              className="cursor-pointer appearance-none bg-transparent pr-1 text-sm outline-none"
+          <div ref={modelMenuRef} className="relative">
+            <Button
+              ref={modelMenuTriggerRef}
+              type="button"
+              variant="ghost"
+              aria-haspopup="listbox"
+              aria-expanded={isModelMenuOpen}
+              aria-controls={isModelMenuOpen ? modelListboxId : undefined}
+              aria-label={`Model: ${selectedModel?.label ?? "Unknown"}`}
+              className="inline-flex h-8 items-center gap-1.5 rounded-full px-2.5 text-sm text-(--color-muted-foreground) hover:bg-[color-mix(in_oklch,var(--color-card)_60%,var(--color-foreground)_12%)]"
+              onClick={() => {
+                if (isModelMenuOpen) {
+                  closeModelMenu({ restoreFocus: false });
+                  return;
+                }
+                openModelMenu();
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "ArrowDown" || event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  if (!isModelMenuOpen) openModelMenu();
+                }
+              }}
+              disabled={Boolean(isLoading)}
             >
-              {modelOptions.map((model) => (
-                <option key={model.id} value={model.id} className="bg-(--color-card) text-(--color-foreground)">
-                  {model.label}
-                </option>
-              ))}
-            </select>
-            <span className="pointer-events-none absolute right-2 text-xs">v</span>
-          </label>
+              <span>{selectedModel?.label ?? "Model"}</span>
+              <ChevronDown className={`h-3.5 w-3.5 transition-transform ${isModelMenuOpen ? "rotate-180" : ""}`} />
+            </Button>
+            {isModelMenuOpen ? (
+              <div
+                id={modelListboxId}
+                role="listbox"
+                aria-label="Model options"
+                className="absolute bottom-10 right-0 z-30 min-w-[150px] rounded-2xl border border-(--color-border) bg-(--color-card) p-1 shadow-lg"
+                onKeyDown={(event) => {
+                  if (event.key === "ArrowDown") {
+                    event.preventDefault();
+                    moveModelMenuFocus(modelMenuIndex + 1);
+                    return;
+                  }
+                  if (event.key === "ArrowUp") {
+                    event.preventDefault();
+                    moveModelMenuFocus(modelMenuIndex - 1);
+                    return;
+                  }
+                  if (event.key === "Home") {
+                    event.preventDefault();
+                    moveModelMenuFocus(0);
+                    return;
+                  }
+                  if (event.key === "End") {
+                    event.preventDefault();
+                    moveModelMenuFocus(modelOptions.length - 1);
+                    return;
+                  }
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    closeModelMenu({ restoreFocus: true });
+                  }
+                }}
+              >
+                {modelOptions.map((model, index) => {
+                  const isActive = model.id === modelId;
+                  return (
+                    <button
+                      key={model.id}
+                      ref={(node) => {
+                        modelOptionRefs.current[index] = node;
+                      }}
+                      type="button"
+                      role="option"
+                      aria-selected={isActive}
+                      tabIndex={index === modelMenuIndex ? 0 : -1}
+                      className={`flex w-full items-center justify-between gap-2 rounded-xl px-2 py-1.5 text-left text-sm transition-colors ${
+                        isActive
+                          ? "bg-[color-mix(in_oklch,var(--color-primary)_18%,var(--color-card)_82%)] text-(--color-foreground)"
+                          : "text-(--color-muted-foreground) hover:bg-[color-mix(in_oklch,var(--color-card)_50%,var(--color-foreground)_10%)]"
+                      }`}
+                      onMouseEnter={() => {
+                        setModelMenuIndex(index);
+                      }}
+                      onClick={() => {
+                        onModelChange(model.id);
+                        closeModelMenu({ restoreFocus: true });
+                      }}
+                    >
+                      <span>{model.label}</span>
+                      {isActive ? <Check className="h-3.5 w-3.5 text-(--color-primary)" /> : null}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
+          </div>
           {canSubmit ? (
             <Button
               type="submit"
