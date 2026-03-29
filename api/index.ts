@@ -72,6 +72,17 @@ function getAuthRedirectBase(request: Request): string {
 }
 
 type PersistedMessagePart = { type: string; [key: string]: unknown };
+type PersistedDocumentPart = {
+  type: "document";
+  documentId: string;
+  name: string;
+  extension: string;
+  mimeType: string;
+  sizeBytes: number;
+  extractedText: string;
+  pageCount?: number;
+  sheetNames?: string[];
+};
 type McpTransportType = "sse" | "http";
 type McpCandidate = { type: McpTransportType; url: string };
 type McpAttempt = { type: McpTransportType; url: string; error: string };
@@ -82,6 +93,106 @@ type ToolCatalogItem = {
   score: number;
   recommended: boolean;
 };
+type IncomingChatDocument = {
+  id?: unknown;
+  name?: unknown;
+  extension?: unknown;
+  mimeType?: unknown;
+  sizeBytes?: unknown;
+  extractedText?: unknown;
+  pageCount?: unknown;
+  sheetNames?: unknown;
+};
+
+const MAX_CHAT_DOCUMENT_COUNT = 8;
+const MAX_CHAT_DOCUMENT_TEXT_CHARS = 30_000;
+const MAX_CHAT_DOCUMENT_CONTEXT_CHARS = 90_000;
+
+function coerceString(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function sanitizeIncomingDocuments(input: unknown): PersistedDocumentPart[] {
+  if (!Array.isArray(input)) return [];
+  const sanitized: PersistedDocumentPart[] = [];
+  for (const raw of input.slice(0, MAX_CHAT_DOCUMENT_COUNT)) {
+    if (!isRecord(raw)) continue;
+    const candidate = raw as IncomingChatDocument;
+    const name = coerceString(candidate.name).trim();
+    const extractedText = coerceString(candidate.extractedText).trim().slice(0, MAX_CHAT_DOCUMENT_TEXT_CHARS);
+    if (!name || !extractedText) continue;
+    const extension = coerceString(candidate.extension).trim().toLowerCase();
+    const mimeType = coerceString(candidate.mimeType).trim().toLowerCase() || "application/octet-stream";
+    const sizeBytes = typeof candidate.sizeBytes === "number" && Number.isFinite(candidate.sizeBytes) ? Math.max(0, candidate.sizeBytes) : 0;
+    const documentId = coerceString(candidate.id).trim() || `${name}-${sizeBytes}`;
+    const pageCount = typeof candidate.pageCount === "number" && Number.isFinite(candidate.pageCount) ? candidate.pageCount : undefined;
+    const sheetNames = Array.isArray(candidate.sheetNames)
+      ? candidate.sheetNames.filter((sheet): sheet is string => typeof sheet === "string").slice(0, 20)
+      : undefined;
+    sanitized.push({
+      type: "document",
+      documentId,
+      name: name.slice(0, 180),
+      extension: extension.slice(0, 24),
+      mimeType: mimeType.slice(0, 120),
+      sizeBytes,
+      extractedText,
+      pageCount,
+      sheetNames,
+    });
+  }
+  return sanitized;
+}
+
+function buildDocumentContextFromParts(parts: PersistedMessagePart[]): string {
+  const documentParts = parts.filter((part): part is PersistedDocumentPart => part.type === "document");
+  if (documentParts.length === 0) return "";
+  let remainingChars = MAX_CHAT_DOCUMENT_CONTEXT_CHARS;
+  const snippets: string[] = [];
+  for (const doc of documentParts) {
+    if (remainingChars <= 0) break;
+    const snippet = doc.extractedText.slice(0, Math.min(remainingChars, MAX_CHAT_DOCUMENT_TEXT_CHARS));
+    if (!snippet.trim()) continue;
+    const header = `Document: ${doc.name}${doc.extension ? ` (.${doc.extension})` : ""}`;
+    const body = `${header}\n${snippet}`;
+    snippets.push(body);
+    remainingChars -= body.length;
+  }
+  if (snippets.length === 0) return "";
+  return [
+    "DOCUMENT CONTEXT",
+    "The following user-uploaded document excerpts are part of this conversation context.",
+    "Use them when answering, and cite assumptions if excerpts are incomplete.",
+    "",
+    snippets.join("\n\n---\n\n"),
+  ].join("\n");
+}
+
+async function loadConversationDocumentContext({
+  supabase,
+  conversationId,
+}: {
+  supabase: ReturnType<typeof getSupabaseAdmin>;
+  conversationId: string;
+}): Promise<string> {
+  const { data: messages, error } = await supabase
+    .from("uk_chat_messages")
+    .select("parts")
+    .eq("conversation_id", conversationId)
+    .eq("role", "user")
+    .order("created_at", { ascending: true });
+  if (error || !messages) return "";
+
+  const allDocumentParts: PersistedMessagePart[] = [];
+  for (const message of messages) {
+    const parts = Array.isArray(message.parts) ? message.parts : [];
+    for (const part of parts) {
+      if (!isRecord(part) || part.type !== "document") continue;
+      allDocumentParts.push(part as PersistedMessagePart);
+    }
+  }
+  return buildDocumentContextFromParts(allDocumentParts);
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -728,6 +839,7 @@ async function handleChat(request: Request) {
     mcpToken?: string | null;
     conversationId?: string | null;
     modelId?: string | null;
+    documents?: unknown;
   };
   const supabase = getSupabaseAdmin();
   if (!body.conversationId) return json({ error: "Missing conversationId" }, 400);
@@ -739,6 +851,7 @@ async function handleChat(request: Request) {
     .single();
   if (!conversation) return json({ error: "Conversation not found" }, 404);
   const selectedModel = getChatModelConfig(body.modelId);
+  const incomingDocuments = sanitizeIncomingDocuments(body.documents);
   const usageReservation = await reserveModelUsageSlot({
     supabase,
     userId: user.id,
@@ -775,6 +888,7 @@ async function handleChat(request: Request) {
   const latestUserMessage = [...(body.messages ?? [])].reverse().find((message) => message.role === "user");
   if (latestUserMessage) {
     const userParts = Array.isArray(latestUserMessage.parts) ? [...latestUserMessage.parts] : [];
+    incomingDocuments.forEach((document) => userParts.push(document));
     userParts.push({ type: "meta-model", modelId: selectedModel.id });
     const { error: insertUserError } = await supabase.from("uk_chat_messages").insert({
       conversation_id: body.conversationId,
@@ -792,6 +906,12 @@ async function handleChat(request: Request) {
     }
   }
 
+  const documentContext = await loadConversationDocumentContext({
+    supabase,
+    conversationId: body.conversationId,
+  });
+  const systemPrompt = documentContext ? `${getSystemPrompt()}\n\n${documentContext}` : getSystemPrompt();
+
   const result = streamText({
     model: google(selectedModel.providerModel),
     messages: await convertToModelMessages((body.messages ?? []) as Parameters<typeof convertToModelMessages>[0], {
@@ -799,7 +919,7 @@ async function handleChat(request: Request) {
     }),
     tools: normalizedTools as Parameters<typeof streamText>[0]["tools"],
     stopWhen: stepCountIs(10),
-    system: getSystemPrompt(),
+    system: systemPrompt,
     onFinish: async (event) => {
       const persistPromise = (async () => {
         const assistantParts = buildAssistantPartsFromFinishEvent(event);

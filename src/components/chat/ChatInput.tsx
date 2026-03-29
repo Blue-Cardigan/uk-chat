@@ -1,4 +1,4 @@
-import { PromptInput } from "@/components/ai-elements/prompt-input";
+import { PromptInput, type PromptInputSubmitPayload } from "@/components/ai-elements/prompt-input";
 import { CHAT_MODEL_CONFIGS, type ChatModelId } from "@/lib/chat-models";
 
 export type ChatToolOption = {
@@ -22,7 +22,7 @@ export function ChatInput({
   onToolsQueryChange,
   onLoadMoreTools,
 }: {
-  onSubmit: (text: string) => void;
+  onSubmit: (payload: PromptInputSubmitPayload) => void;
   isStreaming: boolean;
   modelId: ChatModelId;
   onModelChange: (modelId: ChatModelId) => void;
@@ -32,7 +32,7 @@ export function ChatInput({
   toolsLoadingMore: boolean;
   selectedTools: ChatToolOption[];
   onToggleToolSelection: (tool: ChatToolOption) => void;
-  onToolsQueryChange: (query: string) => void;
+  onToolsQueryChange: (query: string | null) => void;
   onLoadMoreTools: () => void;
 }) {
   return (
