@@ -442,7 +442,7 @@ export function ChatView({
   return (
     <section className="flex h-full flex-col">
       <div className="sticky top-0 z-20 bg-(--color-background)/95 px-12 py-3 backdrop-blur-sm md:px-12">
-        <div className="mx-auto w-full md:max-w-[calc(100vw-600px)]">
+        <div className="mx-auto w-full md:max-w-[clamp(0px,calc(100vw-600px),860px)]">
           <div className="flex items-center justify-center gap-3 text-center md:justify-start md:text-left">
             {editingTitle && conversation ? (
               <form
@@ -487,7 +487,7 @@ export function ChatView({
       </div>
 
       <div className="flex-1 overflow-y-auto px-6 py-6 md:px-12">
-        <div className="mx-auto w-full md:max-w-[calc(100vw-600px)]">
+        <div className="mx-auto w-full md:max-w-[clamp(0px,calc(100vw-600px),860px)]">
           {messages.length === 0 ? (
             <div className="mx-auto max-w-2xl space-y-4 pt-[20vh]">
               <h2 className="font-display text-2xl">Ask a UK question</h2>
@@ -508,7 +508,7 @@ export function ChatView({
       </div>
 
       <div className="sticky bottom-0 bg-(--color-background) px-6 py-3 md:px-12">
-        <div className="mx-auto w-full md:max-w-[calc(100vw-600px)]">
+        <div className="mx-auto w-full md:max-w-[clamp(0px,calc(100vw-600px),860px)]">
           {usageBanner ? (
             <p className="mb-2 rounded-md border border-amber-500/35 bg-amber-500/10 px-2 py-1.5 text-xs text-amber-200">{usageBanner}</p>
           ) : null}
