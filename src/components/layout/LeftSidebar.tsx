@@ -83,14 +83,14 @@ export function LeftSidebar({
       <div
         key={conversation.id}
         className={cn(
-          "relative z-0 animate-[slideUp_200ms_ease-out_both] transition-colors duration-200 ease-out",
+          "relative animate-[slideUp_200ms_ease-out_both] transition-colors duration-200 ease-out",
+          isMenuOpen ? "z-40" : "z-0",
           isActive ? "border-(--color-primary)" : "",
         )}
       >
         <div
           className={cn(
             "group relative flex items-center gap-1 rounded-md px-2 py-2 sm:py-1 transition-colors duration-200 ease-out",
-            isMenuOpen ? "z-40" : "z-0",
             isActive
               ? "bg-[color-mix(in_oklch,var(--color-primary)_14%,var(--color-sidebar)_86%)]"
               : isMenuOpen
@@ -217,13 +217,30 @@ export function LeftSidebar({
     <aside className="flex h-full w-full flex-col gap-3 border-r border-(--color-border) bg-(--color-sidebar) p-3">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1">
-          <Button variant="ghost" className="h-8 w-8 p-0" aria-label="Collapse sidebar" onClick={onCollapse}>
-            <PanelLeftClose className="h-4 w-4" />
-          </Button>
-          <span className="font-display text-sm font-semibold">ETK Chat</span>
+          <span className="font-display text-lg font-semibold">
+            Chat
+            <span className="text-(--color-accent)">G</span>
+            <span className="text-(--color-primary)">B</span>
+          </span>
         </div>
-        <Button variant="ghost" className="h-8 w-8 p-0" onClick={onCreate} aria-label="New chat">
+        <Button
+          variant="ghost"
+          className="h-8 w-8 p-0"
+          aria-label="Collapse sidebar"
+          onClick={onCollapse}
+        >
+          <PanelLeftClose className="h-4 w-4" />
+        </Button>
+      </div>
+      <div className="flex items-start mt-1 mb-1">
+        <Button
+          variant="ghost"
+          className="w-full justify-start gap-2 text-sm"
+          onClick={onCreate}
+          aria-label="New chat"
+        >
           <Plus className="h-4 w-4" />
+          New chat
         </Button>
       </div>
       <div className="relative isolate flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
