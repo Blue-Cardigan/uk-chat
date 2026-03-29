@@ -84,8 +84,13 @@ export function AppShell({
       : "md:grid-cols-[0px_minmax(0,1fr)_0px]";
 
   return (
-    <div className="h-screen bg-(--color-background) text-(--color-foreground)">
-      <div className={cn("relative grid h-full min-h-0 grid-cols-1 md:transition-[grid-template-columns] md:duration-300 md:ease-out", desktopGridClass)}>
+    <div className="h-dvh overflow-hidden bg-(--color-background) text-(--color-foreground)">
+      <div
+        className={cn(
+          "relative grid h-full min-h-0 grid-cols-1 overflow-hidden md:transition-[grid-template-columns] md:duration-300 md:ease-out",
+          desktopGridClass,
+        )}
+      >
         <div className={cn(sidebarOpen ? "fixed inset-0 z-40 md:relative md:inset-auto md:z-auto md:block" : "hidden md:block")}>
           {sidebarOpen ? (
             <button

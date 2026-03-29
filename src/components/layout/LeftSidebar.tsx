@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { MoreHorizontal, PanelLeftClose, Plus, Settings, Star } from "lucide-react";
+import { MoreHorizontal, PanelLeftClose, Plus, Search, Settings, Star } from "lucide-react";
 import { Button, Input } from "@/components/ui/primitives";
 import type { ChatConversation } from "@/lib/types";
 import { cn } from "@/lib/utils";
+
+const DEFAULT_VISIBLE_COUNT = 25;
+const VISIBLE_COUNT_STEP = 25;
 
 export function LeftSidebar({
   conversations,
@@ -30,10 +33,31 @@ export function LeftSidebar({
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draftTitle, setDraftTitle] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [visibleStarredCount, setVisibleStarredCount] = useState(DEFAULT_VISIBLE_COUNT);
+  const [visibleRecentCount, setVisibleRecentCount] = useState(DEFAULT_VISIBLE_COUNT);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const conversationById = useMemo(() => new Map(conversations.map((conversation) => [conversation.id, conversation])), [conversations]);
   const starredConversations = useMemo(() => conversations.filter((conversation) => conversation.starred), [conversations]);
   const recentConversations = useMemo(() => conversations.filter((conversation) => !conversation.starred), [conversations]);
+  const normalizedSearchQuery = useMemo(() => searchQuery.trim().toLowerCase(), [searchQuery]);
+  const filteredStarredConversations = useMemo(() => {
+    if (!normalizedSearchQuery) return starredConversations;
+    return starredConversations.filter((conversation) => conversation.title.toLowerCase().includes(normalizedSearchQuery));
+  }, [normalizedSearchQuery, starredConversations]);
+  const filteredRecentConversations = useMemo(() => {
+    if (!normalizedSearchQuery) return recentConversations;
+    return recentConversations.filter((conversation) => conversation.title.toLowerCase().includes(normalizedSearchQuery));
+  }, [normalizedSearchQuery, recentConversations]);
+  const visibleStarredConversations = useMemo(
+    () => filteredStarredConversations.slice(0, visibleStarredCount),
+    [filteredStarredConversations, visibleStarredCount],
+  );
+  const visibleRecentConversations = useMemo(
+    () => filteredRecentConversations.slice(0, visibleRecentCount),
+    [filteredRecentConversations, visibleRecentCount],
+  );
+  const hasChatMatches = filteredStarredConversations.length + filteredRecentConversations.length > 0;
 
   useEffect(() => {
     if (!openMenuId && !editingId) return;
@@ -58,6 +82,11 @@ export function LeftSidebar({
       document.removeEventListener("keydown", handleEscape);
     };
   }, [editingId, openMenuId]);
+
+  useEffect(() => {
+    setVisibleStarredCount(DEFAULT_VISIBLE_COUNT);
+    setVisibleRecentCount(DEFAULT_VISIBLE_COUNT);
+  }, [normalizedSearchQuery]);
 
   function startRename(id: string) {
     const conversation = conversationById.get(id);
@@ -170,7 +199,7 @@ export function LeftSidebar({
           {isMenuOpen ? (
             <div
               ref={menuRef}
-              className="absolute right-0 top-10 z-[120] min-w-40 rounded-md border border-(--color-border) bg-(--color-background) p-1 shadow-xl"
+              className="absolute right-0 top-10 z-120 min-w-40 rounded-md border border-(--color-border) bg-(--color-background) p-1 shadow-xl"
             >
               <button
                 type="button"
@@ -214,7 +243,7 @@ export function LeftSidebar({
   }
 
   return (
-    <aside className="flex h-full w-full flex-col gap-3 border-r border-(--color-border) bg-(--color-sidebar) p-3">
+    <aside className="flex h-full min-h-0 w-full flex-col gap-3 border-r border-(--color-border) bg-(--color-sidebar) p-3">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1">
           <span className="font-display text-lg font-semibold">
@@ -243,20 +272,53 @@ export function LeftSidebar({
           New chat
         </Button>
       </div>
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-(--color-muted-foreground)" />
+        <Input
+          value={searchQuery}
+          onChange={(event) => setSearchQuery(event.target.value)}
+          className="h-8 pl-8 text-xs"
+          placeholder="Search chats"
+          aria-label="Search chats"
+        />
+      </div>
       <div className="relative isolate flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
-        {starredConversations.length > 0 ? (
+        {filteredStarredConversations.length > 0 ? (
           <div className="space-y-1">
             <p className="px-2 text-[11px] font-semibold uppercase tracking-wide text-(--color-muted-foreground)">Starred</p>
-            {starredConversations.map(renderConversation)}
+            {visibleStarredConversations.map(renderConversation)}
+            {visibleStarredConversations.length < filteredStarredConversations.length ? (
+              <Button
+                variant="ghost"
+                className="h-7 w-full justify-start px-2 text-xs text-(--color-muted-foreground)"
+                onClick={() => setVisibleStarredCount((current) => current + VISIBLE_COUNT_STEP)}
+              >
+                Show more ({filteredStarredConversations.length - visibleStarredConversations.length} remaining)
+              </Button>
+            ) : null}
           </div>
         ) : null}
-        {recentConversations.length > 0 ? (
+        {filteredRecentConversations.length > 0 ? (
           <div className="space-y-1">
-            {starredConversations.length > 0 ? (
+            {filteredStarredConversations.length > 0 ? (
               <p className="px-2 pt-2 text-[11px] font-semibold uppercase tracking-wide text-(--color-muted-foreground)">Recent</p>
             ) : null}
-            {recentConversations.map(renderConversation)}
+            {visibleRecentConversations.map(renderConversation)}
+            {visibleRecentConversations.length < filteredRecentConversations.length ? (
+              <Button
+                variant="ghost"
+                className="h-7 w-full justify-start px-2 text-xs text-(--color-muted-foreground)"
+                onClick={() => setVisibleRecentCount((current) => current + VISIBLE_COUNT_STEP)}
+              >
+                Show more ({filteredRecentConversations.length - visibleRecentConversations.length} remaining)
+              </Button>
+            ) : null}
           </div>
+        ) : null}
+        {!hasChatMatches ? (
+          <p className="px-2 py-1 text-xs text-(--color-muted-foreground)">
+            {normalizedSearchQuery ? "No chats match your search." : "No chats yet."}
+          </p>
         ) : null}
       </div>
 
