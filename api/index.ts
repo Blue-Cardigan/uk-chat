@@ -323,7 +323,9 @@ function extractPartsFromResponseMessage(message: unknown): PersistedMessagePart
   const content = message.content;
   if (!Array.isArray(content)) return [];
 
+  const toolIndex = new Map<string, PersistedMessagePart>();
   const parts: PersistedMessagePart[] = [];
+
   for (const segment of content) {
     if (!isRecord(segment) || typeof segment.type !== "string") continue;
 
@@ -340,24 +342,34 @@ function extractPartsFromResponseMessage(message: unknown): PersistedMessagePart
     if (segment.type === "tool-call") {
       const toolName = sanitizeToolName(segment.toolName);
       if (!toolName) continue;
-      parts.push({
+      const callId = (segment.toolCallId as string) ?? null;
+      const part: PersistedMessagePart = {
         type: `tool-${toolName}`,
         state: "input-available",
         input: segment.input ?? null,
-        toolCallId: segment.toolCallId ?? null,
-      });
+        toolCallId: callId,
+      };
+      parts.push(part);
+      if (callId) toolIndex.set(callId, part);
       continue;
     }
 
     if (segment.type === "tool-result") {
       const toolName = sanitizeToolName(segment.toolName);
       if (!toolName) continue;
-      parts.push({
-        type: `tool-${toolName}`,
-        state: "output-available",
-        output: segment.output ?? null,
-        toolCallId: segment.toolCallId ?? null,
-      });
+      const callId = (segment.toolCallId as string) ?? null;
+      const existing = callId ? toolIndex.get(callId) : undefined;
+      if (existing) {
+        existing.state = "output-available";
+        existing.output = segment.output ?? null;
+      } else {
+        parts.push({
+          type: `tool-${toolName}`,
+          state: "output-available",
+          output: segment.output ?? null,
+          toolCallId: callId,
+        });
+      }
       continue;
     }
 
@@ -384,17 +396,21 @@ function buildAssistantPartsFromFinishEvent(event: unknown): PersistedMessagePar
     fallbackParts.push({ type: "reasoning", text: event.reasoning });
   }
 
+  const fallbackToolIndex = new Map<string, PersistedMessagePart>();
   const toolCalls = Array.isArray(event.toolCalls) ? event.toolCalls : [];
   for (const call of toolCalls) {
     if (!isRecord(call)) continue;
     const toolName = sanitizeToolName(call.toolName);
     if (!toolName) continue;
-    fallbackParts.push({
+    const callId = (call.toolCallId as string) ?? null;
+    const part: PersistedMessagePart = {
       type: `tool-${toolName}`,
       state: "input-available",
       input: call.input ?? null,
-      toolCallId: call.toolCallId ?? null,
-    });
+      toolCallId: callId,
+    };
+    fallbackParts.push(part);
+    if (callId) fallbackToolIndex.set(callId, part);
   }
 
   const toolResults = Array.isArray(event.toolResults) ? event.toolResults : [];
@@ -402,12 +418,19 @@ function buildAssistantPartsFromFinishEvent(event: unknown): PersistedMessagePar
     if (!isRecord(result)) continue;
     const toolName = sanitizeToolName(result.toolName);
     if (!toolName) continue;
-    fallbackParts.push({
-      type: `tool-${toolName}`,
-      state: "output-available",
-      output: result.output ?? null,
-      toolCallId: result.toolCallId ?? null,
-    });
+    const callId = (result.toolCallId as string) ?? null;
+    const existing = callId ? fallbackToolIndex.get(callId) : undefined;
+    if (existing) {
+      existing.state = "output-available";
+      existing.output = result.output ?? null;
+    } else {
+      fallbackParts.push({
+        type: `tool-${toolName}`,
+        state: "output-available",
+        output: result.output ?? null,
+        toolCallId: callId,
+      });
+    }
   }
 
   return fallbackParts;
@@ -739,7 +762,9 @@ async function handleChat(request: Request) {
 
   const result = streamText({
     model: google(selectedModel.providerModel),
-    messages: await convertToModelMessages((body.messages ?? []) as Parameters<typeof convertToModelMessages>[0]),
+    messages: await convertToModelMessages((body.messages ?? []) as Parameters<typeof convertToModelMessages>[0], {
+      ignoreIncompleteToolCalls: true,
+    }),
     tools: normalizedTools as Parameters<typeof streamText>[0]["tools"],
     stopWhen: stepCountIs(5),
     system: `You are a UK data analyst. Answer with precision and cite the relevant data source/tool.
