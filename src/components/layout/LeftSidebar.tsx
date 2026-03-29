@@ -82,12 +82,15 @@ export function LeftSidebar({
     return (
       <div
         key={conversation.id}
-        className={cn("animate-[slideUp_200ms_ease-out_both] transition-colors duration-200 ease-out", isActive ? "border-(--color-primary)" : "")}
+        className={cn(
+          "relative z-0 animate-[slideUp_200ms_ease-out_both] transition-colors duration-200 ease-out",
+          isActive ? "border-(--color-primary)" : "",
+        )}
       >
         <div
           className={cn(
             "group relative flex items-center gap-1 rounded-md px-2 py-2 sm:py-1 transition-colors duration-200 ease-out",
-            isMenuOpen ? "z-30" : "z-0",
+            isMenuOpen ? "z-40" : "z-0",
             isActive
               ? "bg-[color-mix(in_oklch,var(--color-primary)_14%,var(--color-sidebar)_86%)]"
               : isMenuOpen
@@ -165,7 +168,10 @@ export function LeftSidebar({
           </Button>
 
           {isMenuOpen ? (
-            <div ref={menuRef} className="absolute right-0 top-10 z-50 min-w-40 rounded-md border border-(--color-border) bg-(--color-card) p-1 shadow-xl">
+            <div
+              ref={menuRef}
+              className="absolute right-0 top-10 z-[120] min-w-40 rounded-md border border-(--color-border) bg-(--color-background) p-1 shadow-xl"
+            >
               <button
                 type="button"
                 className="w-full rounded px-2 py-1 text-left text-xs font-medium hover:bg-[color-mix(in_oklch,var(--color-foreground)_6%,transparent)]"
@@ -220,7 +226,7 @@ export function LeftSidebar({
           <Plus className="h-4 w-4" />
         </Button>
       </div>
-      <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
+      <div className="relative isolate flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
         {starredConversations.length > 0 ? (
           <div className="space-y-1">
             <p className="px-2 text-[11px] font-semibold uppercase tracking-wide text-(--color-muted-foreground)">Starred</p>
