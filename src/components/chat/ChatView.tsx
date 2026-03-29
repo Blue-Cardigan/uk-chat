@@ -442,86 +442,92 @@ export function ChatView({
   return (
     <section className="flex h-full flex-col">
       <div className="sticky top-0 z-20 bg-(--color-background)/95 px-12 py-3 backdrop-blur-sm md:px-12">
-        <div className="flex items-center justify-center gap-3 text-center md:justify-start md:text-left">
-          {editingTitle && conversation ? (
-            <form
-              className="min-w-0 flex-1"
-              onSubmit={(event) => {
-                event.preventDefault();
-                submitTitleRename();
-              }}
-            >
-              <Input
-                value={draftTitle}
-                className="h-8 text-sm"
-                onChange={(event) => setDraftTitle(event.target.value)}
-                onBlur={submitTitleRename}
-                onKeyDown={(event) => {
-                  if (event.key === "Escape") {
-                    event.preventDefault();
-                    setEditingTitle(false);
-                    setDraftTitle(conversation.title);
-                  }
+        <div className="mx-auto w-full md:max-w-[calc(100vw-600px)]">
+          <div className="flex items-center justify-center gap-3 text-center md:justify-start md:text-left">
+            {editingTitle && conversation ? (
+              <form
+                className="min-w-0 flex-1"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  submitTitleRename();
                 }}
-                autoFocus
-              />
-            </form>
-          ) : (
-            <button
-              type="button"
-              className="min-w-0 truncate text-center text-sm font-medium hover:opacity-80 md:text-left"
-              onClick={() => {
-                if (!conversation) return;
-                setDraftTitle(conversation.title);
-                setEditingTitle(true);
-              }}
-              disabled={!conversation}
-              aria-label={conversation ? "Rename conversation" : "Conversation title"}
-            >
-              {conversation?.title ?? "New conversation"}
-            </button>
-          )}
+              >
+                <Input
+                  value={draftTitle}
+                  className="h-8 text-sm"
+                  onChange={(event) => setDraftTitle(event.target.value)}
+                  onBlur={submitTitleRename}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") {
+                      event.preventDefault();
+                      setEditingTitle(false);
+                      setDraftTitle(conversation.title);
+                    }
+                  }}
+                  autoFocus
+                />
+              </form>
+            ) : (
+              <button
+                type="button"
+                className="min-w-0 truncate text-center text-sm font-medium hover:opacity-80 md:text-left"
+                onClick={() => {
+                  if (!conversation) return;
+                  setDraftTitle(conversation.title);
+                  setEditingTitle(true);
+                }}
+                disabled={!conversation}
+                aria-label={conversation ? "Rename conversation" : "Conversation title"}
+              >
+                {conversation?.title ?? "New conversation"}
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
       <div className="flex-1 overflow-y-auto px-6 py-6 md:px-12">
-        {messages.length === 0 ? (
-          <div className="mx-auto max-w-2xl space-y-4 pt-[20vh]">
-            <h2 className="font-display text-2xl">Ask a UK question</h2>
-            <p className="text-sm text-(--color-muted-foreground)">
-              Answers are grounded in live UK data tools and rendered with maps, dashboards, and synthetic personas.
-            </p>
-            <SuggestedMessages onPick={(text) => void submitPrompt({ text, documents: [] })} />
-          </div>
-        ) : (
-          <Conversation>
-            {messages.map((message) => (
-              <Message key={message.id} message={message} />
-            ))}
-            {showThinkingIndicator ? <AssistantThinkingMessage /> : null}
-          </Conversation>
-        )}
+        <div className="mx-auto w-full md:max-w-[calc(100vw-600px)]">
+          {messages.length === 0 ? (
+            <div className="mx-auto max-w-2xl space-y-4 pt-[20vh]">
+              <h2 className="font-display text-2xl">Ask a UK question</h2>
+              <p className="text-sm text-(--color-muted-foreground)">
+                Answers are grounded in live UK data tools and rendered with maps, dashboards, and synthetic personas.
+              </p>
+              <SuggestedMessages onPick={(text) => void submitPrompt({ text, documents: [] })} />
+            </div>
+          ) : (
+            <Conversation>
+              {messages.map((message) => (
+                <Message key={message.id} message={message} />
+              ))}
+              {showThinkingIndicator ? <AssistantThinkingMessage /> : null}
+            </Conversation>
+          )}
+        </div>
       </div>
 
       <div className="sticky bottom-0 bg-(--color-background) px-6 py-3 md:px-12">
-        {usageBanner ? (
-          <p className="mb-2 rounded-md border border-amber-500/35 bg-amber-500/10 px-2 py-1.5 text-xs text-amber-200">{usageBanner}</p>
-        ) : null}
-        {submitError ? <p className="mb-2 text-xs text-(--color-muted-foreground)">{submitError}</p> : null}
-        <ChatInput
-          onSubmit={(payload) => void submitPrompt(payload)}
-          isStreaming={status === "streaming" || status === "submitted"}
-          modelId={selectedModelId}
-          onModelChange={setSelectedModelId}
-          tools={tools}
-          toolsLoading={toolsLoading}
-          toolsHasMore={toolsHasMore}
-          toolsLoadingMore={toolsLoadingMore}
-          selectedTools={selectedTools}
-          onToggleToolSelection={toggleToolSelection}
-          onToolsQueryChange={handleToolsQueryChange}
-          onLoadMoreTools={handleLoadMoreTools}
-        />
+        <div className="mx-auto w-full md:max-w-[calc(100vw-600px)]">
+          {usageBanner ? (
+            <p className="mb-2 rounded-md border border-amber-500/35 bg-amber-500/10 px-2 py-1.5 text-xs text-amber-200">{usageBanner}</p>
+          ) : null}
+          {submitError ? <p className="mb-2 text-xs text-(--color-muted-foreground)">{submitError}</p> : null}
+          <ChatInput
+            onSubmit={(payload) => void submitPrompt(payload)}
+            isStreaming={status === "streaming" || status === "submitted"}
+            modelId={selectedModelId}
+            onModelChange={setSelectedModelId}
+            tools={tools}
+            toolsLoading={toolsLoading}
+            toolsHasMore={toolsHasMore}
+            toolsLoadingMore={toolsLoadingMore}
+            selectedTools={selectedTools}
+            onToggleToolSelection={toggleToolSelection}
+            onToolsQueryChange={handleToolsQueryChange}
+            onLoadMoreTools={handleLoadMoreTools}
+          />
+        </div>
       </div>
     </section>
   );
