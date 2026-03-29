@@ -29,7 +29,7 @@ const demoSeries = [
   { name: "May", value: 180 },
 ];
 
-const categorical = [
+export const categorical = [
   "oklch(0.50 0.19 255)",
   "oklch(0.55 0.19 22)",
   "oklch(0.58 0.12 160)",

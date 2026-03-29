@@ -18,11 +18,24 @@ export type ChatMessageRecord = {
   created_at: string;
 };
 
+export type ChartSpec = {
+  type: "line" | "bar" | "scatter" | "area" | "pie" | "table";
+  title: string;
+  xField: string;
+  yFields: string[];
+  labelField?: string;
+  groupField?: string;
+  data: Record<string, unknown>[];
+  sources?: string[];
+  note?: string;
+};
+
 export type VizPayload = {
   id: string;
   toolName: string;
   data: unknown;
   title?: string;
+  chartSpec?: ChartSpec;
 };
 
 export type UserProfile = {

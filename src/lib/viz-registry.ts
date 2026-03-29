@@ -11,6 +11,7 @@ import { ConstituencySnapshot, FloodAlertCard, FoodHygieneCard, MPProfile, NHSSe
 import { CommitteeMemberList, HansardReader, InterestsPanel, QAPanel, VotingMatrix } from "@/components/viz/parliament/Parliament";
 import { AreaScorecard, CostOfLivingSnapshot, DemographicPyramid, ElectionSwing, LocalServicesAudit, SyntheticPersona } from "@/components/viz/composite/Composite";
 import { ContractsList, CouncillorDirectory, DataGrid, PlanningTimeline, TrafficCountChart, TubeStatusBoard } from "@/components/viz/tables/Tables";
+import { buildChartSpecFromVizHint, isChartSpec } from "@/lib/viz-data-parser";
 
 export const toolToVisualization: Record<string, React.ComponentType> = {
   ons_fetchObservations: ChoroplethMap,
@@ -70,8 +71,6 @@ export const showcaseVisualizations: React.ComponentType[] = [
   TrafficCountChart,
 ];
 
-const chartToolNames = new Set<string>(["boe_series", "metoffice_fetchSeries", "dft_roadTraffic"]);
-
 export function normalizeVizToolName(toolName: string): string {
   return toolName
     .trim()
@@ -91,6 +90,7 @@ function hasChartLikeShape(value: unknown): boolean {
 }
 
 export function isChartArtifactCandidate(toolName: string, data: unknown): boolean {
-  if (chartToolNames.has(normalizeVizToolName(toolName))) return true;
+  if (normalizeVizToolName(toolName) === "create_chart" && isChartSpec(data)) return true;
+  if (buildChartSpecFromVizHint(data)) return true;
   return hasChartLikeShape(data);
 }

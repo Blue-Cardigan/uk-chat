@@ -58,6 +58,23 @@ function getOpenRouterFallbackModels(modelId: string): string[] {
   }
 }
 
+function isProviderInvalidRequestError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const maybeError = error as {
+    statusCode?: number;
+    cause?: { statusCode?: number; responseBody?: unknown; message?: string };
+    message?: string;
+  };
+  if (maybeError.statusCode === 400 || maybeError.cause?.statusCode === 400) return true;
+  const responseBody = maybeError.cause?.responseBody;
+  if (responseBody && typeof responseBody === "object") {
+    const errorType = (responseBody as { metadata?: { error_type?: string } }).metadata?.error_type;
+    if (errorType === "invalid_request") return true;
+  }
+  const message = `${maybeError.message ?? ""} ${maybeError.cause?.message ?? ""}`.toLowerCase();
+  return message.includes("invalid_request");
+}
+
 function isLoopbackHostname(hostname: string): boolean {
   return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
 }
@@ -439,6 +456,30 @@ const MAX_MODEL_CONTEXT_MESSAGES = 12;
 const MAX_MODEL_MESSAGE_PARTS = 10;
 const MAX_MODEL_TEXT_PART_CHARS = 4_000;
 type CompactModelMessage = { role: "user" | "assistant" | "system"; content: string };
+const CREATE_CHART_TOOL_NAME = "create_chart";
+
+const CREATE_CHART_INPUT_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  additionalProperties: false,
+  required: ["type", "title", "xField", "yFields", "data"],
+  properties: {
+    type: { type: "string", enum: ["line", "bar", "scatter", "area", "pie", "table"] },
+    title: { type: "string" },
+    xField: { type: "string" },
+    yFields: { type: "array", items: { type: "string" }, minItems: 1 },
+    labelField: { type: "string" },
+    groupField: { type: "string" },
+    data: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: true,
+      },
+    },
+    sources: { type: "array", items: { type: "string" } },
+    note: { type: "string" },
+  },
+};
 
 function toProviderSafeToolName(name: string): string {
   const normalized = name.trim().replace(/[^a-zA-Z0-9_-]/g, "_").replace(/_+/g, "_");
@@ -879,6 +920,14 @@ function selectToolsForChat(tools: Record<string, unknown>, query: string, limit
   return Object.fromEntries(selectedEntries);
 }
 
+function createSyntheticChartTool() {
+  return {
+    description: "Create a chart specification from one or more tool outputs.",
+    inputSchema: jsonSchema(CREATE_CHART_INPUT_SCHEMA),
+    execute: async (input: unknown) => input,
+  };
+}
+
 async function loadAuthorizedMcpTools({
   supabase,
   user,
@@ -1063,7 +1112,10 @@ async function handleChat(request: Request) {
   if ("response" in toolLoad) return toolLoad.response;
   const tools = toolLoad.tools;
   const latestUserQuery = extractLatestUserText(body.messages);
-  const scopedTools = selectToolsForChat(tools, latestUserQuery, 18);
+  const scopedTools = {
+    ...selectToolsForChat(tools, latestUserQuery, 18),
+    [CREATE_CHART_TOOL_NAME]: createSyntheticChartTool(),
+  };
 
   const { normalizedTools, normalizedToolNames } = normalizeToolSchemas(scopedTools);
   const { safeTools, safeToOriginal, renamedPairs } = buildProviderSafeTools(normalizedTools);
@@ -1167,56 +1219,82 @@ async function handleChat(request: Request) {
     });
   }
 
-  const fallbackModels = getOpenRouterFallbackModels(selectedModel.id);
-  const result = streamText({
-    model: openrouter.chat(selectedModel.providerModel, {
-      extraBody: fallbackModels.length > 0 ? { models: fallbackModels } : undefined,
-    }),
-    messages: compactedMessages,
-    tools: safeTools as Parameters<typeof streamText>[0]["tools"],
-    stopWhen: stepCountIs(10),
-    system: systemPrompt,
-    onFinish: async (event) => {
-      const persistPromise = (async () => {
-        const assistantParts = buildAssistantPartsFromFinishEvent(event, (name) => safeToOriginal.get(name) ?? name);
-        const { error: assistantInsertError } = await supabase.from("uk_chat_messages").insert({
-          conversation_id: body.conversationId!,
-          role: "assistant",
-          parts: assistantParts,
+  const onAssistantFinish: Parameters<typeof streamText>[0]["onFinish"] = async (event) => {
+    const persistPromise = (async () => {
+      const assistantParts = buildAssistantPartsFromFinishEvent(event, (name) => safeToOriginal.get(name) ?? name);
+      const { error: assistantInsertError } = await supabase.from("uk_chat_messages").insert({
+        conversation_id: body.conversationId!,
+        role: "assistant",
+        parts: assistantParts,
+      });
+      if (assistantInsertError) {
+        console.error("[api/chat] Failed to persist assistant message", {
+          conversationId: body.conversationId,
+          userId: user.id,
+          error: assistantInsertError.message,
+          code: assistantInsertError.code ?? null,
         });
-        if (assistantInsertError) {
-          console.error("[api/chat] Failed to persist assistant message", {
-            conversationId: body.conversationId,
-            userId: user.id,
-            error: assistantInsertError.message,
-            code: assistantInsertError.code ?? null,
-          });
-          return;
-        }
-
-        const { error: updateConversationError } = await supabase
-          .from("uk_chat_conversations")
-          .update({ updated_at: new Date().toISOString() })
-          .eq("id", body.conversationId!)
-          .eq("user_id", user.id);
-        if (updateConversationError) {
-          console.error("[api/chat] Failed to update conversation timestamp", {
-            conversationId: body.conversationId,
-            userId: user.id,
-            error: updateConversationError.message,
-            code: updateConversationError.code ?? null,
-          });
-        }
-      })();
-
-      try {
-        waitUntil(persistPromise);
-      } catch {
-        // Local dev can run outside a waitUntil-capable runtime.
+        return;
       }
-      await persistPromise;
-    },
-  });
+
+      const { error: updateConversationError } = await supabase
+        .from("uk_chat_conversations")
+        .update({ updated_at: new Date().toISOString() })
+        .eq("id", body.conversationId!)
+        .eq("user_id", user.id);
+      if (updateConversationError) {
+        console.error("[api/chat] Failed to update conversation timestamp", {
+          conversationId: body.conversationId,
+          userId: user.id,
+          error: updateConversationError.message,
+          code: updateConversationError.code ?? null,
+        });
+      }
+    })();
+
+    try {
+      waitUntil(persistPromise);
+    } catch {
+      // Local dev can run outside a waitUntil-capable runtime.
+    }
+    await persistPromise;
+  };
+
+  const fallbackModels = getOpenRouterFallbackModels(selectedModel.id);
+  const tryStream = (options: { includeFallbackModels: boolean; includeTools: boolean }) =>
+    streamText({
+      model: openrouter.chat(selectedModel.providerModel, {
+        extraBody: options.includeFallbackModels && fallbackModels.length > 0 ? { models: fallbackModels } : undefined,
+      }),
+      messages: compactedMessages,
+      tools: options.includeTools ? (safeTools as Parameters<typeof streamText>[0]["tools"]) : undefined,
+      stopWhen: stepCountIs(10),
+      system: systemPrompt,
+      onFinish: onAssistantFinish,
+    });
+
+  let result: ReturnType<typeof streamText>;
+  try {
+    result = tryStream({ includeFallbackModels: true, includeTools: true });
+  } catch (error) {
+    if (!isProviderInvalidRequestError(error)) throw error;
+    console.warn("[api/chat] Provider rejected request, retrying without fallback model chain", {
+      modelId: selectedModel.id,
+      providerModel: selectedModel.providerModel,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    try {
+      result = tryStream({ includeFallbackModels: false, includeTools: true });
+    } catch (retryError) {
+      if (!isProviderInvalidRequestError(retryError)) throw retryError;
+      console.warn("[api/chat] Provider still rejected request, retrying without tools", {
+        modelId: selectedModel.id,
+        providerModel: selectedModel.providerModel,
+        error: retryError instanceof Error ? retryError.message : String(retryError),
+      });
+      result = tryStream({ includeFallbackModels: false, includeTools: false });
+    }
+  }
 
   return result.toUIMessageStreamResponse();
 }
