@@ -88,6 +88,56 @@ body {
   }
 }
 
+@keyframes algoOrbitA {
+  0% { transform: rotate(0deg) translateX(8px) rotate(0deg); opacity: 0.35; }
+  50% { opacity: 1; }
+  100% { transform: rotate(360deg) translateX(8px) rotate(-360deg); opacity: 0.35; }
+}
+
+@keyframes algoOrbitB {
+  0% { transform: rotate(0deg) translateX(5px) rotate(0deg); opacity: 0.25; }
+  50% { opacity: 0.9; }
+  100% { transform: rotate(-360deg) translateX(5px) rotate(360deg); opacity: 0.25; }
+}
+
+@keyframes algoCorePulse {
+  0%, 100% { transform: scale(0.92); opacity: 0.6; }
+  50% { transform: scale(1.06); opacity: 1; }
+}
+
+.algo-thinking-glyph {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 1.1rem;
+  height: 1.1rem;
+}
+
+.algo-thinking-core {
+  font-size: 0.82rem;
+  font-weight: 600;
+  line-height: 1;
+  animation: algoCorePulse 1.4s ease-in-out infinite;
+}
+
+.algo-thinking-orbit {
+  position: absolute;
+  top: calc(50% - 1px);
+  left: calc(50% - 1px);
+  width: 2px;
+  height: 2px;
+  border-radius: 9999px;
+  background: var(--color-primary);
+}
+
+.algo-thinking-orbit-a {
+  animation: algoOrbitA 1.8s linear infinite;
+}
+
+.algo-thinking-orbit-b {
+  animation: algoOrbitB 1.35s linear infinite;
+}
+
 .prose-chat {
   & p { margin: 0.25em 0; }
   & p:first-child { margin-top: 0; }

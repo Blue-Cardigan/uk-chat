@@ -3,7 +3,7 @@ import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import type { UIMessage } from "ai";
 import { Conversation } from "@/components/ai-elements/conversation";
-import { Message } from "@/components/ai-elements/message";
+import { AssistantThinkingMessage, Message } from "@/components/ai-elements/message";
 import { ChatInput, type ChatToolOption } from "@/components/chat/ChatInput";
 import { SuggestedMessages } from "@/components/chat/SuggestedMessages";
 import { DEFAULT_CHAT_MODEL_ID, type ChatModelId } from "@/lib/chat-models";
@@ -215,13 +215,29 @@ export function ChatView({
     const latest = messages.at(-1);
     if (!latest?.parts) return;
     (latest.parts as Part[]).forEach((part, index) => {
-      if (!part.type.startsWith("tool-")) return;
-      if (part.state !== "output-available" || !("output" in part) || part.output == null) return;
-      const toolName = part.type.replace("tool-", "");
-      if (!isChartArtifactCandidate(toolName, part.output)) return;
-      const toolCallId = typeof part.toolCallId === "string" ? part.toolCallId : `idx-${index}`;
+      let toolName: string | undefined;
+      let toolCallId: string | undefined;
+      let output: unknown;
+
+      if (part.type === "tool-invocation") {
+        const inv = (part as { toolInvocation?: { toolName: string; toolCallId: string; state: string; result?: unknown } }).toolInvocation;
+        if (!inv || inv.state !== "result" || inv.result == null) return;
+        toolName = inv.toolName;
+        toolCallId = inv.toolCallId;
+        output = inv.result;
+      } else if (part.type.startsWith("tool-")) {
+        if (part.state !== "output-available" || !("output" in part) || part.output == null) return;
+        toolName = part.type.replace("tool-", "");
+        toolCallId = typeof part.toolCallId === "string" ? part.toolCallId : undefined;
+        output = part.output;
+      } else {
+        return;
+      }
+
+      if (!toolName || !isChartArtifactCandidate(toolName, output)) return;
+      const id = toolCallId ?? `idx-${index}`;
       pushVizPayload({
-        id: `${latest.id}:${toolName}:${toolCallId}`,
+        id: `${latest.id}:${toolName}:${id}`,
         toolName,
         data: part,
         title: `Chart: ${toolName}`,
@@ -240,6 +256,18 @@ export function ChatView({
     onRenameConversation(conversation.id, trimmed);
     setEditingTitle(false);
   }
+
+  const lastMessage = messages.at(-1);
+  const hasAssistantContent =
+    lastMessage?.role === "assistant" &&
+    Array.isArray(lastMessage.parts) &&
+    lastMessage.parts.some((part) => {
+      if (part.type === "text") return typeof part.text === "string" && part.text.trim().length > 0;
+      if (part.type === "reasoning") return true;
+      if (part.type.startsWith("tool-")) return true;
+      return false;
+    });
+  const showThinkingIndicator = (status === "submitted" || status === "streaming") && !hasAssistantContent;
 
   return (
     <section className="flex h-full flex-col">
@@ -300,11 +328,12 @@ export function ChatView({
             {messages.map((message) => (
               <Message key={message.id} message={message} />
             ))}
+            {showThinkingIndicator ? <AssistantThinkingMessage /> : null}
           </Conversation>
         )}
       </div>
 
-      <div className="sticky bottom-0 border-t border-(--color-border) bg-(--color-background) px-6 py-3 md:px-12">
+      <div className="sticky bottom-0 bg-(--color-background) px-6 py-3 md:px-12">
         {usageBanner ? (
           <p className="mb-2 rounded-md border border-amber-500/35 bg-amber-500/10 px-2 py-1.5 text-xs text-amber-200">{usageBanner}</p>
         ) : null}
