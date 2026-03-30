@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { BarChart3, X } from "lucide-react";
 import { Button } from "@/components/ui/primitives";
-import { VizRouter } from "@/components/viz/VizRouter";
 import { useAppStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
+
+const VizRouter = lazy(() => import("@/components/viz/VizRouter").then((m) => ({ default: m.VizRouter })));
 
 export function RightSidebar() {
   const payloads = useAppStore((state) => state.vizPayloads);
@@ -64,7 +65,11 @@ export function RightSidebar() {
             </div>
 
             <div className="min-h-0 flex-1 overflow-y-auto">
-              {selectedPayload ? <VizRouter payload={selectedPayload} /> : null}
+              {selectedPayload ? (
+                <Suspense fallback={<div className="p-4 text-center text-xs text-(--color-muted-foreground)">Loading...</div>}>
+                  <VizRouter payload={selectedPayload} />
+                </Suspense>
+              ) : null}
             </div>
           </>
         )}

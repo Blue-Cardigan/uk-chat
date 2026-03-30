@@ -94,8 +94,13 @@ function normalizeToken(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
 
+function readEnv(key: string): string | undefined {
+  const maybeProcess = globalThis as { process?: { env?: Record<string, string | undefined> } };
+  return maybeProcess.process?.env?.[key];
+}
+
 function getNationalSourcePreference(): SourcePreference {
-  const raw = typeof process !== "undefined" ? process.env.COUNCIL_NATIONAL_SOURCE_PREFERENCE : undefined;
+  const raw = readEnv("COUNCIL_NATIONAL_SOURCE_PREFERENCE");
   return normalizeToken(raw ?? "") === "api first" || normalizeToken(raw ?? "") === "api-first" ? "api-first" : "whatgov-first";
 }
 
@@ -108,7 +113,7 @@ function getSupabaseAdminSafe(): ReturnType<typeof getSupabaseAdmin> | null {
 }
 
 function getSettingOverride(key: "COUNCIL_NATIONAL_WHATGOV_MPS_TABLE" | "COUNCIL_NATIONAL_WHATGOV_DEBATES_TABLE"): string | null {
-  const raw = typeof process !== "undefined" ? process.env[key] : undefined;
+  const raw = readEnv(key);
   const trimmed = typeof raw === "string" ? raw.trim() : "";
   return trimmed.length > 0 ? trimmed : null;
 }

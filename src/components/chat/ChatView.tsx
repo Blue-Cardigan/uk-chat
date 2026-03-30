@@ -8,10 +8,10 @@ import { ChatInput, type ChatToolOption } from "@/components/chat/ChatInput";
 import { SuggestedMessages } from "@/components/chat/SuggestedMessages";
 import { DEFAULT_CHAT_MODEL_ID, getChatModelConfig, type ChatModelId } from "@/shared/chat-models";
 import { useAppStore } from "@/lib/store";
-import { isVizArtifactCandidate, normalizeVizToolName } from "@/lib/viz-registry";
+import { isVizArtifactCandidate, normalizeVizToolName } from "@/lib/viz-helpers";
 import { Input } from "@/components/ui/primitives";
 import type { ChatConversation } from "@/lib/types";
-import { parseDocuments, type ParsedDocument } from "@/lib/document-parser";
+import type { ParsedDocument } from "@/lib/document-parser";
 import type { PromptInputSubmitPayload } from "@/components/ai-elements/prompt-input";
 import { buildChartSpecFromVizHint, isChartSpec } from "@/lib/viz-data-parser";
 
@@ -474,6 +474,7 @@ export function ChatView({
         : "";
     let parsedDocuments: ParsedDocument[] = [];
     if (payload.documents.length > 0) {
+      const { parseDocuments } = await import("@/lib/document-parser");
       const parsedResult = await parseDocuments(payload.documents);
       parsedDocuments = parsedResult.documents;
       if (parsedResult.failures.length > 0) {

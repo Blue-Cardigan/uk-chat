@@ -1,16 +1,17 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { AppShell } from "@/components/layout/AppShell";
 import { LoginPage } from "@/components/auth/LoginPage";
 import { AuthCallbackPage } from "@/components/auth/AuthCallbackPage";
-import { PrivacyNoticePage } from "@/components/legal/PrivacyNoticePage";
-import { AdminPanel } from "@/components/auth/AdminPanel";
-import { SharedChatView } from "@/components/chat/SharedChatView";
-import { SettingsPanel } from "@/components/settings/SettingsPanel";
 import { Card } from "@/components/ui/primitives";
 import { useAuth } from "@/lib/auth";
 import { useAppStore } from "@/lib/store";
 import type { ChatConversation } from "@/lib/types";
+
+const PrivacyNoticePage = lazy(() => import("@/components/legal/PrivacyNoticePage").then((m) => ({ default: m.PrivacyNoticePage })));
+const SharedChatView = lazy(() => import("@/components/chat/SharedChatView").then((m) => ({ default: m.SharedChatView })));
+const AdminPanel = lazy(() => import("@/components/auth/AdminPanel").then((m) => ({ default: m.AdminPanel })));
+const SettingsPanel = lazy(() => import("@/components/settings/SettingsPanel").then((m) => ({ default: m.SettingsPanel })));
 
 async function safeJson<T>(response: Response): Promise<T | null> {
   const text = await response.text();
@@ -261,8 +262,10 @@ function ProtectedApp() {
 
   const settingsContent = (
     <div className="space-y-4">
-      <SettingsPanel {...settingsPanelProps} />
-      {isAdmin ? <AdminPanel /> : null}
+      <Suspense fallback={<div className="p-4 text-sm text-(--color-muted-foreground)">Loading settings...</div>}>
+        <SettingsPanel {...settingsPanelProps} />
+        {isAdmin ? <AdminPanel /> : null}
+      </Suspense>
     </div>
   );
 
@@ -294,19 +297,21 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 
 export default function App() {
   return (
-    <Routes>
-      <Route path="/login" element={<LoginPage />} />
-      <Route path="/privacy" element={<PrivacyNoticePage />} />
-      <Route path="/auth/callback" element={<AuthCallbackPage />} />
-      <Route path="/shared/:token" element={<SharedChatView />} />
-      <Route
-        path="/"
-        element={
-          <ProtectedRoute>
-            <ProtectedApp />
-          </ProtectedRoute>
-        }
-      />
-    </Routes>
+    <Suspense fallback={<Card className="m-8">Loading...</Card>}>
+      <Routes>
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="/privacy" element={<PrivacyNoticePage />} />
+        <Route path="/auth/callback" element={<AuthCallbackPage />} />
+        <Route path="/shared/:token" element={<SharedChatView />} />
+        <Route
+          path="/"
+          element={
+            <ProtectedRoute>
+              <ProtectedApp />
+            </ProtectedRoute>
+          }
+        />
+      </Routes>
+    </Suspense>
   );
 }

@@ -6,17 +6,23 @@ function env(key: string): string | undefined {
 const TOKEN_PREFIX = "enc:v1:";
 
 function toBase64(bytes: Uint8Array): string {
-  if (typeof Buffer !== "undefined") return Buffer.from(bytes).toString("base64");
+  const maybeGlobal = globalThis as { btoa?: (value: string) => string };
+  if (typeof maybeGlobal.btoa !== "function") {
+    throw new Error("Base64 encoding unavailable in runtime");
+  }
   let binary = "";
   bytes.forEach((byte) => {
     binary += String.fromCharCode(byte);
   });
-  return btoa(binary);
+  return maybeGlobal.btoa(binary);
 }
 
 function fromBase64(value: string): Uint8Array {
-  if (typeof Buffer !== "undefined") return new Uint8Array(Buffer.from(value, "base64"));
-  const binary = atob(value);
+  const maybeGlobal = globalThis as { atob?: (value: string) => string };
+  if (typeof maybeGlobal.atob !== "function") {
+    throw new Error("Base64 decoding unavailable in runtime");
+  }
+  const binary = maybeGlobal.atob(value);
   const out = new Uint8Array(binary.length);
   for (let index = 0; index < binary.length; index += 1) {
     out[index] = binary.charCodeAt(index);

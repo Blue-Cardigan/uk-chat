@@ -1,13 +1,14 @@
-import { useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import type { UIMessage } from "ai";
 import { useParams } from "react-router-dom";
 import { BarChart3 } from "lucide-react";
 import { Conversation } from "@/components/ai-elements/conversation";
 import { Message } from "@/components/ai-elements/message";
-import { VizRouter } from "@/components/viz/VizRouter";
 import { Card } from "@/components/ui/primitives";
 import type { VizPayload } from "@/lib/types";
 import { cn } from "@/lib/utils";
+
+const VizRouter = lazy(() => import("@/components/viz/VizRouter").then((m) => ({ default: m.VizRouter })));
 
 type SharedMessage = {
   id: string;
@@ -172,7 +173,13 @@ export function SharedChatView() {
                   </button>
                 ))}
               </div>
-              <div className="min-h-0 flex-1 overflow-y-auto">{selectedArtifact ? <VizRouter payload={selectedArtifact} /> : null}</div>
+              <div className="min-h-0 flex-1 overflow-y-auto">
+                {selectedArtifact ? (
+                  <Suspense fallback={<div className="p-4 text-center text-xs text-(--color-muted-foreground)">Loading...</div>}>
+                    <VizRouter payload={selectedArtifact} />
+                  </Suspense>
+                ) : null}
+              </div>
             </>
           )}
         </div>
