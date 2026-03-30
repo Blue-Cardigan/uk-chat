@@ -1,9 +1,10 @@
 import { VisualizationCard } from "@/components/viz/VisualizationCard";
+import type { VizPayload } from "@/lib/types";
 
 function KeyValue({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-center justify-between border-b border-[var(--color-border)] py-1 text-xs last:border-0">
-      <span className="text-[var(--color-muted-foreground)]">{label}</span>
+    <div className="flex items-center justify-between border-b border-(--color-border) py-1 text-xs last:border-0">
+      <span className="text-(--color-muted-foreground)">{label}</span>
       <span>{value}</span>
     </div>
   );
@@ -65,6 +66,35 @@ export function FloodAlertCard() {
       <KeyValue label="Severity" value="Amber" />
       <KeyValue label="Area" value="River Thames" />
       <KeyValue label="Updated" value="Today" />
+    </VisualizationCard>
+  );
+}
+
+function readStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+export function CouncilDeliberationCard({ payload }: { payload: VizPayload }) {
+  const data = isRecord(payload.data) ? payload.data : {};
+  const displayName = typeof data.displayName === "string" ? data.displayName : "Selected area";
+  const issue = typeof data.issue === "string" ? data.issue : "Council deliberation";
+  const agents = Array.isArray(data.agents) ? data.agents.filter(isRecord) : [];
+  const turns = Array.isArray(data.turns) ? data.turns.filter(isRecord) : [];
+  const resolution = isRecord(data.resolution) ? data.resolution : {};
+  const actionableSteps = readStringList(resolution.actionableSteps);
+
+  return (
+    <VisualizationCard title="CouncilDeliberation">
+      <KeyValue label="Area" value={displayName} />
+      <KeyValue label="Issue" value={issue} />
+      <KeyValue label="Representatives" value={String(agents.length)} />
+      <KeyValue label="Turns" value={String(turns.length)} />
+      <KeyValue label="Actions" value={String(actionableSteps.length)} />
     </VisualizationCard>
   );
 }

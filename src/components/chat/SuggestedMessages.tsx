@@ -6,7 +6,8 @@ const prompts: SuggestedPrompt[] = [
   { id: "energy", label: "Compare energy use across London boroughs" },
   { id: "mp", label: "What has Keir Starmer voted on recently?" },
   { id: "flood", label: "Show flood warnings near Manchester" },
-  { id: "councillors", label: "Who are my local councillors?" },
+  { id: "councillors", label: "Build a local council for SE1 1AA focused on housing and transport." },
+  { id: "national-council", label: "Build a national representative council of MPs to debate NHS waiting lists." },
   { id: "demographics", label: "What's the demographic makeup of Bristol West?" },
 ];
 

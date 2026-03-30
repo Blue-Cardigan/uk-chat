@@ -10,6 +10,7 @@ export type ChatToolOption = {
 
 export function ChatInput({
   onSubmit,
+  onCouncilModeChange,
   isStreaming,
   modelId,
   onModelChange,
@@ -23,6 +24,7 @@ export function ChatInput({
   onLoadMoreTools,
 }: {
   onSubmit: (payload: PromptInputSubmitPayload) => void;
+  onCouncilModeChange?: (enabled: boolean) => void;
   isStreaming: boolean;
   modelId: ChatModelId;
   onModelChange: (modelId: ChatModelId) => void;
@@ -38,8 +40,10 @@ export function ChatInput({
   return (
     <PromptInput
       onSubmit={onSubmit}
+      onCouncilModeChange={onCouncilModeChange}
       isLoading={isStreaming}
       placeholder="Type / for tools"
+      councilPlaceholder="Council mode: include a postcode or constituency name for a local MP + councillors council. If omitted, we'll create a national MPs council."
       modelId={modelId}
       onModelChange={onModelChange}
       modelOptions={CHAT_MODEL_CONFIGS}

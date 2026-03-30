@@ -20,5 +20,5 @@ export function VizRouter({ payload }: { payload: VizPayload }) {
     );
   }
 
-  return <Component />;
+  return <Component payload={payload} />;
 }

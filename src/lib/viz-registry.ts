@@ -7,32 +7,37 @@ import {
   SparklineGrid,
   TimeSeriesLine,
 } from "@/components/viz/charts/Charts";
-import { ConstituencySnapshot, FloodAlertCard, FoodHygieneCard, MPProfile, NHSServiceCard, WeatherClimate } from "@/components/viz/profiles/Profiles";
+import { ConstituencySnapshot, CouncilDeliberationCard, FloodAlertCard, FoodHygieneCard, MPProfile, NHSServiceCard, WeatherClimate } from "@/components/viz/profiles/Profiles";
 import { CommitteeMemberList, HansardReader, InterestsPanel, QAPanel, VotingMatrix } from "@/components/viz/parliament/Parliament";
 import { AreaScorecard, CostOfLivingSnapshot, DemographicPyramid, ElectionSwing, LocalServicesAudit, SyntheticPersona } from "@/components/viz/composite/Composite";
 import { ContractsList, CouncillorDirectory, DataGrid, PlanningTimeline, TrafficCountChart, TubeStatusBoard } from "@/components/viz/tables/Tables";
 import { buildChartSpecFromVizHint, isChartSpec } from "@/lib/viz-data-parser";
+import type { VizPayload } from "@/lib/types";
 
-export const toolToVisualization: Record<string, React.ComponentType> = {
-  ons_fetchObservations: ChoroplethMap,
-  nomis_fetchTable: ChoroplethMap,
-  police_fetchCrimes: PointMap,
-  ea_flood: FloodRiskMap,
-  postcodes_lookup: PostcodeZoom,
-  boe_series: TimeSeriesLine,
-  metoffice_fetchSeries: TimeSeriesLine,
-  dft_roadTraffic: CompositionStack,
-  parliament_votes: VotingMatrix,
-  parliament_fetchMembers: MPProfile,
-  parliament_interests: InterestsPanel,
-  parliament_questions: QAPanel,
-  parliament_hansard: HansardReader,
-  nhs_findServices: NHSServiceCard,
-  fsa_search: FoodHygieneCard,
-  councillors_search: CouncillorDirectory,
-  contracts_search: ContractsList,
-  planning_search: PlanningTimeline,
-  tfl_fetch: TubeStatusBoard,
+const withPayload = (Component: React.ComponentType<unknown>): React.ComponentType<{ payload: VizPayload }> =>
+  Component as unknown as React.ComponentType<{ payload: VizPayload }>;
+
+export const toolToVisualization: Record<string, React.ComponentType<{ payload: VizPayload }>> = {
+  ons_fetchObservations: withPayload(ChoroplethMap),
+  nomis_fetchTable: withPayload(ChoroplethMap),
+  police_fetchCrimes: withPayload(PointMap),
+  ea_flood: withPayload(FloodRiskMap),
+  postcodes_lookup: withPayload(PostcodeZoom),
+  boe_series: withPayload(TimeSeriesLine),
+  metoffice_fetchSeries: withPayload(TimeSeriesLine),
+  dft_roadTraffic: withPayload(CompositionStack),
+  parliament_votes: withPayload(VotingMatrix),
+  parliament_fetchMembers: withPayload(MPProfile),
+  parliament_interests: withPayload(InterestsPanel),
+  parliament_questions: withPayload(QAPanel),
+  parliament_hansard: withPayload(HansardReader),
+  nhs_findServices: withPayload(NHSServiceCard),
+  fsa_search: withPayload(FoodHygieneCard),
+  councillors_search: withPayload(CouncillorDirectory),
+  contracts_search: withPayload(ContractsList),
+  planning_search: withPayload(PlanningTimeline),
+  tfl_fetch: withPayload(TubeStatusBoard),
+  council_deliberation: CouncilDeliberationCard,
 };
 
 export const showcaseVisualizations: React.ComponentType[] = [
@@ -93,4 +98,10 @@ export function isChartArtifactCandidate(toolName: string, data: unknown): boole
   if (normalizeVizToolName(toolName) === "create_chart" && isChartSpec(data)) return true;
   if (buildChartSpecFromVizHint(data)) return true;
   return hasChartLikeShape(data);
+}
+
+export function isVizArtifactCandidate(toolName: string, data: unknown): boolean {
+  const normalizedName = normalizeVizToolName(toolName);
+  if (normalizedName === "council_deliberation") return true;
+  return isChartArtifactCandidate(toolName, data);
 }

@@ -96,6 +96,11 @@ function ToolPartView({ tool, index }: { tool: NormalisedTool; index: number }) 
   const hasInput = tool.input != null;
   const hasOutput = tool.output != null;
   const isCreateChartTool = normalizeToolName(tool.toolName) === "create_chart";
+  const isCouncilTool = normalizeToolName(tool.toolName) === "council_deliberation";
+
+  if (isCouncilTool && hasOutput) {
+    return <CouncilDeliberationToolView key={`${tool.toolName}-${tool.toolCallId ?? index}`} output={tool.output} />;
+  }
 
   return (
     <details
@@ -139,6 +144,55 @@ function ToolPartView({ tool, index }: { tool: NormalisedTool; index: number }) 
         ) : null}
       </div>
     </details>
+  );
+}
+
+function CouncilDeliberationToolView({ output }: { output: unknown }) {
+  const root = output && typeof output === "object" ? (output as Record<string, unknown>) : {};
+  const issue = typeof root.issue === "string" ? root.issue : "Council deliberation";
+  const displayName = typeof root.displayName === "string" ? root.displayName : "Selected area";
+  const turns = Array.isArray(root.turns)
+    ? root.turns.filter((turn): turn is Record<string, unknown> => typeof turn === "object" && turn !== null)
+    : [];
+  const resolution = root.resolution && typeof root.resolution === "object" ? (root.resolution as Record<string, unknown>) : null;
+  const actionable = Array.isArray(resolution?.actionableSteps)
+    ? resolution?.actionableSteps.filter((item): item is string => typeof item === "string")
+    : [];
+
+  return (
+    <div className="space-y-2">
+      <div className="rounded-md border border-(--color-border) bg-(--color-card)/60 p-2 text-xs">
+        <p className="font-medium text-(--color-foreground)">LLM Council - {displayName}</p>
+        <p className="mt-1 text-(--color-muted-foreground)">{issue}</p>
+      </div>
+
+      {turns.map((turn, index) => {
+        const name = typeof turn.agentName === "string" ? turn.agentName : typeof turn.agent_name === "string" ? turn.agent_name : "Representative";
+        const title = typeof turn.agentTitle === "string" ? turn.agentTitle : typeof turn.agent_title === "string" ? turn.agent_title : "";
+        const content = typeof turn.content === "string" ? turn.content : "";
+        if (!content) return null;
+        return (
+          <Card key={`council-turn-${index}`} className="max-w-[90%] border border-(--color-border) bg-(--color-card)/40 p-3 text-sm">
+            <p className="mb-1 text-xs text-(--color-muted-foreground)">
+              {name}
+              {title ? ` - ${title}` : ""}
+            </p>
+            <p className="whitespace-pre-wrap">{content}</p>
+          </Card>
+        );
+      })}
+
+      {actionable.length > 0 ? (
+        <div className="rounded-md border border-(--color-border) bg-(--color-card)/60 p-2 text-xs">
+          <p className="mb-1 font-medium text-(--color-foreground)">Resolution</p>
+          <ul className="list-disc space-y-1 pl-4 text-(--color-muted-foreground)">
+            {actionable.slice(0, 5).map((step, index) => (
+              <li key={`resolution-step-${index}`}>{step}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </div>
   );
 }
 

@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { ArrowUp, Check, ChevronDown, Plus, Wrench, X } from "lucide-react";
+import { ArrowUp, Check, ChevronDown, Landmark, Plus, Wrench, X } from "lucide-react";
 import { Button, Textarea } from "@/components/ui/primitives";
 import type { ChatModelConfig, ChatModelId } from "@/shared/chat-models";
 import type { ChatToolOption } from "@/components/chat/ChatInput";
@@ -22,6 +22,7 @@ const MAX_DOCUMENT_SIZE_BYTES = 10 * 1024 * 1024;
 export type PromptInputSubmitPayload = {
   text: string;
   documents: File[];
+  mode: "chat" | "council";
 };
 
 function formatBytes(bytes: number): string {
@@ -54,8 +55,10 @@ function validateDocument(file: File): string | null {
 
 export function PromptInput({
   onSubmit,
+  onCouncilModeChange,
   isLoading,
   placeholder,
+  councilPlaceholder,
   modelId,
   onModelChange,
   modelOptions,
@@ -69,8 +72,10 @@ export function PromptInput({
   onLoadMoreTools,
 }: {
   onSubmit: (payload: PromptInputSubmitPayload) => void;
+  onCouncilModeChange?: (enabled: boolean) => void;
   isLoading?: boolean;
   placeholder?: string;
+  councilPlaceholder?: string;
   modelId: ChatModelId;
   onModelChange: (modelId: ChatModelId) => void;
   modelOptions: ChatModelConfig[];
@@ -89,6 +94,7 @@ export function PromptInput({
   const OVERSCAN = 120;
 
   const [value, setValue] = useState("");
+  const [councilModeEnabled, setCouncilModeEnabled] = useState(false);
   const [selectedDocuments, setSelectedDocuments] = useState<File[]>([]);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [slashMenuIndex, setSlashMenuIndex] = useState(0);
@@ -204,7 +210,7 @@ export function PromptInput({
   function handleSubmit() {
     const trimmed = value.trim();
     if (!trimmed) return;
-    onSubmit({ text: trimmed, documents: selectedDocuments });
+    onSubmit({ text: trimmed, documents: selectedDocuments, mode: councilModeEnabled ? "council" : "chat" });
     setValue("");
     setSelectedDocuments([]);
     setAttachmentError(null);
@@ -281,6 +287,10 @@ export function PromptInput({
     if (!isLoading) return;
     setIsModelMenuOpen(false);
   }, [isLoading]);
+
+  useEffect(() => {
+    onCouncilModeChange?.(councilModeEnabled);
+  }, [councilModeEnabled, onCouncilModeChange]);
 
   useEffect(() => {
     if (!isModelMenuOpen) return;
@@ -407,7 +417,11 @@ export function PromptInput({
         </div>
       ) : null}
       <Textarea
-        placeholder={placeholder ?? "Ask a UK data question..."}
+        placeholder={
+          councilModeEnabled
+            ? councilPlaceholder ?? "Council mode: include postcode or constituency name for a local council; otherwise we'll create a national MPs council."
+            : placeholder ?? "Ask a UK data question..."
+        }
         value={value}
         onChange={(event) => setValue(event.target.value)}
         onKeyDown={(event) => {
@@ -461,16 +475,34 @@ export function PromptInput({
           accept=".pdf,.txt,.md,.markdown,.csv,.json,.docx,.xlsx,text/plain,text/markdown,text/csv,application/json,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
           onChange={(event) => handleFileSelection(event.currentTarget.files)}
         />
-        <Button
-          type="button"
-          variant="ghost"
-          aria-label="Add attachment"
-          className="h-8 w-8 rounded-full p-0 text-(--color-muted-foreground) hover:bg-[color-mix(in_oklch,var(--color-card)_60%,var(--color-foreground)_12%)]"
-          onClick={() => fileInputRef.current?.click()}
-          disabled={Boolean(isLoading)}
-        >
-          <Plus className="h-4 w-4" />
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button
+            type="button"
+            variant="ghost"
+            aria-label="Add attachment"
+            className="h-8 w-8 rounded-full p-0 text-(--color-muted-foreground) hover:bg-[color-mix(in_oklch,var(--color-card)_60%,var(--color-foreground)_12%)]"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={Boolean(isLoading)}
+          >
+            <Plus className="h-4 w-4" />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            aria-pressed={councilModeEnabled}
+            aria-label="Toggle LLM council mode"
+            className={`inline-flex h-8 items-center gap-1 rounded-full px-2 text-xs ${
+              councilModeEnabled
+                ? "bg-[color-mix(in_oklch,var(--color-primary)_18%,var(--color-card)_82%)] text-(--color-foreground)"
+                : "text-(--color-muted-foreground) hover:bg-[color-mix(in_oklch,var(--color-card)_60%,var(--color-foreground)_12%)]"
+            }`}
+            onClick={() => setCouncilModeEnabled((current) => !current)}
+            disabled={Boolean(isLoading)}
+          >
+            <Landmark className="h-3.5 w-3.5" />
+            <span>Council</span>
+          </Button>
+        </div>
         <div className="flex items-center gap-2">
           <div ref={modelMenuRef} className="relative">
             <Button
