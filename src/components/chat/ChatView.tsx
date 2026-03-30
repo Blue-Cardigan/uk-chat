@@ -79,6 +79,23 @@ function formatChatErrorMessage(message: string | undefined): string {
   return message;
 }
 
+function stableStringify(value: unknown): string {
+  if (value == null) return "";
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function hashString(input: string): string {
+  let hash = 0;
+  for (let index = 0; index < input.length; index += 1) {
+    hash = (hash * 31 + input.charCodeAt(index)) | 0;
+  }
+  return Math.abs(hash).toString(36);
+}
+
 export function ChatView({
   conversation,
   conversationId,
@@ -115,6 +132,7 @@ export function ChatView({
   const [usageBanner, setUsageBanner] = useState<string | null>(null);
   const toolsCacheRef = useRef<Map<string, ToolsCacheEntry>>(new Map());
   const pushedArtifactKeysRef = useRef<Set<string>>(new Set());
+  const artifactSignaturesRef = useRef<Map<string, string>>(new Map());
   const onMissingRef = useRef(onConversationMissing);
   onMissingRef.current = onConversationMissing;
 
@@ -395,6 +413,7 @@ export function ChatView({
 
   useEffect(() => {
     pushedArtifactKeysRef.current.clear();
+    artifactSignaturesRef.current.clear();
     clearVizPayloads();
     if (!conversationId || !authToken) {
       setMessages([]);
@@ -462,10 +481,13 @@ export function ChatView({
           normalizedToolName === "create_chart" && isChartSpec(output)
             ? output
             : buildChartSpecFromVizHint(output);
-        const id = toolCallId ?? `idx-${index}`;
+        const fallbackId = `sig-${hashString(`${normalizedToolName}:${stableStringify(output).slice(0, 1200)}`)}`;
+        const id = toolCallId ?? fallbackId;
         const artifactKey = `${message.id}:${normalizedToolName}:${id}`;
-        if (pushedArtifactKeysRef.current.has(artifactKey)) return;
+        const signature = `${stableStringify(output).slice(0, 12000)}|${stableStringify(chartSpec).slice(0, 12000)}`;
+        if (pushedArtifactKeysRef.current.has(artifactKey) && artifactSignaturesRef.current.get(artifactKey) === signature) return;
         pushedArtifactKeysRef.current.add(artifactKey);
+        artifactSignaturesRef.current.set(artifactKey, signature);
         pushVizPayload({
           id: artifactKey,
           toolName: normalizedToolName,
