@@ -5,10 +5,16 @@ import { waitUntil } from "@vercel/functions";
 import { CHAT_MODEL_CONFIGS, CHAT_SUPPORT_CONTACT, getChatModelConfig } from "../src/shared/chat-models.js";
 import { onboardUser } from "./_lib/onboarding.js";
 import { ensureAdmin, ensureAdminOrBootstrap, getSupabaseAdmin, getUserFromRequest, json } from "./_lib/server.js";
+import { writeAdminAuditLog } from "./_lib/audit.js";
+import { decryptMcpToken, encryptMcpToken } from "./_lib/crypto.js";
+import { logError, logWarn } from "./_lib/logger.js";
 import { getSystemPrompt } from "./_lib/system-prompt.js";
 import { continueCouncilDeliberation, createCouncilDeliberation } from "./_lib/council/handler.js";
-import { parseCouncilCreateRequest, parseCouncilFollowUpRequest } from "./_lib/council/schemas.js";
-import type { CouncilDeliberation, CouncilResolvedGeography } from "./_lib/council/types.js";
+import { parseCouncilCreateRequest, parseCouncilFollowUpRequest, parseCouncilInferScopeRequest } from "./_lib/council/schemas.js";
+import type { CouncilDeliberation, CouncilResolvedGeography, CouncilScope } from "./_lib/council/types.js";
+
+const CONVERSATION_SELECT_FIELDS = "id,title,starred,is_public,share_token,created_at,updated_at";
+const SHARED_CONVERSATION_SELECT_FIELDS = "id,title,created_at,updated_at,is_public,share_token,share_expires_at";
 
 function pathParts(request: Request) {
   const pathname = new URL(request.url).pathname;
@@ -42,6 +48,10 @@ function env(key: string): string | undefined {
   return maybeProcess.process?.env?.[key];
 }
 
+const PRIVACY_NOTICE_VERSION = "2026-03-30";
+const DEFAULT_SHARE_EXPIRY_DAYS = 30;
+const DEFAULT_RETENTION_DAYS = 365;
+
 const openrouter = createOpenRouter({
   apiKey: env("OPENROUTER_API_KEY"),
 });
@@ -49,6 +59,7 @@ const openrouter = createOpenRouter({
 const AUTO_CHAT_TITLE_MAX_LENGTH = 72;
 const AUTO_CHAT_TITLE_DEFAULT_REGEX = /^(new chat(?:\s+\d+)?|untitled)$/i;
 const AUTO_CHAT_TITLE_MODEL = "google/gemini-2.5-flash-lite";
+const UK_POSTCODE_REGEX = /\b([A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2})\b/i;
 
 function getOpenRouterFallbackModels(modelId: string): string[] {
   switch (modelId) {
@@ -742,6 +753,11 @@ function createShareToken() {
   return `share_${crypto.randomUUID().replace(/-/g, "")}`;
 }
 
+function buildShareExpiryIso(days = DEFAULT_SHARE_EXPIRY_DAYS): string {
+  const millis = Math.max(1, days) * 24 * 60 * 60 * 1000;
+  return new Date(Date.now() + millis).toISOString();
+}
+
 function extractPartsFromResponseMessage(
   message: unknown,
   resolveToolName?: (name: string) => string,
@@ -944,6 +960,65 @@ function buildAssistantPartsFromFinishEvent(
   return fallbackParts;
 }
 
+function logToolSequenceForRequest(params: {
+  event: unknown;
+  conversationId?: string | null;
+  modelId: string;
+  providerModel: string;
+}) {
+  const { event, conversationId, modelId, providerModel } = params;
+  if (!isRecord(event)) return;
+
+  const toolCalls = Array.isArray(event.toolCalls) ? event.toolCalls : [];
+  const toolResults = Array.isArray(event.toolResults) ? event.toolResults : [];
+  const resultByCallId = new Map<string, unknown>();
+  for (const result of toolResults) {
+    if (!isRecord(result) || typeof result.toolCallId !== "string") continue;
+    resultByCallId.set(result.toolCallId, result.output);
+  }
+
+  const sequence = toolCalls
+    .map((call, index) => {
+      if (!isRecord(call)) return null;
+      const toolCallId = typeof call.toolCallId === "string" ? call.toolCallId : null;
+      const toolName = typeof call.toolName === "string" ? call.toolName : null;
+      const output = toolCallId ? resultByCallId.get(toolCallId) : null;
+      const outputError =
+        isRecord(output) && typeof output.error === "string"
+          ? output.error
+          : isRecord(output) && typeof output.message === "string"
+            ? output.message
+            : null;
+      return {
+        order: index + 1,
+        toolName,
+        toolCallId,
+        outputError,
+      };
+    })
+    .filter((entry): entry is { order: number; toolName: string | null; toolCallId: string | null; outputError: string | null } => entry !== null);
+
+  const firstTool = sequence[0]?.toolName ?? null;
+  const calledCreateChartFirst = firstTool === CREATE_CHART_TOOL_NAME;
+  const createChartGuardrailTriggered = sequence.some(
+    (step) =>
+      step.toolName === CREATE_CHART_TOOL_NAME &&
+      typeof step.outputError === "string" &&
+      step.outputError.includes("requires at least one non-create_chart data tool call"),
+  );
+
+  logWarn("[api/chat] Tool execution sequence", {
+    conversationId: conversationId ?? null,
+    modelId,
+    providerModel,
+    toolCallCount: sequence.length,
+    firstTool,
+    calledCreateChartFirst,
+    createChartGuardrailTriggered,
+    sequence,
+  });
+}
+
 async function ensureProfileExists(user: { id: string; email?: string | null }) {
   const supabase = getSupabaseAdmin();
   const normalizedEmail = user.email?.toLowerCase() ?? null;
@@ -956,6 +1031,55 @@ async function ensureProfileExists(user: { id: string; email?: string | null }) 
     { onConflict: "id" },
   );
   if (error) throw new Error(`Failed to ensure profile exists: ${error.message}`);
+}
+
+async function readProfileMcpToken(params: {
+  supabase: ReturnType<typeof getSupabaseAdmin>;
+  userId: string;
+  email?: string | null;
+}): Promise<string | null> {
+  const { supabase, userId, email } = params;
+  const { data: profile } = await supabase
+    .from("uk_chat_profiles")
+    .select("mcp_token,mcp_token_encrypted")
+    .eq("id", userId)
+    .maybeSingle();
+  const encryptedToken = typeof profile?.mcp_token_encrypted === "string" ? profile.mcp_token_encrypted : null;
+  const plainToken = typeof profile?.mcp_token === "string" ? profile.mcp_token : null;
+  const decrypted = await decryptMcpToken(encryptedToken);
+  if (decrypted) return decrypted;
+  if (!plainToken) return null;
+  const encrypted = await encryptMcpToken(plainToken);
+  if (encrypted) {
+    await supabase.from("uk_chat_profiles").update({ mcp_token_encrypted: encrypted, mcp_token: null }).eq("id", userId);
+  }
+  return plainToken;
+}
+
+async function claimPendingMcpToken(params: {
+  supabase: ReturnType<typeof getSupabaseAdmin>;
+  userId: string;
+  email?: string | null;
+}): Promise<string | null> {
+  const { supabase, userId, email } = params;
+  const normalizedEmail = email?.trim().toLowerCase();
+  if (!normalizedEmail) return null;
+  const { data: gate } = await supabase
+    .from("uk_chat_email_gate")
+    .select("pending_mcp_token")
+    .eq("email", normalizedEmail)
+    .maybeSingle();
+  const pendingToken = typeof gate?.pending_mcp_token === "string" ? gate.pending_mcp_token : null;
+  if (!pendingToken) return null;
+
+  const encrypted = await encryptMcpToken(pendingToken);
+  const profilePatch: { mcp_token: string | null; mcp_token_encrypted: string | null } = encrypted
+    ? { mcp_token: null, mcp_token_encrypted: encrypted }
+    : { mcp_token: pendingToken, mcp_token_encrypted: null };
+
+  await supabase.from("uk_chat_profiles").update(profilePatch).eq("id", userId);
+  await supabase.from("uk_chat_email_gate").update({ claimed_at: new Date().toISOString() }).eq("email", normalizedEmail);
+  return pendingToken;
 }
 
 function utcDateStamp() {
@@ -1101,6 +1225,48 @@ function extractLatestUserText(messages: Array<{ role?: string; parts?: unknown[
   return text;
 }
 
+function shouldRequireDataToolCall(query: string): boolean {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) return false;
+
+  const quantitativeSignals = [
+    /\bcompare\b/,
+    /\btrend\b/,
+    /\bchange(?:d)?\b/,
+    /\bhow many\b/,
+    /\bhow much\b/,
+    /\bnumber of\b/,
+    /\bmonthly\b/,
+    /\byearly\b/,
+    /\bover the last\b/,
+    /\b\d{4}\b/,
+    /\bchart\b/,
+    /\bgraph\b/,
+    /\bborough\b/,
+    /\bpostcode\b/,
+    /\bcrime\b/,
+    /\benergy\b/,
+    /\belectricity\b/,
+    /\bgas\b/,
+  ];
+
+  return quantitativeSignals.some((pattern) => pattern.test(normalized));
+}
+
+function hasPriorNonChartToolOutput(messages: Array<{ role?: string; parts?: unknown[] }> | undefined): boolean {
+  if (!Array.isArray(messages)) return false;
+  for (const message of messages) {
+    if (!message || !Array.isArray(message.parts)) continue;
+    for (const part of message.parts) {
+      if (!isRecord(part) || typeof part.type !== "string") continue;
+      if (!part.type.startsWith("tool-")) continue;
+      const toolName = part.type.slice("tool-".length);
+      if (toolName !== CREATE_CHART_TOOL_NAME) return true;
+    }
+  }
+  return false;
+}
+
 function isAutoGeneratedConversationTitle(title?: string | null): boolean {
   if (!title) return true;
   return AUTO_CHAT_TITLE_DEFAULT_REGEX.test(title.trim());
@@ -1137,7 +1303,7 @@ async function generateAutoChatTitleFromFirstMessage(message: string): Promise<s
     });
     return sanitizeAutoChatTitle(result.text);
   } catch (error) {
-    console.warn("[api/chat] Failed to generate auto chat title", {
+    logWarn("[api/chat] Failed to generate auto chat title", {
       error: error instanceof Error ? error.message : String(error),
     });
     return null;
@@ -1223,8 +1389,10 @@ async function loadAuthorizedMcpTools({
   mcpToken?: string | null;
   conversationId?: string | null;
 }): Promise<{ tools: Record<string, unknown> } | { response: Response }> {
-  const { data: profile } = await supabase.from("uk_chat_profiles").select("mcp_token").eq("id", user.id).single();
-  let token = mcpToken ?? profile?.mcp_token;
+  let token = mcpToken ?? (await readProfileMcpToken({ supabase, userId: user.id, email: user.email }));
+  if (!token) {
+    token = await claimPendingMcpToken({ supabase, userId: user.id, email: user.email });
+  }
   if (!token) return { response: json({ error: "Missing MCP token" }, 400) };
 
   const configuredMcpUrl = env("MCP_SERVER_URL") ?? "https://mcp.explorethekingdom.co.uk/sse";
@@ -1244,13 +1412,17 @@ async function loadAuthorizedMcpTools({
         if (retryLoad.tools) {
           token = pendingToken;
           mcpLoad = retryLoad;
-          await supabase.from("uk_chat_profiles").update({ mcp_token: pendingToken }).eq("id", user.id);
-          console.warn("[api/chat] Recovered from unauthorized MCP token using pending token", {
+          const encrypted = await encryptMcpToken(pendingToken);
+          await supabase
+            .from("uk_chat_profiles")
+            .update(encrypted ? { mcp_token: null, mcp_token_encrypted: encrypted } : { mcp_token: pendingToken })
+            .eq("id", user.id);
+          logWarn("[api/chat] Recovered from unauthorized MCP token using pending token", {
             userId: user.id,
             conversationId: conversationId ?? null,
           });
         } else {
-          console.error("[api/chat] Pending MCP token retry failed", {
+          logError("[api/chat] Pending MCP token retry failed", {
             userId: user.id,
             conversationId: conversationId ?? null,
             configuredMcpUrl,
@@ -1264,8 +1436,8 @@ async function loadAuthorizedMcpTools({
   if (!mcpLoad.tools) {
     const details = mcpLoad.attempts.map((attempt) => `${attempt.type}:${attempt.url} -> ${attempt.error}`).join(" | ");
     if (isMcpUnauthorized(mcpLoad.attempts)) {
-      await supabase.from("uk_chat_profiles").update({ mcp_token: null }).eq("id", user.id);
-      console.error("[api/chat] MCP token unauthorized after recovery attempts", {
+      await supabase.from("uk_chat_profiles").update({ mcp_token: null, mcp_token_encrypted: null }).eq("id", user.id);
+      logError("[api/chat] MCP token unauthorized after recovery attempts", {
         userId: user.id,
         conversationId: conversationId ?? null,
         configuredMcpUrl,
@@ -1281,7 +1453,7 @@ async function loadAuthorizedMcpTools({
         ),
       };
     }
-    console.error("[api/chat] MCP tool connection failed", {
+    logError("[api/chat] MCP tool connection failed", {
       userId: user.id,
       conversationId: conversationId ?? null,
       configuredMcpUrl,
@@ -1435,27 +1607,33 @@ async function handleChat(request: Request) {
   if ("response" in toolLoad) return toolLoad.response;
   const tools = compactMcpToolsForModelContext(toolLoad.tools);
   const latestUserQuery = extractLatestUserText(body.messages);
+  const requireDataToolCall = shouldRequireDataToolCall(latestUserQuery);
+  const priorDataToolOutputExists = hasPriorNonChartToolOutput(body.messages);
+  const allowCreateChartTool = !requireDataToolCall || priorDataToolOutputExists;
   const scopedTools = {
     ...selectToolsForChat(tools, latestUserQuery, 18),
-    [CREATE_CHART_TOOL_NAME]: createSyntheticChartTool(),
+    ...(allowCreateChartTool ? { [CREATE_CHART_TOOL_NAME]: createSyntheticChartTool() } : {}),
   };
   const guardedTools = enforceCreateChartDataPrereq(scopedTools);
 
   const { normalizedTools, normalizedToolNames } = normalizeToolSchemas(guardedTools);
   const { safeTools, safeToOriginal, renamedPairs } = buildProviderSafeTools(normalizedTools);
   if (normalizedToolNames.length > 0) {
-    console.warn("[api/chat] Normalized Gemini-incompatible MCP schemas", {
+    logWarn("[api/chat] Normalized Gemini-incompatible MCP schemas", {
       normalizedCount: normalizedToolNames.length,
       normalizedToolNames,
     });
   }
-  console.warn("[api/chat] Scoped tool catalog for request", {
+  logWarn("[api/chat] Scoped tool catalog for request", {
     totalTools: Object.keys(tools).length,
     selectedTools: Object.keys(scopedTools).length,
     query: latestUserQuery.slice(0, 180),
+    requireDataToolCall,
+    allowCreateChartTool,
+    priorDataToolOutputExists,
   });
   if (renamedPairs.length > 0) {
-    console.warn("[api/chat] Remapped tool names for provider compatibility", {
+    logWarn("[api/chat] Remapped tool names for provider compatibility", {
       renamedCount: renamedPairs.length,
       renamedPairs: renamedPairs.slice(0, 12),
     });
@@ -1484,7 +1662,7 @@ async function handleChat(request: Request) {
       parts: userParts,
     });
     if (insertUserError) {
-      console.error("[api/chat] Failed to persist user message", {
+      logError("[api/chat] Failed to persist user message", {
         conversationId: body.conversationId,
         userId: user.id,
         error: insertUserError.message,
@@ -1507,7 +1685,7 @@ async function handleChat(request: Request) {
           .eq("user_id", user.id)
           .eq("title", conversation.title);
         if (autoTitleUpdateError) {
-          console.warn("[api/chat] Failed to persist auto chat title", {
+          logWarn("[api/chat] Failed to persist auto chat title", {
             conversationId: body.conversationId,
             userId: user.id,
             error: autoTitleUpdateError.message,
@@ -1531,20 +1709,27 @@ async function handleChat(request: Request) {
   const systemPrompt = documentContext ? `${systemPromptBase}\n\n${documentContext}` : systemPromptBase;
   const compactedMessages = compactMessagesForModel(body.messages ?? []);
   if (Array.isArray(body.messages) && compactedMessages.length !== body.messages.length) {
-    console.warn("[api/chat] Compacted message history for model context", {
+    logWarn("[api/chat] Compacted message history for model context", {
       originalCount: body.messages.length,
       compactedCount: compactedMessages.length,
     });
   }
   const compactedChars = compactedMessages.reduce((sum, message) => sum + message.content.length, 0);
   if (compactedChars > 40_000) {
-    console.warn("[api/chat] Compacted message payload is still large", {
+    logWarn("[api/chat] Compacted message payload is still large", {
       compactedCount: compactedMessages.length,
       compactedChars,
     });
   }
 
   const onAssistantFinish: Parameters<typeof streamText>[0]["onFinish"] = async (event) => {
+    logToolSequenceForRequest({
+      event,
+      conversationId: body.conversationId,
+      modelId: selectedModel.id,
+      providerModel: selectedModel.providerModel,
+    });
+
     const persistPromise = (async () => {
       const assistantParts = buildAssistantPartsFromFinishEvent(event, (name) => safeToOriginal.get(name) ?? name);
       const { error: assistantInsertError } = await supabase.from("uk_chat_messages").insert({
@@ -1553,7 +1738,7 @@ async function handleChat(request: Request) {
         parts: assistantParts,
       });
       if (assistantInsertError) {
-        console.error("[api/chat] Failed to persist assistant message", {
+        logError("[api/chat] Failed to persist assistant message", {
           conversationId: body.conversationId,
           userId: user.id,
           error: assistantInsertError.message,
@@ -1568,7 +1753,7 @@ async function handleChat(request: Request) {
         .eq("id", body.conversationId!)
         .eq("user_id", user.id);
       if (updateConversationError) {
-        console.error("[api/chat] Failed to update conversation timestamp", {
+        logError("[api/chat] Failed to update conversation timestamp", {
           conversationId: body.conversationId,
           userId: user.id,
           error: updateConversationError.message,
@@ -1586,13 +1771,18 @@ async function handleChat(request: Request) {
   };
 
   const fallbackModels = getOpenRouterFallbackModels(selectedModel.id);
-  const tryStream = (options: { includeFallbackModels: boolean; includeTools: boolean }) =>
+  const tryStream = (options: {
+    includeFallbackModels: boolean;
+    includeTools: boolean;
+    requireToolCall: boolean;
+  }) =>
     streamText({
       model: openrouter.chat(selectedModel.providerModel, {
         extraBody: options.includeFallbackModels && fallbackModels.length > 0 ? { models: fallbackModels } : undefined,
       }),
       messages: compactedMessages,
       tools: options.includeTools ? (safeTools as Parameters<typeof streamText>[0]["tools"]) : undefined,
+      toolChoice: options.includeTools ? (options.requireToolCall ? "required" : "auto") : undefined,
       stopWhen: stepCountIs(10),
       system: systemPrompt,
       onFinish: onAssistantFinish,
@@ -1600,24 +1790,56 @@ async function handleChat(request: Request) {
 
   let result: ReturnType<typeof streamText>;
   try {
-    result = tryStream({ includeFallbackModels: true, includeTools: true });
+    result = tryStream({
+      includeFallbackModels: true,
+      includeTools: true,
+      requireToolCall: requireDataToolCall,
+    });
   } catch (error) {
     if (!isProviderInvalidRequestError(error)) throw error;
-    console.warn("[api/chat] Provider rejected request, retrying without fallback model chain", {
+    logWarn("[api/chat] Provider rejected request, retrying without fallback model chain", {
       modelId: selectedModel.id,
       providerModel: selectedModel.providerModel,
+      requireDataToolCall,
       error: error instanceof Error ? error.message : String(error),
     });
     try {
-      result = tryStream({ includeFallbackModels: false, includeTools: true });
+      result = tryStream({
+        includeFallbackModels: false,
+        includeTools: true,
+        requireToolCall: requireDataToolCall,
+      });
     } catch (retryError) {
       if (!isProviderInvalidRequestError(retryError)) throw retryError;
-      console.warn("[api/chat] Provider still rejected request, retrying without tools", {
-        modelId: selectedModel.id,
-        providerModel: selectedModel.providerModel,
-        error: retryError instanceof Error ? retryError.message : String(retryError),
-      });
-      result = tryStream({ includeFallbackModels: false, includeTools: false });
+      if (requireDataToolCall) {
+        logWarn("[api/chat] Provider rejected required tool choice, retrying with auto tool choice", {
+          modelId: selectedModel.id,
+          providerModel: selectedModel.providerModel,
+          error: retryError instanceof Error ? retryError.message : String(retryError),
+        });
+        try {
+          result = tryStream({
+            includeFallbackModels: false,
+            includeTools: true,
+            requireToolCall: false,
+          });
+        } catch (autoToolChoiceError) {
+          if (!isProviderInvalidRequestError(autoToolChoiceError)) throw autoToolChoiceError;
+          logWarn("[api/chat] Provider still rejected request, retrying without tools", {
+            modelId: selectedModel.id,
+            providerModel: selectedModel.providerModel,
+            error: autoToolChoiceError instanceof Error ? autoToolChoiceError.message : String(autoToolChoiceError),
+          });
+          result = tryStream({ includeFallbackModels: false, includeTools: false, requireToolCall: false });
+        }
+      } else {
+        logWarn("[api/chat] Provider still rejected request, retrying without tools", {
+          modelId: selectedModel.id,
+          providerModel: selectedModel.providerModel,
+          error: retryError instanceof Error ? retryError.message : String(retryError),
+        });
+        result = tryStream({ includeFallbackModels: false, includeTools: false, requireToolCall: false });
+      }
     }
   }
 
@@ -1641,6 +1863,99 @@ function isCouncilDeliberation(value: unknown): value is CouncilDeliberation {
     Array.isArray(row.turns) &&
     typeof row.createdAt === "string"
   );
+}
+
+function extractAreaCandidate(text: string): string | null {
+  const compact = text.replace(/\s+/g, " ").trim();
+  const patterns = [
+    /\bconstituency\s+([a-z0-9][a-z0-9\s'&-]{2,60}?)(?:\b(?:for|on|about|regarding|with|where|which)\b|[,.!?;]|$)/i,
+    /\b(?:in|for|around|near)\s+([a-z][a-z\s'&-]{2,50}?)(?:\b(?:for|on|about|regarding|with|where|which)\b|[,.!?;]|$)/i,
+  ];
+  for (const pattern of patterns) {
+    const match = compact.match(pattern);
+    const candidate = match?.[1]?.trim();
+    if (!candidate) continue;
+    if (["my area", "the area", "my constituency", "the constituency"].includes(candidate.toLowerCase())) continue;
+    return candidate.replace(/[,.!?;]+$/, "");
+  }
+  return null;
+}
+
+function inferCouncilScopeDeterministic(text: string): CouncilScope {
+  const postcodeMatch = text.match(UK_POSTCODE_REGEX);
+  if (postcodeMatch?.[1]) {
+    return { kind: "postcode", postcode: postcodeMatch[1].replace(/\s+/g, "").toUpperCase() };
+  }
+  const area = extractAreaCandidate(text);
+  if (area) return { kind: "area", area };
+  return { kind: "national" };
+}
+
+function normalizeCouncilScopeFromLlm(raw: unknown): CouncilScope | null {
+  if (!raw || typeof raw !== "object") return null;
+  const row = raw as Record<string, unknown>;
+  const scopeKind = typeof row.scopeKind === "string" ? row.scopeKind.toLowerCase() : "";
+  if (scopeKind === "postcode") {
+    const postcode = typeof row.postcode === "string" ? row.postcode.trim() : "";
+    if (!postcode) return null;
+    return { kind: "postcode", postcode: postcode.replace(/\s+/g, "").toUpperCase() };
+  }
+  if (scopeKind === "area") {
+    const area = typeof row.area === "string" ? row.area.trim() : "";
+    if (!area) return null;
+    return { kind: "area", area };
+  }
+  if (scopeKind === "national") {
+    return { kind: "national" };
+  }
+  return null;
+}
+
+async function handleCouncilInferScope(request: Request) {
+  const user = await getUserFromRequest(request);
+  if (!user) return json({ error: "Unauthorized" }, 401);
+  const parsed = parseCouncilInferScopeRequest(await request.json());
+  if (!parsed.ok) return json({ error: parsed.error }, 400);
+
+  const deterministic = inferCouncilScopeDeterministic(parsed.data.text);
+  if (deterministic.kind === "postcode") {
+    return json({ scope: deterministic, source: "regex", confidence: "high" });
+  }
+
+  const selectedModel = getChatModelConfig(parsed.data.modelId);
+  try {
+    const result = await generateText({
+      model: openrouter.chat(selectedModel.providerModel),
+      temperature: 0,
+      maxOutputTokens: 140,
+      prompt: [
+        "Extract geographic scope for UK civic council setup.",
+        'Return ONLY JSON with fields: {"scopeKind":"postcode|area|national","postcode":"","area":"","confidence":"low|medium|high"}',
+        "Rules:",
+        "- If a UK postcode appears, choose postcode.",
+        "- If a specific place or constituency appears, choose area and provide minimal area text.",
+        "- If no reliable local place exists, choose national.",
+        "",
+        `User text: ${parsed.data.text}`,
+      ].join("\n"),
+    });
+    const llmJson = parseJsonSafely(result.text);
+    const normalized = normalizeCouncilScopeFromLlm(llmJson);
+    if (normalized) {
+      const confidence =
+        llmJson && typeof llmJson === "object" && typeof (llmJson as Record<string, unknown>).confidence === "string"
+          ? String((llmJson as Record<string, unknown>).confidence)
+          : "medium";
+      return json({ scope: normalized, source: "llm", confidence });
+    }
+  } catch (error) {
+    logWarn("[api/council/infer-scope] LLM scope extraction failed", {
+      userId: user.id,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  return json({ scope: deterministic, source: "deterministic-fallback", confidence: "low" });
 }
 
 async function handleCouncilCreate(request: Request) {
@@ -1856,7 +2171,7 @@ async function handleConversationsIndex(request: Request) {
   if (request.method === "GET") {
     const { data, error } = await supabase
       .from("uk_chat_conversations")
-      .select("id,title,starred,is_public,share_token,created_at,updated_at")
+      .select(CONVERSATION_SELECT_FIELDS)
       .eq("user_id", user.id)
       .order("starred", { ascending: false })
       .order("updated_at", { ascending: false });
@@ -1868,7 +2183,7 @@ async function handleConversationsIndex(request: Request) {
     const { title } = (await request.json()) as { title?: string };
     const payload = { user_id: user.id, title: title?.trim() || "New chat" };
     const createConversation = () =>
-      supabase.from("uk_chat_conversations").insert(payload).select("id,title,starred,is_public,share_token,created_at,updated_at").single();
+      supabase.from("uk_chat_conversations").insert(payload).select(CONVERSATION_SELECT_FIELDS).single();
 
     let { data, error } = await createConversation();
 
@@ -1914,7 +2229,7 @@ async function handleConversationById(request: Request) {
       .update(updates)
       .eq("id", id)
       .eq("user_id", user.id)
-      .select("id,title,starred,is_public,share_token,created_at,updated_at")
+      .select(CONVERSATION_SELECT_FIELDS)
       .single();
     if (error) return json({ error: error.message }, 400);
     return json(data);
@@ -1923,12 +2238,12 @@ async function handleConversationById(request: Request) {
   if (request.method === "GET") {
     const { data: conversation, error: conversationError } = await supabase
       .from("uk_chat_conversations")
-      .select("id,title,starred,is_public,share_token,created_at,updated_at")
+      .select(CONVERSATION_SELECT_FIELDS)
       .eq("id", id)
       .eq("user_id", user.id)
       .single();
     if (conversationError) {
-      console.warn("[api/conversations/:id] lookup failed", {
+      logWarn("[api/conversations/:id] lookup failed", {
         conversationId: id,
         userId: user.id,
         userEmail: user.email ?? null,
@@ -1973,6 +2288,37 @@ async function handleConversationShare(request: Request) {
     return json({ error: "Conversation not found" }, 404);
   }
 
+  if (request.method === "PATCH") {
+    const body = (await request.json().catch(() => ({}))) as {
+      enabled?: boolean;
+      expiresInDays?: number;
+    };
+    if (typeof body.enabled !== "boolean") return json({ error: "enabled must be boolean" }, 400);
+    const now = new Date().toISOString();
+    const enabled = body.enabled;
+    const expiresInDays = typeof body.expiresInDays === "number" ? Math.max(1, Math.min(365, Math.round(body.expiresInDays))) : DEFAULT_SHARE_EXPIRY_DAYS;
+    const nextShareToken = enabled ? conversation.share_token ?? createShareToken() : null;
+    const { data, error } = await supabase
+      .from("uk_chat_conversations")
+      .update({
+        is_public: enabled,
+        share_token: nextShareToken,
+        shared_at: enabled ? now : null,
+        share_expires_at: enabled ? buildShareExpiryIso(expiresInDays) : null,
+        updated_at: now,
+      })
+      .eq("id", id)
+      .eq("user_id", user.id)
+      .select(CONVERSATION_SELECT_FIELDS)
+      .single();
+    if (error || !data) return json({ error: error?.message ?? "Failed to update share settings" }, 400);
+    if (enabled && nextShareToken) {
+      const shareUrl = `${getAuthRedirectBase(request).replace(/\/+$/, "")}/shared/${nextShareToken}`;
+      return json({ conversation: data, shareUrl });
+    }
+    return json({ conversation: data, shareUrl: null });
+  }
+
   const shareToken = conversation.share_token ?? createShareToken();
   const now = new Date().toISOString();
   const { data, error } = await supabase
@@ -1981,11 +2327,12 @@ async function handleConversationShare(request: Request) {
       is_public: true,
       share_token: shareToken,
       shared_at: now,
+      share_expires_at: buildShareExpiryIso(DEFAULT_SHARE_EXPIRY_DAYS),
       updated_at: now,
     })
     .eq("id", id)
     .eq("user_id", user.id)
-    .select("id,title,starred,is_public,share_token,created_at,updated_at")
+    .select(CONVERSATION_SELECT_FIELDS)
     .single();
   if (error || !data) return json({ error: error?.message ?? "Failed to share conversation" }, 400);
 
@@ -2017,12 +2364,15 @@ async function handleSharedConversation(request: Request) {
 
   const { data: conversation, error: conversationError } = await supabase
     .from("uk_chat_conversations")
-    .select("id,title,created_at,updated_at,is_public,share_token")
+    .select(SHARED_CONVERSATION_SELECT_FIELDS)
     .eq("share_token", token)
     .eq("is_public", true)
     .single();
   if (conversationError || !conversation) {
     return json({ error: "Shared conversation not found" }, 404);
+  }
+  if (conversation.share_expires_at && new Date(conversation.share_expires_at).getTime() < Date.now()) {
+    return json({ error: "Shared conversation link has expired" }, 410);
   }
 
   const { data: messages, error: messageError } = await supabase
@@ -2144,11 +2494,12 @@ async function getProfileTokenMapByEmail(emails: string[]) {
       idToEmail.set(user.id, email);
     }
     if (matchingIds.length > 0) {
-      const { data: profiles } = await supabase.from("uk_chat_profiles").select("id,mcp_token").in("id", matchingIds);
+      const { data: profiles } = await supabase.from("uk_chat_profiles").select("id,mcp_token,mcp_token_encrypted").in("id", matchingIds);
       for (const profile of profiles ?? []) {
         const email = idToEmail.get(profile.id);
         if (!email) continue;
-        out.set(email, profile.mcp_token);
+        const decrypted = await decryptMcpToken(typeof profile.mcp_token_encrypted === "string" ? profile.mcp_token_encrypted : null);
+        out.set(email, decrypted ?? profile.mcp_token ?? null);
         emailSet.delete(email);
       }
     }
@@ -2171,6 +2522,12 @@ async function handleAdminUsers(request: Request) {
     if (error) return json({ error: error.message }, 400);
     const emails = (data ?? []).map((row) => row.email);
     const profileTokenMap = await getProfileTokenMapByEmail(emails);
+    await writeAdminAuditLog({
+      actorUserId: admin.user.id,
+      actorEmail: admin.user.email ?? null,
+      action: "admin.users.list",
+      metadata: { count: (data ?? []).length },
+    });
     return json(
       (data ?? []).map((row) => ({
         email: row.email,
@@ -2185,6 +2542,13 @@ async function handleAdminUsers(request: Request) {
     if (!email) return json({ error: "Email is required" }, 400);
     try {
       const result = await onboardUser({ email, sendEmail: true });
+      await writeAdminAuditLog({
+        actorUserId: admin.user.id,
+        actorEmail: admin.user.email ?? null,
+        action: "admin.users.invite",
+        target: result.email,
+        metadata: { tokenIssued: Boolean(result.tokenIssued), emailSent: Boolean(result.emailSent) },
+      });
       return json({
         message: "User invited, token issued, and magic link email sent",
         user: { email: result.email, status: "invited", hasToken: Boolean(result.token) },
@@ -2227,8 +2591,18 @@ async function handleAdminTokens(request: Request) {
     const supabase = getSupabaseAdmin();
     const targetUserId = await findUserIdByEmail(result.email);
     if (targetUserId && result.token) {
-      await supabase.from("uk_chat_profiles").upsert({ id: targetUserId, mcp_token: result.token }, { onConflict: "id" });
+      const encrypted = await encryptMcpToken(result.token);
+      await supabase
+        .from("uk_chat_profiles")
+        .upsert(encrypted ? { id: targetUserId, mcp_token: null, mcp_token_encrypted: encrypted } : { id: targetUserId, mcp_token: result.token }, { onConflict: "id" });
     }
+    await writeAdminAuditLog({
+      actorUserId: admin.user.id,
+      actorEmail: admin.user.email ?? null,
+      action: "admin.tokens.rotate",
+      target: result.email,
+      metadata: { tokenIssued: Boolean(result.tokenIssued) },
+    });
     return json({ token: result.token });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Token issuing failed";
@@ -2256,6 +2630,17 @@ async function handleAdminOnboardUser(request: Request) {
       token: body.token,
       rotateToken: body.rotateToken,
     });
+    await writeAdminAuditLog({
+      actorUserId: auth.user?.id ?? null,
+      actorEmail: auth.user?.email ?? null,
+      action: "admin.users.onboard",
+      target: result.email,
+      metadata: {
+        tokenIssued: Boolean(result.tokenIssued),
+        emailSent: Boolean(result.emailSent),
+        viaBootstrapSecret: auth.user === null,
+      },
+    });
     return json({
       message: "User onboarding completed",
       user: {
@@ -2269,6 +2654,231 @@ async function handleAdminOnboardUser(request: Request) {
     const message = error instanceof Error ? error.message : "Onboarding failed";
     return json({ error: message }, 400);
   }
+}
+
+async function handleAdminCouncilSourceSettings(request: Request) {
+  const admin = await ensureAdmin(request);
+  if ("error" in admin) return admin.error;
+  if (request.method !== "GET") return json({ error: "Method not allowed" }, 405);
+
+  const supabase = getSupabaseAdmin();
+  const settingKeys = [
+    "council_national_source_preference",
+    "council_national_whatgov_mps_table",
+    "council_national_whatgov_debates_table",
+  ];
+  const { data, error } = await supabase.from("system_settings").select("key,value").in("key", settingKeys);
+  if (error) return json({ error: error.message }, 400);
+
+  const values = new Map<string, string>();
+  for (const row of (data ?? []) as Array<{ key?: string | null; value?: string | null }>) {
+    if (!row.key) continue;
+    values.set(row.key, row.value ?? "");
+  }
+
+  const envPreference = env("COUNCIL_NATIONAL_SOURCE_PREFERENCE")?.trim() || null;
+  const envMpsTable = env("COUNCIL_NATIONAL_WHATGOV_MPS_TABLE")?.trim() || null;
+  const envDebatesTable = env("COUNCIL_NATIONAL_WHATGOV_DEBATES_TABLE")?.trim() || null;
+
+  return json({
+    source: {
+      preference: values.get("council_national_source_preference") ?? "whatgov-first",
+      whatGovMpsTable: values.get("council_national_whatgov_mps_table") ?? "mps_uwhatgov",
+      whatGovDebatesTable: values.get("council_national_whatgov_debates_table") ?? "casual_debates_uwhatgov",
+    },
+    envOverrides: {
+      COUNCIL_NATIONAL_SOURCE_PREFERENCE: envPreference,
+      COUNCIL_NATIONAL_WHATGOV_MPS_TABLE: envMpsTable,
+      COUNCIL_NATIONAL_WHATGOV_DEBATES_TABLE: envDebatesTable,
+    },
+    effective: {
+      preference: envPreference ?? values.get("council_national_source_preference") ?? "whatgov-first",
+      whatGovMpsTable: envMpsTable ?? values.get("council_national_whatgov_mps_table") ?? "mps_uwhatgov",
+      whatGovDebatesTable: envDebatesTable ?? values.get("council_national_whatgov_debates_table") ?? "casual_debates_uwhatgov",
+    },
+  });
+}
+
+async function handlePrivacyConsent(request: Request) {
+  const user = await getUserFromRequest(request);
+  if (!user) return json({ error: "Unauthorized" }, 401);
+  const supabase = getSupabaseAdmin();
+  await ensureProfileExists(user);
+
+  if (request.method === "GET") {
+    const { data, error } = await supabase
+      .from("uk_chat_user_consents")
+      .select("privacy_notice_version,ai_processing_acknowledged_at,sharing_warning_acknowledged_at,updated_at")
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (error) return json({ error: error.message }, 500);
+    return json({
+      privacyNoticeVersion: data?.privacy_notice_version ?? null,
+      aiProcessingAcknowledgedAt: data?.ai_processing_acknowledged_at ?? null,
+      sharingWarningAcknowledgedAt: data?.sharing_warning_acknowledged_at ?? null,
+      updatedAt: data?.updated_at ?? null,
+      currentVersion: PRIVACY_NOTICE_VERSION,
+    });
+  }
+
+  if (request.method === "PUT") {
+    const body = (await request.json().catch(() => ({}))) as {
+      acknowledgeAiProcessing?: boolean;
+      acknowledgeSharingWarning?: boolean;
+    };
+    const now = new Date().toISOString();
+    const patch = {
+      user_id: user.id,
+      privacy_notice_version: PRIVACY_NOTICE_VERSION,
+      ai_processing_acknowledged_at: body.acknowledgeAiProcessing ? now : null,
+      sharing_warning_acknowledged_at: body.acknowledgeSharingWarning ? now : null,
+      updated_at: now,
+    };
+    const { data, error } = await supabase
+      .from("uk_chat_user_consents")
+      .upsert(patch, { onConflict: "user_id" })
+      .select("privacy_notice_version,ai_processing_acknowledged_at,sharing_warning_acknowledged_at,updated_at")
+      .single();
+    if (error) return json({ error: error.message }, 500);
+    return json({
+      privacyNoticeVersion: data.privacy_notice_version,
+      aiProcessingAcknowledgedAt: data.ai_processing_acknowledged_at,
+      sharingWarningAcknowledgedAt: data.sharing_warning_acknowledged_at,
+      updatedAt: data.updated_at,
+      currentVersion: PRIVACY_NOTICE_VERSION,
+    });
+  }
+
+  return methodNotAllowed();
+}
+
+async function handleAccountProfile(request: Request) {
+  const user = await getUserFromRequest(request);
+  if (!user) return json({ error: "Unauthorized" }, 401);
+  const supabase = getSupabaseAdmin();
+  await ensureProfileExists(user);
+  const claimedToken = await claimPendingMcpToken({ supabase, userId: user.id, email: user.email });
+  const token = claimedToken ?? (await readProfileMcpToken({ supabase, userId: user.id, email: user.email }));
+  const { data: consent } = await supabase
+    .from("uk_chat_user_consents")
+    .select("privacy_notice_version,ai_processing_acknowledged_at")
+    .eq("user_id", user.id)
+    .maybeSingle();
+  return json({
+    id: user.id,
+    email: user.email ?? null,
+    mcpToken: token,
+    privacyConsent: {
+      version: consent?.privacy_notice_version ?? null,
+      aiProcessingAcknowledgedAt: consent?.ai_processing_acknowledged_at ?? null,
+      currentVersion: PRIVACY_NOTICE_VERSION,
+    },
+  });
+}
+
+async function handleAccountExport(request: Request) {
+  const user = await getUserFromRequest(request);
+  if (!user) return json({ error: "Unauthorized" }, 401);
+  const supabase = getSupabaseAdmin();
+  const [profileRow, emailGateRow, conversationsRow, usageRow, councilsRow, consentRow] = await Promise.all([
+    supabase.from("uk_chat_profiles").select("id,email,display_name,theme_preference,created_at").eq("id", user.id).maybeSingle(),
+    user.email
+      ? supabase.from("uk_chat_email_gate").select("email,invited_at,claimed_at").eq("email", user.email.toLowerCase()).maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
+    supabase
+      .from("uk_chat_conversations")
+      .select(CONVERSATION_SELECT_FIELDS)
+      .eq("user_id", user.id)
+      .order("updated_at", { ascending: false }),
+    supabase.from("uk_chat_model_usage").select("model_id,usage_date,request_count,created_at,updated_at").eq("user_id", user.id),
+    supabase
+      .from("uk_chat_councils")
+      .select("id,conversation_id,issue,scope,resolved_geography,routing,agents,resolution,created_at,updated_at")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("uk_chat_user_consents")
+      .select("privacy_notice_version,ai_processing_acknowledged_at,sharing_warning_acknowledged_at,created_at,updated_at")
+      .eq("user_id", user.id)
+      .maybeSingle(),
+  ]);
+
+  if (profileRow.error || conversationsRow.error || usageRow.error || councilsRow.error || consentRow.error) {
+    return json({ error: "Unable to build export right now." }, 500);
+  }
+
+  const conversationIds = new Set((conversationsRow.data ?? []).map((conversation) => conversation.id));
+  const { data: messages, error: messagesError } = await supabase
+    .from("uk_chat_messages")
+    .select("id,conversation_id,role,parts,created_at")
+    .in("conversation_id", Array.from(conversationIds));
+  if (messagesError) return json({ error: "Unable to build export right now." }, 500);
+
+  const councilIds = new Set((councilsRow.data ?? []).map((council) => council.id));
+  const councilTurnsRow =
+    councilIds.size === 0
+      ? { data: [], error: null }
+      : await supabase
+          .from("uk_chat_council_turns")
+          .select("id,council_id,turns,source,created_at")
+          .in("council_id", Array.from(councilIds));
+  if (councilTurnsRow.error) return json({ error: "Unable to build export right now." }, 500);
+
+  return json({
+    exportedAt: new Date().toISOString(),
+    user: {
+      id: user.id,
+      email: user.email ?? null,
+    },
+    profile: profileRow.data ?? null,
+    consent: consentRow.data ?? null,
+    emailGate: emailGateRow.data ?? null,
+    conversations: conversationsRow.data ?? [],
+    messages: messages ?? [],
+    modelUsage: usageRow.data ?? [],
+    councils: councilsRow.data ?? [],
+    councilTurns: councilTurnsRow.data ?? [],
+  });
+}
+
+async function handleAccountDelete(request: Request) {
+  const user = await getUserFromRequest(request);
+  if (!user) return json({ error: "Unauthorized" }, 401);
+  const supabase = getSupabaseAdmin();
+  await writeAdminAuditLog({
+    actorUserId: user.id,
+    actorEmail: user.email ?? null,
+    action: "account.delete.self",
+    target: user.email ?? user.id,
+  });
+  const { error } = await supabase.auth.admin.deleteUser(user.id);
+  if (error) return json({ error: "Failed to delete account." }, 500);
+  return json({ success: true });
+}
+
+async function handleRetentionCron(request: Request) {
+  const cronSecret = env("CRON_SECRET");
+  if (!cronSecret) return json({ error: "CRON_SECRET is required" }, 500);
+  const authHeader = request.headers.get("authorization") ?? "";
+  const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+  if (!token || token !== cronSecret) return json({ error: "Unauthorized" }, 401);
+
+  const retentionDaysRaw = Number(env("DATA_RETENTION_DAYS") ?? DEFAULT_RETENTION_DAYS);
+  const retentionDays = Number.isFinite(retentionDaysRaw) ? Math.max(30, Math.min(3650, Math.round(retentionDaysRaw))) : DEFAULT_RETENTION_DAYS;
+  const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000).toISOString();
+  const supabase = getSupabaseAdmin();
+  const { data: staleRows, error: staleError } = await supabase
+    .from("uk_chat_conversations")
+    .select("id")
+    .lt("updated_at", cutoff)
+    .limit(2000);
+  if (staleError) return json({ error: staleError.message }, 500);
+  const staleIds = (staleRows ?? []).map((row) => row.id);
+  if (staleIds.length === 0) return json({ deletedCount: 0, retentionDays, cutoff });
+
+  const { error: deleteError } = await supabase.from("uk_chat_conversations").delete().in("id", staleIds);
+  if (deleteError) return json({ error: deleteError.message }, 500);
+  return json({ deletedCount: staleIds.length, retentionDays, cutoff });
 }
 
 function methodNotAllowed() {
@@ -2303,13 +2913,14 @@ async function routeRequest(request: Request) {
   if (parts[0] === "council") {
     if (parts.length === 1 && request.method === "POST") return handleCouncilCreate(request);
     if (parts.length === 2 && parts[1] === "followup" && request.method === "POST") return handleCouncilFollowUp(request);
+    if (parts.length === 2 && parts[1] === "infer-scope" && request.method === "POST") return handleCouncilInferScope(request);
     return json({ error: "Not found" }, 404);
   }
 
   if (parts[0] === "conversations") {
     if (parts.length === 1) return handleConversationsIndex(request);
     if (parts.length === 3 && parts[2] === "share") {
-      if (request.method !== "POST") return methodNotAllowed();
+      if (request.method !== "POST" && request.method !== "PATCH") return methodNotAllowed();
       return handleConversationShare(request);
     }
     if (parts.length === 2) return handleConversationById(request);
@@ -2337,10 +2948,28 @@ async function routeRequest(request: Request) {
     return json({ error: "Not found" }, 404);
   }
 
+  if (parts[0] === "privacy" && parts[1] === "consent") {
+    if (request.method !== "GET" && request.method !== "PUT") return methodNotAllowed();
+    return handlePrivacyConsent(request);
+  }
+
+  if (parts[0] === "account") {
+    if (parts.length === 2 && parts[1] === "profile" && request.method === "GET") return handleAccountProfile(request);
+    if (parts.length === 2 && parts[1] === "export" && request.method === "GET") return handleAccountExport(request);
+    if (parts.length === 1 && request.method === "DELETE") return handleAccountDelete(request);
+    return json({ error: "Not found" }, 404);
+  }
+
+  if (parts[0] === "cron" && parts[1] === "data-retention") {
+    if (request.method !== "GET" && request.method !== "POST") return methodNotAllowed();
+    return handleRetentionCron(request);
+  }
+
   if (parts[0] === "admin") {
     if (parts[1] === "users") return handleAdminUsers(request);
     if (parts[1] === "tokens") return handleAdminTokens(request);
     if (parts[1] === "onboard-user") return handleAdminOnboardUser(request);
+    if (parts[1] === "system-settings" && parts[2] === "council-source") return handleAdminCouncilSourceSettings(request);
     return json({ error: "Not found" }, 404);
   }
 
@@ -2359,6 +2988,10 @@ export async function PATCH(request: Request) {
   return routeRequest(request);
 }
 
+export async function PUT(request: Request) {
+  return routeRequest(request);
+}
+
 export async function DELETE(request: Request) {
   return routeRequest(request);
 }
@@ -2367,7 +3000,7 @@ export async function OPTIONS() {
   return new Response(null, {
     status: 204,
     headers: {
-      Allow: "GET,POST,PATCH,DELETE,OPTIONS",
+      Allow: "GET,POST,PATCH,PUT,DELETE,OPTIONS",
     },
   });
 }

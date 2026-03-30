@@ -16,6 +16,8 @@ function buildNationalAgents(mpBundles: LocalMpApiResponse[]): CouncilAgent[] {
   for (const [index, bundle] of mpBundles.entries()) {
     const name = bundle.member?.name_display_as ?? `Representative MP ${index + 1}`;
     const constituency = bundle.member?.constituency ?? "UK";
+    const focusAreas = bundle.extras?.focus_areas?.length ? bundle.extras.focus_areas : ["national policy", "constituency representation"];
+    const priorContributions = bundle.extras?.prior_contributions?.slice(0, 2) ?? [];
     agents.push({
       id: `mp:national-${index + 1}`,
       kind: "mp",
@@ -25,10 +27,16 @@ function buildNationalAgents(mpBundles: LocalMpApiResponse[]): CouncilAgent[] {
       wardOrConstituency: constituency,
       committeeRoles: [],
       contact: { email: null, phone: null, website: null },
-      focusAreas: ["national policy", "constituency representation"],
+      focusAreas,
       roleBoundaries: ["Cannot directly direct council statutory decision making."],
       imageUrl: bundle.member?.portrait_url ?? bundle.member?.thumbnail_url ?? null,
-      profileContext: `Role: MP (${bundle.member?.party ?? "party unknown"})`,
+      profileContext: [
+        `Role: MP (${bundle.member?.party ?? "party unknown"})`,
+        focusAreas.length ? `Likely focus areas: ${focusAreas.join(", ")}` : null,
+        priorContributions.length ? `Recent contribution themes: ${priorContributions.join(" | ")}` : null,
+      ]
+        .filter(Boolean)
+        .join(". "),
     });
   }
   agents.push({
@@ -61,7 +69,7 @@ export async function createCouncilDeliberation(args: {
 
   let agents: CouncilAgent[] = [];
   if (resolvedGeography.scope.kind === "national") {
-    const mpList = await fetchNationalMpRepresentativeBundle(args.tools, resolvedGeography.nation ?? null);
+    const mpList = await fetchNationalMpRepresentativeBundle(args.tools, resolvedGeography.nation ?? null, args.issue);
     agents = buildNationalAgents(mpList);
   } else {
     const mpData = await fetchLocalMpBundle(args.tools, resolvedGeography);

@@ -123,6 +123,7 @@ export type LocalMpApiResponse = {
   committee_memberships?: Array<{ name: string }>;
   extras?: {
     focus_areas?: string[];
+    prior_contributions?: string[];
   };
 };
 
