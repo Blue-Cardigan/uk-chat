@@ -66,6 +66,15 @@ function ProtectedApp() {
     const root = document.documentElement;
     const resolved = theme === "system" ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light") : theme;
     root.dataset.theme = resolved;
+
+    // Keep browser chrome color in sync with the resolved theme.
+    const themeColorMeta = document.querySelector('meta[name="theme-color"]');
+    if (themeColorMeta) {
+      const backgroundColor = getComputedStyle(document.body).backgroundColor;
+      if (backgroundColor) {
+        themeColorMeta.setAttribute("content", backgroundColor);
+      }
+    }
   }, [theme]);
 
   useEffect(() => {

@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="40 40 120 120" fill="none">
+  <defs>
+    <!-- Clip Union Flag artwork into a roundel -->
+    <clipPath id="flagClip">
+      <circle cx="100" cy="100" r="52" />
+    </clipPath>
+  </defs>
+
+  <!-- Union Flag roundel (explore the kingdom) -->
+  <g clip-path="url(#flagClip)">
+    <!-- Blue field -->
+    <rect x="48" y="48" width="104" height="104" fill="#012169"/>
+
+    <!-- St Andrew (white diagonals) - thinner so blue remains visible -->
+    <polygon points="48,68 68,48 152,132 132,152" fill="#FFFFFF"/>
+    <polygon points="132,48 152,68 68,152 48,132" fill="#FFFFFF"/>
+
+    <!-- Diagonal "X" recoloured Scotland-blue -->
+    <polygon points="48,62 62,48 152,138 138,152" fill="#005EB8"/>
+    <polygon points="138,48 152,62 62,152 48,138" fill="#005EB8"/>
+
+    <!-- St George (white cross) -->
+    <rect x="86" y="48" width="28" height="104" fill="#FFFFFF"/>
+    <rect x="48" y="86" width="104" height="28" fill="#FFFFFF"/>
+
+    <!-- St George (red cross) -->
+    <rect x="92" y="48" width="16" height="104" fill="#C8102E"/>
+    <rect x="48" y="92" width="104" height="16" fill="#C8102E"/>
+  </g>
+
+  <!-- Compass ring + points (white for visibility on dark UI) -->
+  <circle cx="100" cy="100" r="52" fill="none" stroke="#FFFFFF" stroke-width="4"/>
+  <g fill="#FFFFFF" opacity="0.98">
+    <!-- N -->
+    <polygon points="100,42 92,56 108,56" />
+    <!-- E -->
+    <polygon points="158,100 144,92 144,108" />
+    <!-- S -->
+    <polygon points="100,158 92,144 108,144" />
+    <!-- W -->
+    <polygon points="42,100 56,92 56,108" />
+  </g>
+</svg>

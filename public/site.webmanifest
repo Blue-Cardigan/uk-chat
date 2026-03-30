@@ -1,0 +1,23 @@
+{
+  "name": "ChatGB",
+  "short_name": "ChatGB",
+  "start_url": "/",
+  "scope": "/",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/logo.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ],
+  "theme_color": "#012169",
+  "background_color": "#0b1020",
+  "display": "standalone"
+}

@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <defs>
+    <clipPath id="flagClip">
+      <circle cx="32" cy="32" r="18" />
+    </clipPath>
+  </defs>
+
+  <!-- Union Flag roundel -->
+  <g clip-path="url(#flagClip)">
+    <rect x="14" y="14" width="36" height="36" fill="#012169"/>
+
+    <!-- White diagonals -->
+    <polygon points="14,21 21,14 50,43 43,50" fill="#FFFFFF"/>
+    <polygon points="43,14 50,21 21,50 14,43" fill="#FFFFFF"/>
+
+    <!-- Diagonal "X" recoloured Scotland-blue -->
+    <polygon points="14,19 19,14 50,45 45,50" fill="#005EB8"/>
+    <polygon points="45,14 50,19 19,50 14,45" fill="#005EB8"/>
+
+    <!-- White cross -->
+    <rect x="24" y="14" width="16" height="36" fill="#FFFFFF"/>
+    <rect x="14" y="24" width="36" height="16" fill="#FFFFFF"/>
+
+    <!-- Red cross -->
+    <rect x="27" y="14" width="10" height="36" fill="#C8102E"/>
+    <rect x="14" y="27" width="36" height="10" fill="#C8102E"/>
+  </g>
+
+  <!-- Compass ring + points (white for visibility) -->
+  <circle cx="32" cy="32" r="18" fill="none" stroke="#FFFFFF" stroke-width="2.5"/>
+  <g fill="#FFFFFF" opacity="0.98">
+    <!-- N -->
+    <polygon points="32,8 28,16 36,16" />
+    <!-- E -->
+    <polygon points="56,32 48,28 48,36" />
+    <!-- S -->
+    <polygon points="32,56 28,48 36,48" />
+    <!-- W -->
+    <polygon points="8,32 16,28 16,36" />
+  </g>
+</svg>
