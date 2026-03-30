@@ -48,6 +48,34 @@ function env(key: string): string | undefined {
   return maybeProcess.process?.env?.[key];
 }
 
+let cachedAllowedEmailDomainsRaw: string | null = null;
+let cachedAllowedEmailDomains = new Set<string>();
+
+function getEmailDomain(email: string): string | null {
+  const atIndex = email.lastIndexOf("@");
+  if (atIndex <= 0 || atIndex >= email.length - 1) return null;
+  return email.slice(atIndex + 1).toLowerCase();
+}
+
+function getAllowedEmailDomains(): Set<string> {
+  const raw = env("ALLOWED_EMAIL_DOMAINS")?.trim() ?? "";
+  if (raw === cachedAllowedEmailDomainsRaw) return cachedAllowedEmailDomains;
+  cachedAllowedEmailDomainsRaw = raw;
+  cachedAllowedEmailDomains = new Set(
+    raw
+      .split(",")
+      .map((entry) => entry.trim().toLowerCase())
+      .filter(Boolean),
+  );
+  return cachedAllowedEmailDomains;
+}
+
+function isAllowedEmailDomain(email: string): boolean {
+  const domain = getEmailDomain(email);
+  if (!domain) return false;
+  return getAllowedEmailDomains().has(domain);
+}
+
 const PRIVACY_NOTICE_VERSION = "2026-03-30";
 const DEFAULT_SHARE_EXPIRY_DAYS = 30;
 const DEFAULT_RETENTION_DAYS = 365;
@@ -2150,7 +2178,7 @@ async function handleCouncilInferScope(request: Request) {
   const user = await getUserFromRequest(request);
   if (!user) return json({ error: "Unauthorized" }, 401);
   const parsed = parseCouncilInferScopeRequest(await request.json());
-  if (!parsed.ok) return json({ error: parsed.error }, 400);
+  if ("error" in parsed) return json({ error: parsed.error }, 400);
 
   const deterministic = inferCouncilScopeDeterministic(parsed.data.text);
   if (deterministic.kind === "postcode") {
@@ -2197,7 +2225,7 @@ async function handleCouncilCreate(request: Request) {
   const user = await getUserFromRequest(request);
   if (!user) return json({ error: "Unauthorized" }, 401);
   const parsed = parseCouncilCreateRequest(await request.json());
-  if (!parsed.ok) return json({ error: parsed.error }, 400);
+  if ("error" in parsed) return json({ error: parsed.error }, 400);
 
   const supabase = getSupabaseAdmin();
   const { data: conversation } = await supabase
@@ -2303,7 +2331,7 @@ async function handleCouncilFollowUp(request: Request) {
   const user = await getUserFromRequest(request);
   if (!user) return json({ error: "Unauthorized" }, 401);
   const parsed = parseCouncilFollowUpRequest(await request.json());
-  if (!parsed.ok) return json({ error: parsed.error }, 400);
+  if ("error" in parsed) return json({ error: parsed.error }, 400);
   const supabase = getSupabaseAdmin();
 
   const { data: council, error: councilError } = await supabase
@@ -2653,6 +2681,12 @@ async function handleCheckEmail(request: Request) {
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase.from("uk_chat_email_gate").select("email").eq("email", normalizedEmail).maybeSingle();
   if (error) return json({ error: "Unable to verify email access right now" }, 500);
+  if (!data && isAllowedEmailDomain(normalizedEmail)) {
+    return json({
+      allowed: true,
+      message: "Email recognized via your organization domain. Continue to sign in for first-time setup.",
+    });
+  }
   if (!data) return json({ allowed: false, message: "Email not found. Ask Jethro to get you access." }, 404);
 
   return json({
@@ -2678,10 +2712,26 @@ async function handleRecognizedSignIn(request: Request) {
       .maybeSingle();
     if (gateError) return json({ error: "Unable to verify email access right now" }, 500);
     if (!gateRow) {
-      return json({
-        allowed: false,
-        message: "Email not found. Ask Jethro to get you access.",
-      });
+      if (!isAllowedEmailDomain(normalizedEmail)) {
+        return json({
+          allowed: false,
+          message: "Email not found. Ask Jethro to get you access.",
+        });
+      }
+      const domain = getEmailDomain(normalizedEmail);
+      try {
+        await onboardUser({ email: normalizedEmail, sendEmail: false });
+        logWarn("[api/auth] Auto-provisioned user via domain allowlist", {
+          email: normalizedEmail,
+          domain,
+        });
+      } catch (error) {
+        logError("[api/auth] Domain allowlist auto-provisioning failed", {
+          email: normalizedEmail,
+          domain,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
   }
 
