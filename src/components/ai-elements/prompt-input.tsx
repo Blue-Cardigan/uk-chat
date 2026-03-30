@@ -18,6 +18,7 @@ const ACCEPTED_DOCUMENT_MIME_TYPES = new Set([
   "application/octet-stream",
 ]);
 const MAX_DOCUMENT_SIZE_BYTES = 10 * 1024 * 1024;
+const UK_POSTCODE_REGEX = /\b([A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2})\b/i;
 
 export type PromptInputSubmitPayload = {
   text: string;
@@ -53,6 +54,26 @@ function validateDocument(file: File): string | null {
   return null;
 }
 
+function detectCouncilScopeHint(text: string): string {
+  const compact = text.replace(/\s+/g, " ").trim();
+  if (!compact) return "Detected scope: National MPs council (default)";
+  const postcodeMatch = compact.match(UK_POSTCODE_REGEX);
+  if (postcodeMatch?.[1]) {
+    const postcode = postcodeMatch[1].replace(/\s+/g, "").toUpperCase();
+    return `Detected scope: Local council (postcode ${postcode})`;
+  }
+  const constituencyMatch = compact.match(
+    /\b(?:constituency|in|for|around|near)\s+([a-z0-9][a-z0-9\s'&-]{2,60}?)(?:\b(?:for|on|about|regarding|with|where|which)\b|[,.!?;]|$)/i,
+  );
+  if (constituencyMatch?.[1]) {
+    const area = constituencyMatch[1].trim().replace(/[,.!?;]+$/, "");
+    if (area && !["my area", "the area", "my constituency", "the constituency"].includes(area.toLowerCase())) {
+      return `Detected scope: Local council (area ${area})`;
+    }
+  }
+  return "Detected scope: National MPs council (default)";
+}
+
 export function PromptInput({
   onSubmit,
   onCouncilModeChange,
@@ -71,7 +92,7 @@ export function PromptInput({
   onToolsQueryChange,
   onLoadMoreTools,
 }: {
-  onSubmit: (payload: PromptInputSubmitPayload) => void;
+  onSubmit: (payload: PromptInputSubmitPayload) => void | Promise<boolean | void>;
   onCouncilModeChange?: (enabled: boolean) => void;
   isLoading?: boolean;
   placeholder?: string;
@@ -207,10 +228,19 @@ export function PromptInput({
     modelOptionRefs.current[nextIndex]?.focus();
   }
 
-  function handleSubmit() {
+  async function handleSubmit() {
     const trimmed = value.trim();
     if (!trimmed) return;
-    onSubmit({ text: trimmed, documents: selectedDocuments, mode: councilModeEnabled ? "council" : "chat" });
+    try {
+      const result = await onSubmit({
+        text: trimmed,
+        documents: selectedDocuments,
+        mode: councilModeEnabled ? "council" : "chat",
+      });
+      if (result === false) return;
+    } catch {
+      return;
+    }
     setValue("");
     setSelectedDocuments([]);
     setAttachmentError(null);
@@ -305,7 +335,7 @@ export function PromptInput({
       className="rounded-3xl border border-(--color-border) bg-[color-mix(in_oklch,var(--color-card)_82%,var(--color-background)_18%)] p-3 shadow-[0_10px_30px_-24px_rgba(0,0,0,0.95)] transition-colors focus-within:border-[color-mix(in_oklch,var(--color-primary)_26%,var(--color-border)_74%)]"
       onSubmit={(event) => {
         event.preventDefault();
-        handleSubmit();
+        void handleSubmit();
       }}
     >
       {selectedTools.length > 0 ? (
@@ -460,11 +490,14 @@ export function PromptInput({
           }
           if (event.key === "Enter" && !event.shiftKey) {
             event.preventDefault();
-            handleSubmit();
+            void handleSubmit();
           }
         }}
         className="min-h-[52px] resize-none border-0 bg-transparent px-1 py-1.5 text-[15px] leading-relaxed placeholder:text-(--color-muted-foreground) focus:ring-0 md:min-h-[86px]"
       />
+      {councilModeEnabled ? (
+        <p className="mt-1 text-xs text-(--color-muted-foreground)">{detectCouncilScopeHint(value)}</p>
+      ) : null}
       {attachmentError ? <p className="mt-1 text-xs text-(--color-muted-foreground)">{attachmentError}</p> : null}
       <div className="mt-2 flex items-center justify-between">
         <input

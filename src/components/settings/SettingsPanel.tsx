@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { Copy, Download, LogOut } from "lucide-react";
+import { Copy, Download, LogOut, Trash2 } from "lucide-react";
+import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/primitives";
 import type { ThemePreference } from "@/lib/types";
 
@@ -17,12 +18,19 @@ type ModelUsageAllResponse = {
   models?: ModelUsage[];
 };
 
+type PrivacyConsentResponse = {
+  privacyNoticeVersion?: string | null;
+  aiProcessingAcknowledgedAt?: string | null;
+  currentVersion?: string;
+};
+
 export function SettingsPanel({
   theme,
   onThemeChange,
   authToken,
   mcpToken,
   onExportChats,
+  onDeleteAccount,
   onSignOut,
 }: {
   theme: ThemePreference;
@@ -30,12 +38,16 @@ export function SettingsPanel({
   authToken: string | null;
   mcpToken: string | null;
   onExportChats: () => Promise<void>;
+  onDeleteAccount: () => Promise<void>;
   onSignOut: () => Promise<void>;
 }) {
   const masked = mcpToken ? `${mcpToken.slice(0, 6)}...${mcpToken.slice(-4)}` : "No token yet";
   const [actionStatus, setActionStatus] = useState<string | null>(null);
   const [isExporting, setIsExporting] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
+  const [privacyConsent, setPrivacyConsent] = useState<PrivacyConsentResponse | null>(null);
+  const [consentPending, setConsentPending] = useState(false);
   const [usageRows, setUsageRows] = useState<ModelUsage[]>([]);
   const [usageLoading, setUsageLoading] = useState(false);
   const [usageError, setUsageError] = useState<string | null>(null);
@@ -78,6 +90,26 @@ export function SettingsPanel({
     };
   }, [authToken]);
 
+  useEffect(() => {
+    let active = true;
+    async function loadConsent() {
+      if (!authToken) {
+        if (active) setPrivacyConsent(null);
+        return;
+      }
+      const response = await fetch("/api/privacy/consent", {
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      if (!active || !response.ok) return;
+      const payload = (await response.json()) as PrivacyConsentResponse;
+      if (active) setPrivacyConsent(payload);
+    }
+    void loadConsent();
+    return () => {
+      active = false;
+    };
+  }, [authToken]);
+
   const orderedUsageRows = useMemo(() => {
     return [...usageRows].sort((a, b) => b.dailyLimit - a.dailyLimit);
   }, [usageRows]);
@@ -106,6 +138,21 @@ export function SettingsPanel({
     }
   }
 
+  async function handleDeleteAccount() {
+    if (typeof window !== "undefined") {
+      const confirmed = window.confirm("Delete your account and all associated data? This cannot be undone.");
+      if (!confirmed) return;
+    }
+    setActionStatus(null);
+    setIsDeletingAccount(true);
+    try {
+      await onDeleteAccount();
+    } catch {
+      setActionStatus("Could not delete your account right now.");
+      setIsDeletingAccount(false);
+    }
+  }
+
   async function handleCopyMcpToken() {
     if (!mcpToken || typeof navigator === "undefined") return;
     setActionStatus(null);
@@ -114,6 +161,33 @@ export function SettingsPanel({
       setActionStatus("MCP token copied.");
     } catch {
       setActionStatus("Could not copy token right now.");
+    }
+  }
+
+  async function acknowledgePrivacyNotice() {
+    if (!authToken) return;
+    setConsentPending(true);
+    setActionStatus(null);
+    try {
+      const response = await fetch("/api/privacy/consent", {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${authToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          acknowledgeAiProcessing: true,
+          acknowledgeSharingWarning: true,
+        }),
+      });
+      if (!response.ok) throw new Error("Failed");
+      const payload = (await response.json()) as PrivacyConsentResponse;
+      setPrivacyConsent(payload);
+      setActionStatus("Privacy acknowledgement saved.");
+    } catch {
+      setActionStatus("Could not save privacy acknowledgement.");
+    } finally {
+      setConsentPending(false);
     }
   }
 
@@ -143,6 +217,25 @@ export function SettingsPanel({
       </header>
 
       <div className="space-y-5 rounded-xl border border-(--color-border) bg-(--color-card)/65 p-4">
+        <section className="space-y-2">
+          <h4 className="text-xs font-semibold uppercase tracking-wide text-(--color-muted-foreground)">Privacy</h4>
+          <p className="text-xs text-(--color-muted-foreground)">
+            Chat and document content is processed by model/tool providers to answer your prompts.
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <Link to="/privacy" className="text-xs underline text-(--color-primary)">
+              Read Privacy Notice
+            </Link>
+            {privacyConsent?.aiProcessingAcknowledgedAt ? (
+              <span className="text-xs text-(--color-muted-foreground)">Acknowledged</span>
+            ) : (
+              <Button type="button" variant="secondary" className="h-7 text-xs" onClick={() => void acknowledgePrivacyNotice()} disabled={consentPending}>
+                {consentPending ? "Saving..." : "I understand"}
+              </Button>
+            )}
+          </div>
+        </section>
+
         <section className="space-y-3">
           <h4 className="text-xs font-semibold uppercase tracking-wide text-(--color-muted-foreground)">Appearance</h4>
           <div className="inline-flex rounded-lg border border-(--color-border) bg-(--color-background) p-1">
@@ -229,14 +322,21 @@ export function SettingsPanel({
 
         <section className="space-y-2 border-t border-(--color-border) pt-4">
           <h4 className="text-xs font-semibold uppercase tracking-wide text-(--color-muted-foreground)">Account</h4>
+          <p className="text-xs text-(--color-muted-foreground)">
+            Exports include your profile, chats, councils, usage data, and consent records.
+          </p>
           <div className="flex flex-wrap gap-2">
-            <Button variant="secondary" onClick={() => void handleExportChats()} disabled={isExporting || isSigningOut}>
+            <Button variant="secondary" onClick={() => void handleExportChats()} disabled={isExporting || isSigningOut || isDeletingAccount}>
               <Download className="mr-2 h-4 w-4" />
               {isExporting ? "Exporting..." : "Export chats"}
             </Button>
-            <Button variant="accent" onClick={() => void handleSignOut()} disabled={isSigningOut || isExporting}>
+            <Button variant="accent" onClick={() => void handleSignOut()} disabled={isSigningOut || isExporting || isDeletingAccount}>
               <LogOut className="mr-2 h-4 w-4" />
               {isSigningOut ? "Signing out..." : "Sign out"}
+            </Button>
+            <Button variant="ghost" onClick={() => void handleDeleteAccount()} disabled={isSigningOut || isExporting || isDeletingAccount}>
+              <Trash2 className="mr-2 h-4 w-4 text-(--color-accent)" />
+              {isDeletingAccount ? "Deleting..." : "Delete account"}
             </Button>
           </div>
         </section>

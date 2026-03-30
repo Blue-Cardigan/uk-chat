@@ -19,6 +19,7 @@ export function AppShell({
   onRenameConversation,
   onStarConversation,
   onShareConversation,
+  onUnshareConversation,
   onConversationMissing,
   settingsContent,
 }: {
@@ -31,7 +32,8 @@ export function AppShell({
   onDeleteConversation: (id: string) => void;
   onRenameConversation: (id: string, title: string) => void;
   onStarConversation: (id: string, starred: boolean) => void;
-  onShareConversation: (id: string) => Promise<string | null>;
+  onShareConversation: (id: string, enabled?: boolean) => Promise<string | null>;
+  onUnshareConversation: (id: string) => Promise<void>;
   onConversationMissing: (id: string) => Promise<void> | void;
   settingsContent: React.ReactNode;
 }) {
@@ -121,6 +123,11 @@ export function AppShell({
                   return;
                 }
                 setShareModalConversation(conversation);
+              }}
+              onUnshare={(conversation) => {
+                void onUnshareConversation(conversation.id);
+                setShareNotice("Sharing disabled for this conversation.");
+                window.setTimeout(() => setShareNotice(null), 3000);
               }}
               onCollapse={() => setSidebarOpen(false)}
               onToggleSettings={() => setSettingsOpen((v) => !v)}
@@ -214,7 +221,7 @@ export function AppShell({
             <div className="w-full max-w-md rounded-lg border border-(--color-border) bg-(--color-card) p-4 shadow-xl">
               <h3 className="text-sm font-semibold">Share conversation publicly?</h3>
               <p className="mt-2 text-sm text-(--color-muted-foreground)">
-                Anyone with the link will be able to view this conversation and its artifacts.
+                Anyone with the link will be able to view this conversation and its artifacts. The shared link expires automatically and can be revoked from the chat menu.
               </p>
               <div className="mt-4 flex justify-end gap-2">
                 <Button type="button" variant="ghost" onClick={() => setShareModalConversation(null)}>

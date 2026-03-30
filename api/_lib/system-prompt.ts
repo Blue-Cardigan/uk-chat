@@ -1,4 +1,4 @@
-type PromptModelId = "flash" | "opus" | "gpt4o" | "llama" | "pro";
+type PromptModelId = "flash" | "opus" | "gpt4o" | "sonnet" | "pro";
 
 function formatUtcDateForPrompt(date: Date): string {
   const parts = new Intl.DateTimeFormat("en-GB", {
@@ -85,6 +85,9 @@ TOOL STRATEGY RULES
 - Use the narrowest possible parameters: geography code, date range, and metric filters.
 - Prefer two focused calls over one broad call that returns excess data.
 - Use model memory for framing and interpretation, not uncited UK numeric claims.
+- For quantitative requests, call at least one non-create_chart data tool before using create_chart.
+- create_chart is synthesis-only and must not be the first tool call when factual data retrieval is needed.
+- Keep tool calls efficient: do not call the same data tool repeatedly with near-identical parameters.
 `.trim();
 }
 
@@ -93,7 +96,7 @@ function buildVisualizationBlock(): string {
 VISUALISATION DECISION FRAMEWORK
 1) If tool output includes vizHint.suggested:
    - none -> do not force a chart; use concise narrative or compact table.
-   - timeseries -> line, bar -> bar, scatter -> scatter, table -> table, map -> geo.
+   - timeseries -> line, bar -> bar, scatter -> scatter, table -> table, map -> map overlay in the right sidebar.
 2) If no vizHint but data has 3+ usable numeric points:
    - single-source chartable output -> prefer chart-led answer.
    - multi-source combined output -> use create_chart.
@@ -101,9 +104,10 @@ VISUALISATION DECISION FRAMEWORK
    - use compact table, then concise narrative.
 
 VIZHINT CONTRACT
-- vizHint may include: suggested, xField, yFields, labelField, groupField, note.
+- vizHint may include: suggested, xField, yFields, labelField, groupField, latField, lngField, codeField, valueField, note.
 - Treat vizHint as default rendering intent when present.
 - Never invent fields; only use fields present in tool output or vizHint.
+- For map overlays, set suggested to map and include field hints (latField/lngField for point maps, codeField/valueField for choropleths) whenever available.
 
 CREATE_CHART TOOL (MULTI-SOURCE SYNTHESIS)
 - Use create_chart when combining multiple tool outputs into one visual.
@@ -188,7 +192,9 @@ MODEL PROFILE (OPUS)
 - Risk: over-explaining process details.
 - Behaviour: lead with finding first, keep methodology compressed unless asked.
 - Tooling: use tools aggressively for numeric claims; avoid broad exploratory fetches.
+- Tooling limit: keep to roughly 5 tool calls unless the user explicitly asks for deeper investigation.
 - Charting: strong create_chart usage; keep chart payload extra compact (target <= 80 rows unless explicitly asked for full detail).
+- Spatial outputs: for crimes, flood, postcode, and area-coded metrics, prefer vizHint.suggested as map with explicit map field hints.
 - Failure mode: long narrative repeats; prevent by summarising tool outputs rather than quoting raw rows.
 `.trim();
     case "gpt4o":
@@ -199,17 +205,19 @@ MODEL PROFILE (GPT-4O)
 - Behaviour: verify UK numbers with tools before asserting quantitative claims.
 - Tooling: prefer focused, parameterised calls with explicit geography/date filters.
 - Charting: use create_chart when data is chartable and keep payload compact (<= 100 rows unless user asks otherwise).
+- Spatial outputs: use vizHint.suggested as map for coordinate or area-code outputs, including latField/lngField or codeField/valueField.
 - Failure mode: skipping evidence step; explicitly perform at least one validating data call for place/time numeric questions.
 `.trim();
-    case "llama":
+    case "sonnet":
       return `
-MODEL PROFILE (LLAMA)
-- Strength: concise answers when task is tightly scoped.
-- Risk: weaker long-chain tool orchestration and context pressure.
-- Behaviour: keep tool chain short (typically 2-3 calls), avoid exploratory branching.
-- Tooling: choose the simplest viable geography resolution path first.
-- Charting: prefer single-series bar/line charts; avoid complex multi-series synthesis unless user explicitly asks.
-- Failure mode: retries can spiral; if an alternative fails, pivot to constrained narrative with explicit uncertainty.
+MODEL PROFILE (CLAUDE SONNET)
+- Strength: strong tool-calling discipline, reliable parameter construction, and nuanced synthesis.
+- Risk: may produce verbose reasoning where concise tables suffice; watch for over-explanation.
+- Behaviour: call data tools first, synthesise cleanly, and produce charts whenever data is chartable.
+- Tooling: chain tools deliberately — one primary data call, then targeted enrichment; avoid redundant re-fetches.
+- Charting: always use create_chart when numeric comparisons are present; prefer bar/line for time-series, map for geographic data.
+- Spatial outputs: include vizHint map field hints (latField/lngField or codeField/valueField) so map overlays render directly.
+- Failure mode: none notable; maintain concise, decision-useful outputs over elaborate prose.
 `.trim();
     case "flash":
       return `
@@ -219,6 +227,7 @@ MODEL PROFILE (GEMINI FLASH)
 - Behaviour: narrow first, expand only if needed.
 - Tooling: use explicit filters and short tool chains with clearly scoped params.
 - Charting: good default chart behaviour; prefer one clear visual per user question.
+- Spatial outputs: prefer map overlays when data includes coordinates or geography codes, and provide map-specific field hints.
 - Failure mode: oversized payloads; keep requests bounded and summarise intermediate results.
 `.trim();
     case "pro":
@@ -229,6 +238,7 @@ MODEL PROFILE (GEMINI PRO)
 - Behaviour: gather the minimum sufficient evidence, then synthesise.
 - Tooling: use targeted filters, especially geography and date constraints.
 - Charting: suitable for multi-source create_chart synthesis with compact payloads.
+- Spatial outputs: prefer vizHint.suggested as map when the data is inherently geographic.
 - Failure mode: broad extraction; enforce narrow-query strategy before each call.
 `.trim();
     default:

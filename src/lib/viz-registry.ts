@@ -14,7 +14,7 @@ import { ContractsList, CouncillorDirectory, DataGrid, PlanningTimeline, Traffic
 import { buildChartSpecFromVizHint, isChartSpec } from "@/lib/viz-data-parser";
 import type { VizPayload } from "@/lib/types";
 
-const withPayload = (Component: React.ComponentType<unknown>): React.ComponentType<{ payload: VizPayload }> =>
+const withPayload = <P extends object>(Component: React.ComponentType<P>): React.ComponentType<{ payload: VizPayload }> =>
   Component as unknown as React.ComponentType<{ payload: VizPayload }>;
 
 export const toolToVisualization: Record<string, React.ComponentType<{ payload: VizPayload }>> = {
@@ -94,6 +94,8 @@ function hasChartLikeShape(value: unknown): boolean {
   return false;
 }
 
+const MAP_TOOL_ALLOWLIST = new Set(["ons_fetchObservations", "nomis_fetchTable", "police_fetchCrimes", "ea_flood", "postcodes_lookup"]);
+
 export function isChartArtifactCandidate(toolName: string, data: unknown): boolean {
   if (normalizeVizToolName(toolName) === "create_chart" && isChartSpec(data)) return true;
   if (buildChartSpecFromVizHint(data)) return true;
@@ -103,5 +105,6 @@ export function isChartArtifactCandidate(toolName: string, data: unknown): boole
 export function isVizArtifactCandidate(toolName: string, data: unknown): boolean {
   const normalizedName = normalizeVizToolName(toolName);
   if (normalizedName === "council_deliberation") return true;
+  if (MAP_TOOL_ALLOWLIST.has(normalizedName)) return true;
   return isChartArtifactCandidate(toolName, data);
 }

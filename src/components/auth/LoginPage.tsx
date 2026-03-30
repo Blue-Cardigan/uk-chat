@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Navigate } from "react-router-dom";
+import { Link, Navigate } from "react-router-dom";
 import { ArrowRight } from "lucide-react";
 import { Input, Button, Card } from "@/components/ui/primitives";
 import { useAuth } from "@/lib/auth";
@@ -96,6 +96,15 @@ export function LoginPage() {
               Jethro
             </a>{" "}
             to get access.
+          </p>
+
+          <p className="text-xs text-(--color-muted-foreground)">
+            By signing in, you acknowledge that your prompts and uploaded document extracts are processed by our model/tool providers to generate
+            responses. Read the{" "}
+            <Link to="/privacy" className="underline">
+              Privacy Notice
+            </Link>
+            .
           </p>
 
           {status ? <p className={`text-xs ${statusToneClass}`}>{status}</p> : null}

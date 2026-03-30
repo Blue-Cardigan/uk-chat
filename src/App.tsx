@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import { AppShell } from "@/components/layout/AppShell";
 import { LoginPage } from "@/components/auth/LoginPage";
 import { AuthCallbackPage } from "@/components/auth/AuthCallbackPage";
+import { PrivacyNoticePage } from "@/components/legal/PrivacyNoticePage";
 import { AdminPanel } from "@/components/auth/AdminPanel";
 import { SharedChatView } from "@/components/chat/SharedChatView";
 import { SettingsPanel } from "@/components/settings/SettingsPanel";
@@ -10,7 +11,6 @@ import { Card } from "@/components/ui/primitives";
 import { useAuth } from "@/lib/auth";
 import { useAppStore } from "@/lib/store";
 import type { ChatConversation } from "@/lib/types";
-import { supabase } from "@/lib/supabase";
 
 async function safeJson<T>(response: Response): Promise<T | null> {
   const text = await response.text();
@@ -51,6 +51,7 @@ function ProtectedApp() {
       starred: conversation.starred ?? false,
       is_public: conversation.is_public ?? false,
       share_token: conversation.share_token ?? null,
+      share_expires_at: conversation.share_expires_at ?? null,
     }));
     setConversations(data);
 
@@ -68,43 +69,23 @@ function ProtectedApp() {
   }, [theme]);
 
   useEffect(() => {
-    if (!session?.user.id) return;
-    void supabase
-      .from("uk_chat_profiles")
-      .upsert({ id: session.user.id, email: session.user.email?.toLowerCase() ?? null, display_name: session.user.email ?? null }, { onConflict: "id" });
+    if (!session?.access_token) return;
     void loadConversations().catch(() => {
       setConversations([]);
       setActiveConversationId(null);
     });
-
-    supabase
-      .from("uk_chat_profiles")
-      .select("mcp_token")
-      .eq("id", session.user.id)
-      .maybeSingle()
-      .then(async ({ data, error }) => {
-        if (error) return;
-        const email = session.user.email?.toLowerCase();
-        let resolvedToken = (data?.mcp_token as string | null | undefined) ?? null;
-        if (email) {
-          const { data: gate } = await supabase
-            .from("uk_chat_email_gate")
-            .select("pending_mcp_token")
-            .eq("email", email)
-            .maybeSingle();
-          const pendingToken = gate?.pending_mcp_token as string | null | undefined;
-          if (pendingToken && pendingToken !== resolvedToken) {
-            resolvedToken = pendingToken;
-            await supabase.from("uk_chat_profiles").update({ mcp_token: pendingToken }).eq("id", session.user.id);
-            await supabase
-              .from("uk_chat_email_gate")
-              .update({ claimed_at: new Date().toISOString() })
-              .eq("email", email);
-          }
-        }
-        if (resolvedToken) setMcpToken(resolvedToken);
+    void (async () => {
+      const response = await fetch("/api/account/profile", {
+        headers: { Authorization: `Bearer ${session.access_token}` },
       });
-  }, [loadConversations, session?.user.id, setActiveConversationId, setConversations]);
+      if (!response.ok) {
+        setMcpToken(null);
+        return;
+      }
+      const payload = (await safeJson<{ mcpToken?: string | null }>(response)) ?? {};
+      setMcpToken(payload.mcpToken ?? null);
+    })();
+  }, [loadConversations, session?.access_token, setActiveConversationId, setConversations]);
 
   const titleForNewConversation = useMemo(() => `New chat ${conversations.length + 1}`, [conversations.length]);
 
@@ -122,6 +103,7 @@ function ProtectedApp() {
       starred: created.starred ?? false,
       is_public: created.is_public ?? false,
       share_token: created.share_token ?? null,
+      share_expires_at: created.share_expires_at ?? null,
     };
     const currentConversations = useAppStore.getState().conversations;
     setConversations([normalizedCreated, ...currentConversations]);
@@ -172,10 +154,14 @@ function ProtectedApp() {
     setConversations(next);
   }
 
-  async function shareConversation(id: string) {
+  async function shareConversation(id: string, enabled = true) {
+    const headers: Record<string, string> = { Authorization: `Bearer ${session?.access_token ?? ""}` };
+    const body = enabled ? undefined : JSON.stringify({ enabled: false });
+    if (!enabled) headers["Content-Type"] = "application/json";
     const response = await fetch(`/api/conversations/${id}/share`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${session?.access_token ?? ""}` },
+      method: enabled ? "POST" : "PATCH",
+      headers,
+      body,
     });
     if (!response.ok) return null;
     const payload = await safeJson<{ conversation?: ChatConversation; shareUrl?: string }>(response);
@@ -189,8 +175,9 @@ function ProtectedApp() {
         conversation.id === id
           ? {
               ...conversation,
-              is_public: sharedConversation.is_public ?? true,
-              share_token: sharedConversation.share_token ?? conversation.share_token ?? null,
+              is_public: sharedConversation.is_public ?? false,
+              share_token: sharedConversation.share_token ?? null,
+              share_expires_at: sharedConversation.share_expires_at ?? null,
             }
           : conversation,
       ),
@@ -198,29 +185,17 @@ function ProtectedApp() {
     return shareUrl;
   }
 
+  async function unshareConversation(id: string) {
+    await shareConversation(id, false);
+  }
+
   async function exportChats() {
     if (!session?.access_token) throw new Error("Missing auth token");
-    const exportConversations = await Promise.all(
-      conversations.map(async (conversation) => {
-        const response = await fetch(`/api/conversations/${conversation.id}`, {
-          headers: { Authorization: `Bearer ${session.access_token}` },
-        });
-        if (!response.ok) {
-          return { ...conversation, messages: [], export_error: `Failed to load messages (${response.status})` };
-        }
-        const payload = (await safeJson<{ messages?: unknown[] }>(response)) ?? { messages: [] };
-        return { ...conversation, messages: payload.messages ?? [] };
-      }),
-    );
-
-    const exportPayload = {
-      exportedAt: new Date().toISOString(),
-      user: {
-        id: session.user.id,
-        email: session.user.email ?? null,
-      },
-      conversations: exportConversations,
-    };
+    const response = await fetch("/api/account/export", {
+      headers: { Authorization: `Bearer ${session.access_token}` },
+    });
+    if (!response.ok) throw new Error(`Export failed (${response.status})`);
+    const exportPayload = await response.json();
 
     const blob = new Blob([JSON.stringify(exportPayload, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -232,6 +207,16 @@ function ProtectedApp() {
     link.click();
     link.remove();
     URL.revokeObjectURL(url);
+  }
+
+  async function deleteAccount() {
+    if (!session?.access_token) throw new Error("Missing auth token");
+    const response = await fetch("/api/account", {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${session.access_token}` },
+    });
+    if (!response.ok) throw new Error("Account deletion failed");
+    await signOut();
   }
 
   const handleConversationMissing = useCallback(
@@ -261,6 +246,7 @@ function ProtectedApp() {
     authToken: session?.access_token ?? null,
     mcpToken,
     onExportChats: exportChats,
+    onDeleteAccount: deleteAccount,
     onSignOut: signOut,
   } as const;
 
@@ -283,6 +269,7 @@ function ProtectedApp() {
       onRenameConversation={renameConversation}
       onStarConversation={starConversation}
       onShareConversation={shareConversation}
+      onUnshareConversation={unshareConversation}
       onConversationMissing={handleConversationMissing}
       settingsContent={settingsContent}
     />
@@ -300,6 +287,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/privacy" element={<PrivacyNoticePage />} />
       <Route path="/auth/callback" element={<AuthCallbackPage />} />
       <Route path="/shared/:token" element={<SharedChatView />} />
       <Route

@@ -1,4 +1,7 @@
 {
+  "crons": [
+    { "path": "/api/cron/data-retention", "schedule": "0 3 * * *" }
+  ],
   "rewrites": [
     { "source": "/api", "destination": "/api" },
     { "source": "/api/(.*)", "destination": "/api?route=$1" },

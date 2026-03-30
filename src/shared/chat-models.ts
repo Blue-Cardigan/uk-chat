@@ -1,6 +1,6 @@
 export const CHAT_SUPPORT_CONTACT = "contact jethro <jethro@explorethekingdom.co.uk> for more";
 
-export type ChatModelId = "flash" | "opus" | "gpt4o" | "llama" | "pro";
+export type ChatModelId = "flash" | "opus" | "gpt" | "sonnet" | "pro";
 
 export type ChatModelConfig = {
   id: ChatModelId;
@@ -23,21 +23,21 @@ export const CHAT_MODEL_CONFIGS: ChatModelConfig[] = [
     dailyLimit: 50,
   },
   {
-    id: "gpt4o",
-    label: "GPT-4o",
-    providerModel: "openai/gpt-4o",
+    id: "gpt",
+    label: "GPT-5.4",
+    providerModel: "openai/gpt-5.4",
     dailyLimit: 50,
   },
   {
-    id: "llama",
-    label: "Meta Llama",
-    providerModel: "meta-llama/llama-3.3-70b-instruct",
-    dailyLimit: 15,
+    id: "sonnet",
+    label: "Claude Sonnet",
+    providerModel: "anthropic/claude-sonnet-4.6",
+    dailyLimit: 50,
   },
   {
     id: "pro",
     label: "Gemini Pro",
-    providerModel: "google/gemini-3.1-pro-preview",
+    providerModel: "google/gemini-2.5-pro",
     dailyLimit: 10,
   },
 ];

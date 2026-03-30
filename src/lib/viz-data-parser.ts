@@ -8,8 +8,38 @@ type VizHint = {
   yFields?: string[];
   labelField?: string;
   groupField?: string;
+  latField?: string;
+  lngField?: string;
+  codeField?: string;
+  valueField?: string;
   note?: string;
 };
+
+export type OverlayPoint = {
+  lng: number;
+  lat: number;
+  label?: string;
+  value?: number;
+  category?: string;
+};
+
+export type ChoroplethEntry = {
+  code: string;
+  value: number;
+  label?: string;
+};
+
+export type FocusPoint = {
+  lng: number;
+  lat: number;
+  label?: string;
+  zoom?: number;
+};
+
+export type MapOverlayData =
+  | { kind: "choropleth"; entries: ChoroplethEntry[]; codeField: string; valueField: string }
+  | { kind: "points"; items: OverlayPoint[] }
+  | { kind: "focus"; point: FocusPoint };
 
 function isRecord(value: unknown): value is JsonRecord {
   return typeof value === "object" && value !== null;
@@ -229,8 +259,6 @@ function mapSuggestedTypeToChartType(suggested: string | undefined): ChartSpec["
       return "scatter";
     case "table":
       return "table";
-    case "map":
-      return "table";
     default:
       return "line";
   }
@@ -246,6 +274,168 @@ function dedupeStrings(values: Array<string | undefined>): string[] {
   return Array.from(new Set(values.filter((value): value is string => Boolean(value && value.trim()))));
 }
 
+function normalizeFieldName(value: string): string {
+  return value.replace(/[^a-z0-9]+/gi, "").toLowerCase();
+}
+
+function pickFieldByAliases(row: Record<string, string>, aliases: string[], preferred?: string): string | null {
+  if (preferred && preferred in row) return preferred;
+  const byExact = aliases.find((alias) => alias in row);
+  if (byExact) return byExact;
+  const normalizedAliases = aliases.map((alias) => normalizeFieldName(alias));
+  const entries = Object.keys(row).map((key) => [key, normalizeFieldName(key)] as const);
+  for (const alias of normalizedAliases) {
+    const hit = entries.find(([, normalized]) => normalized === alias);
+    if (hit) return hit[0];
+  }
+  return null;
+}
+
+function parseRowsFromNormalizedToolOutput(normalized: JsonRecord): Record<string, string>[] {
+  const payload = isRecord(normalized.payload) ? normalized.payload : {};
+  return parseMCPPayload({
+    format: typeof payload.format === "string" ? payload.format : undefined,
+    csv: typeof payload.csv === "string" ? payload.csv : undefined,
+    body: typeof payload.body === "string" ? payload.body : undefined,
+    rows: payload.rows,
+    records: payload.records,
+    data: payload.data,
+  });
+}
+
+function toVizHint(value: unknown): VizHint {
+  return isRecord(value) ? (value as VizHint) : {};
+}
+
+function pickNumericField(rows: Record<string, string>[], skipFields: Set<string>, preferred?: string): string | null {
+  const first = rows[0];
+  if (!first) return null;
+  if (preferred && preferred in first) return preferred;
+  for (const key of Object.keys(first)) {
+    if (skipFields.has(key)) continue;
+    const numericCount = rows.reduce((count, row) => (toNumber(row[key]) !== null ? count + 1 : count), 0);
+    if (numericCount > 0) return key;
+  }
+  return null;
+}
+
+function extractPoints(rows: Record<string, string>[], vizHint: VizHint): OverlayPoint[] {
+  const first = rows[0];
+  if (!first) return [];
+  const latField = pickFieldByAliases(first, ["lat", "latitude", "y"], vizHint.latField);
+  const lngField = pickFieldByAliases(first, ["lng", "lon", "long", "longitude", "x"], vizHint.lngField);
+  if (!latField || !lngField) return [];
+  const labelField = pickFieldByAliases(first, ["label", "name", "postcode", "location", "area"], vizHint.labelField);
+  const categoryField = pickFieldByAliases(
+    first,
+    ["category", "type", "severity", "risk", "warninglevel", "warning_level"],
+    vizHint.groupField,
+  );
+  const valueField = pickFieldByAliases(first, ["value", "count", "score", "amount", "observation"], vizHint.valueField);
+
+  const points: OverlayPoint[] = [];
+  for (const row of rows) {
+    const lat = toNumber(row[latField]);
+    const lng = toNumber(row[lngField]);
+    if (lat === null || lng === null) continue;
+    const value = valueField ? toNumber(row[valueField]) : null;
+    const label = labelField ? String(row[labelField] ?? "").trim() : "";
+    const category = categoryField ? String(row[categoryField] ?? "").trim() : "";
+    points.push({
+      lat,
+      lng,
+      label: label || undefined,
+      category: category || undefined,
+      value: value ?? undefined,
+    });
+  }
+  return points;
+}
+
+function extractChoropleth(rows: Record<string, string>[], vizHint: VizHint): MapOverlayData | null {
+  const first = rows[0];
+  if (!first) return null;
+  const codeField = pickFieldByAliases(
+    first,
+    [
+      "PCON24CD",
+      "pcon24cd",
+      "geography_code",
+      "geography",
+      "area_code",
+      "lad_code",
+      "local_authority_code",
+      "gss_code",
+      "ons_code",
+      "code",
+      "id",
+    ],
+    vizHint.codeField,
+  );
+  if (!codeField) return null;
+  const labelField = pickFieldByAliases(first, ["label", "name", "area_name", "geography_name", "area"], vizHint.labelField);
+  const skipFields = new Set([codeField]);
+  if (labelField) skipFields.add(labelField);
+  const valueField = pickNumericField(rows, skipFields, vizHint.valueField);
+  if (!valueField) return null;
+
+  const entries: ChoroplethEntry[] = [];
+  for (const row of rows) {
+    const code = String(row[codeField] ?? "").trim();
+    const value = toNumber(row[valueField]);
+    if (!code || value === null) continue;
+    const label = labelField ? String(row[labelField] ?? "").trim() : "";
+    entries.push({
+      code,
+      value,
+      label: label || undefined,
+    });
+  }
+
+  if (entries.length === 0) return null;
+  return {
+    kind: "choropleth",
+    entries,
+    codeField,
+    valueField,
+  };
+}
+
+export function extractMapData(toolOutput: unknown, mode: "auto" | "choropleth" | "points" | "focus" = "auto"): MapOverlayData | null {
+  const normalized = unwrapToolOutput(toolOutput);
+  if (!normalized) return null;
+  const rows = parseRowsFromNormalizedToolOutput(normalized);
+  if (rows.length === 0) return null;
+  const vizHint = toVizHint(normalized.vizHint);
+
+  if (mode === "choropleth") {
+    return extractChoropleth(rows, vizHint);
+  }
+
+  if (mode === "points") {
+    const points = extractPoints(rows, vizHint);
+    return points.length > 0 ? { kind: "points", items: points } : null;
+  }
+
+  if (mode === "focus") {
+    const points = extractPoints(rows, vizHint);
+    const point = points[0];
+    if (!point) return null;
+    return {
+      kind: "focus",
+      point: {
+        lat: point.lat,
+        lng: point.lng,
+        label: point.label,
+      },
+    };
+  }
+
+  const points = extractPoints(rows, vizHint);
+  if (points.length > 0) return { kind: "points", items: points };
+  return extractChoropleth(rows, vizHint);
+}
+
 export function buildChartSpecFromVizHint(toolOutput: unknown): ChartSpec | null {
   const normalized = unwrapToolOutput(toolOutput);
   if (!normalized) return null;
@@ -254,16 +444,8 @@ export function buildChartSpecFromVizHint(toolOutput: unknown): ChartSpec | null
   if (!isRecord(vizHintRaw)) return null;
   const vizHint = vizHintRaw as VizHint;
   if (typeof vizHint.suggested === "string" && vizHint.suggested.toLowerCase() === "none") return null;
-
-  const payload = isRecord(normalized.payload) ? normalized.payload : {};
-  const rows = parseMCPPayload({
-    format: typeof payload.format === "string" ? payload.format : undefined,
-    csv: typeof payload.csv === "string" ? payload.csv : undefined,
-    body: typeof payload.body === "string" ? payload.body : undefined,
-    rows: payload.rows,
-    records: payload.records,
-    data: payload.data,
-  });
+  if (typeof vizHint.suggested === "string" && vizHint.suggested.toLowerCase() === "map") return null;
+  const rows = parseRowsFromNormalizedToolOutput(normalized);
   if (rows.length === 0) return null;
 
   const xField =

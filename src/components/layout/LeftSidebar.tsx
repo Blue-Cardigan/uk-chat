@@ -16,6 +16,7 @@ export function LeftSidebar({
   onRename,
   onToggleStar,
   onShare,
+  onUnshare,
   onCollapse,
   onToggleSettings,
 }: {
@@ -27,6 +28,7 @@ export function LeftSidebar({
   onRename: (id: string, title: string) => void;
   onToggleStar: (id: string, starred: boolean) => void;
   onShare: (conversation: ChatConversation) => void;
+  onUnshare: (conversation: ChatConversation) => void;
   onCollapse: () => void;
   onToggleSettings: () => void;
 }) {
@@ -258,6 +260,18 @@ export function LeftSidebar({
               >
                 {conversation.is_public && conversation.share_token ? "Copy share link" : "Share"}
               </button>
+              {conversation.is_public ? (
+                <button
+                  type="button"
+                  className="w-full rounded px-2 py-1 text-left text-xs font-medium hover:bg-[color-mix(in_oklch,var(--color-foreground)_6%,transparent)]"
+                  onClick={() => {
+                    onUnshare(conversation);
+                    setOpenMenuId(null);
+                  }}
+                >
+                  Stop sharing
+                </button>
+              ) : null}
               <button
                 type="button"
                 className="w-full rounded px-2 py-1 text-left text-xs font-medium text-(--color-accent) hover:bg-[color-mix(in_oklch,var(--color-accent)_14%,transparent)]"

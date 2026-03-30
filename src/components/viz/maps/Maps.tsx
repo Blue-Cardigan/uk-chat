@@ -4,6 +4,8 @@ import { VisualizationCard } from "@/components/viz/VisualizationCard";
 import { D3MapCanvas } from "@/components/uk-map/d3/D3MapCanvas";
 import { useUkMapGeography } from "@/components/uk-map/useUkMapGeography";
 import { useAppStore } from "@/lib/store";
+import { extractMapData } from "@/lib/viz-data-parser";
+import type { VizPayload } from "@/lib/types";
 
 function useFeatures(): FeatureCollection<Geometry> | null {
   const { collection } = useUkMapGeography();
@@ -28,42 +30,76 @@ function useIsDarkMode() {
   return themePreference === "dark" || (themePreference === "system" && systemPrefersDark);
 }
 
-export function ChoroplethMap() {
+export function ChoroplethMap({ payload }: { payload?: VizPayload }) {
   const features = useFeatures();
   const isDarkMode = useIsDarkMode();
+  const choropleth = useMemo(() => {
+    const data = payload ? extractMapData(payload.data, "choropleth") : null;
+    return data?.kind === "choropleth" ? data.entries : undefined;
+  }, [payload]);
   return (
     <VisualizationCard title="ChoroplethMap" subtitle="D3 + CARTO custom renderer">
-      <D3MapCanvas width={360} height={230} isDarkMode={isDarkMode} features={features} />
+      <D3MapCanvas width={360} height={230} isDarkMode={isDarkMode} features={features} choropleth={choropleth} />
     </VisualizationCard>
   );
 }
 
-export function PointMap() {
+export function PointMap({ payload }: { payload?: VizPayload }) {
   const features = useFeatures();
   const isDarkMode = useIsDarkMode();
+  const points = useMemo(() => {
+    const data = payload ? extractMapData(payload.data, "points") : null;
+    return data?.kind === "points" ? data.items : undefined;
+  }, [payload]);
   return (
     <VisualizationCard title="PointMap">
-      <D3MapCanvas width={360} height={230} isDarkMode={isDarkMode} features={features} />
+      <D3MapCanvas width={360} height={230} isDarkMode={isDarkMode} features={features} points={points} />
     </VisualizationCard>
   );
 }
 
-export function FloodRiskMap() {
+export function FloodRiskMap({ payload }: { payload?: VizPayload }) {
   const features = useFeatures();
   const isDarkMode = useIsDarkMode();
+  const points = useMemo(() => {
+    const data = payload ? extractMapData(payload.data, "points") : null;
+    return data?.kind === "points" ? data.items : undefined;
+  }, [payload]);
   return (
     <VisualizationCard title="FloodRiskMap">
-      <D3MapCanvas width={360} height={230} isDarkMode={isDarkMode} features={features} />
+      <D3MapCanvas width={360} height={230} isDarkMode={isDarkMode} features={features} points={points} />
     </VisualizationCard>
   );
 }
 
-export function PostcodeZoom() {
+export function PostcodeZoom({ payload }: { payload?: VizPayload }) {
   const features = useFeatures();
   const isDarkMode = useIsDarkMode();
+  const focusPoint = useMemo(() => {
+    const data = payload ? extractMapData(payload.data, "focus") : null;
+    return data?.kind === "focus"
+      ? {
+          ...data.point,
+          zoom: data.point.zoom ?? 9.5,
+        }
+      : undefined;
+  }, [payload]);
+  const points = useMemo(
+    () =>
+      focusPoint
+        ? [
+            {
+              lat: focusPoint.lat,
+              lng: focusPoint.lng,
+              label: focusPoint.label,
+            },
+          ]
+        : undefined,
+    [focusPoint],
+  );
   return (
     <VisualizationCard title="PostcodeZoom">
-      <D3MapCanvas width={360} height={230} isDarkMode={isDarkMode} features={features} />
+      <D3MapCanvas width={360} height={230} isDarkMode={isDarkMode} features={features} points={points} focusPoint={focusPoint} />
     </VisualizationCard>
   );
 }

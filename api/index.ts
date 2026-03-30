@@ -518,6 +518,168 @@ function normalizeToolSchemas<T extends Record<string, unknown>>(tools: T): {
   return { normalizedTools: Object.fromEntries(entries) as T, normalizedToolNames };
 }
 
+type ToolSchemaProjectionRule = {
+  toolNames: string[];
+  removeProperties: string[];
+  removeKindEnumValues?: string[];
+};
+
+const LLAMA_TOOL_SCHEMA_PROJECTION_RULES: ToolSchemaProjectionRule[] = [
+  {
+    toolNames: ["parliament.fetchHansard", "parliament_fetchHansard"],
+    removeProperties: ["baseUrl"],
+  },
+  {
+    toolNames: ["osm.assets", "osm_assets"],
+    removeProperties: ["endpoint"],
+  },
+  {
+    toolNames: ["desnz.fetchCo2", "desnz_fetchCo2"],
+    removeProperties: ["url"],
+    removeKindEnumValues: ["custom_csv"],
+  },
+  {
+    toolNames: ["finance.laRevenue", "finance_laRevenue"],
+    removeProperties: ["url"],
+    removeKindEnumValues: ["custom_csv"],
+  },
+];
+
+function projectToolSchemaForRule(schema: unknown, rule: ToolSchemaProjectionRule): boolean {
+  if (!isRecord(schema)) return false;
+
+  let changed = false;
+  const schemaProperties = isRecord(schema.properties) ? (schema.properties as Record<string, unknown>) : null;
+
+  if (schemaProperties) {
+    for (const propertyName of rule.removeProperties) {
+      if (propertyName in schemaProperties) {
+        delete schemaProperties[propertyName];
+        changed = true;
+      }
+    }
+  }
+
+  const required = Array.isArray(schema.required) ? schema.required : null;
+  if (required) {
+    const filteredRequired = required.filter(
+      (entry): entry is string => typeof entry === "string" && !rule.removeProperties.includes(entry),
+    );
+    if (filteredRequired.length !== required.length) {
+      schema.required = filteredRequired;
+      changed = true;
+    }
+  }
+
+  if (rule.removeKindEnumValues && schemaProperties && isRecord(schemaProperties.kind)) {
+    const removeKindEnumValues = rule.removeKindEnumValues;
+    const kindSchema = schemaProperties.kind as Record<string, unknown>;
+    const enumValues = Array.isArray(kindSchema.enum) ? kindSchema.enum : null;
+    if (enumValues) {
+      const filteredEnumValues = enumValues.filter(
+        (entry): entry is string => typeof entry === "string" && !removeKindEnumValues.includes(entry),
+      );
+      if (filteredEnumValues.length !== enumValues.length) {
+        kindSchema.enum = filteredEnumValues;
+        changed = true;
+      }
+      if (typeof kindSchema.default === "string" && removeKindEnumValues.includes(kindSchema.default)) {
+        const fallbackDefault = filteredEnumValues.find((entry) => typeof entry === "string");
+        if (fallbackDefault !== undefined) {
+          kindSchema.default = fallbackDefault;
+        } else {
+          delete kindSchema.default;
+        }
+        changed = true;
+      }
+    }
+  }
+
+  return changed;
+}
+
+const MODELS_NEEDING_SCHEMA_PROJECTION = new Set<string>([
+  // Sonnet 4.6 (currently in `llama` slot) does NOT need projection — strong tool-calling model.
+  // Re-add "llama" here only if the slot is reassigned to a weaker model.
+]);
+
+function projectToolSchemasForModel<T extends Record<string, unknown>>(
+  tools: T,
+  modelId: string,
+): { projectedTools: T; projectedToolNames: string[] } {
+  if (!MODELS_NEEDING_SCHEMA_PROJECTION.has(modelId)) {
+    return { projectedTools: tools, projectedToolNames: [] };
+  }
+
+  const rulesByToolName = new Map<string, ToolSchemaProjectionRule>();
+  for (const rule of LLAMA_TOOL_SCHEMA_PROJECTION_RULES) {
+    for (const toolName of rule.toolNames) rulesByToolName.set(toolName, rule);
+  }
+
+  const entries: Array<[string, unknown]> = [];
+  const projectedToolNames: string[] = [];
+
+  for (const [toolName, toolDefinition] of Object.entries(tools)) {
+    const rule = rulesByToolName.get(toolName);
+    if (!rule || !isRecord(toolDefinition)) {
+      entries.push([toolName, toolDefinition]);
+      continue;
+    }
+
+    const schemaKey = isRecord(toolDefinition.parameters)
+      ? "parameters"
+      : isRecord(toolDefinition.inputSchema)
+        ? "inputSchema"
+        : null;
+    if (!schemaKey) {
+      entries.push([toolName, toolDefinition]);
+      continue;
+    }
+
+    const schemaValue = toolDefinition[schemaKey];
+    const toolCopy: Record<string, unknown> = { ...toolDefinition };
+    const isInputSchemaWrapper = schemaKey === "inputSchema" && isSchemaWrapper(schemaValue);
+
+    if (isInputSchemaWrapper && isRecord(schemaValue)) {
+      const wrapper = schemaValue as Record<string, unknown>;
+      let rawSchema: unknown = wrapper.jsonSchema;
+      try {
+        rawSchema = structuredClone(rawSchema);
+      } catch {
+        // Keep original schema object if clone fails.
+      }
+      const changed = projectToolSchemaForRule(rawSchema, rule);
+      if (changed) {
+        const validate = typeof wrapper.validate === "function" ? (wrapper.validate as (value: unknown) => unknown) : undefined;
+        toolCopy[schemaKey] = jsonSchema(
+          rawSchema as Record<string, unknown>,
+          validate ? { validate: validate as never } : undefined,
+        );
+        projectedToolNames.push(toolName);
+      } else {
+        toolCopy[schemaKey] = schemaValue;
+      }
+      entries.push([toolName, toolCopy]);
+      continue;
+    }
+
+    let schemaCopy: unknown = schemaValue;
+    try {
+      schemaCopy = structuredClone(schemaValue);
+    } catch {
+      // Keep original schema object if clone fails.
+    }
+    const changed = projectToolSchemaForRule(schemaCopy, rule);
+    if (changed) {
+      projectedToolNames.push(toolName);
+    }
+    toolCopy[schemaKey] = schemaCopy;
+    entries.push([toolName, toolCopy]);
+  }
+
+  return { projectedTools: Object.fromEntries(entries) as T, projectedToolNames };
+}
+
 const PROVIDER_TOOL_NAME_MAX_LENGTH = 128;
 const PROVIDER_TOOL_NAME_PATTERN = /^[a-zA-Z0-9_-]{1,128}$/;
 const MAX_MODEL_CONTEXT_MESSAGES = 12;
@@ -1147,17 +1309,28 @@ async function getModelUsageStatus({
   const usageDate = utcDateStamp();
   const { data, error } = await supabase
     .from("uk_chat_model_usage")
-    .select("request_count")
+    .select("request_count,total_prompt_tokens,total_completion_tokens,total_tool_calls")
     .eq("user_id", userId)
     .eq("model_id", modelId)
     .eq("usage_date", usageDate)
     .maybeSingle();
-  if (error) return { ok: false as const, error: error.message, used: 0, remaining: 0, approaching: false, reached: false };
+  if (error) return { ok: false as const, error: error.message, used: 0, remaining: 0, approaching: false, reached: false, tokens: { prompt: 0, completion: 0, total: 0 }, toolCalls: 0 };
   const used = data?.request_count ?? 0;
   const remaining = Math.max(0, dailyLimit - used);
   const reached = remaining <= 0;
   const approaching = !reached && remaining <= approachingThreshold(dailyLimit);
-  return { ok: true as const, error: null, used, remaining, approaching, reached };
+  const promptTokens = data?.total_prompt_tokens ?? 0;
+  const completionTokens = data?.total_completion_tokens ?? 0;
+  return {
+    ok: true as const,
+    error: null,
+    used,
+    remaining,
+    approaching,
+    reached,
+    tokens: { prompt: promptTokens, completion: completionTokens, total: promptTokens + completionTokens },
+    toolCalls: data?.total_tool_calls ?? 0,
+  };
 }
 
 function classifyTool(name: string, description: string): { category: ToolCatalogItem["category"]; baseScore: number } {
@@ -1517,6 +1690,8 @@ async function handleChatUsage(request: Request) {
     remaining: usage.remaining,
     approaching: usage.approaching,
     reached: usage.reached,
+    tokens: usage.tokens,
+    toolCalls: usage.toolCalls,
     banner,
   });
 }
@@ -1529,20 +1704,31 @@ async function handleChatUsageAll(request: Request) {
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase
     .from("uk_chat_model_usage")
-    .select("model_id,request_count")
+    .select("model_id,request_count,total_prompt_tokens,total_completion_tokens,total_tool_calls")
     .eq("user_id", user.id)
     .eq("usage_date", usageDate);
 
   if (error) return json({ error: error.message }, 500);
 
-  const usageByModelId = new Map<string, number>();
+  type DailyModelUsage = {
+    requests: number;
+    promptTokens: number;
+    completionTokens: number;
+    toolCalls: number;
+  };
+  const usageByModelId = new Map<string, DailyModelUsage>();
   for (const row of data ?? []) {
-    const existing = usageByModelId.get(row.model_id) ?? 0;
-    usageByModelId.set(row.model_id, existing + row.request_count);
+    const existing = usageByModelId.get(row.model_id);
+    const requests = (existing?.requests ?? 0) + (row.request_count ?? 0);
+    const promptTokens = (existing?.promptTokens ?? 0) + (row.total_prompt_tokens ?? 0);
+    const completionTokens = (existing?.completionTokens ?? 0) + (row.total_completion_tokens ?? 0);
+    const toolCalls = (existing?.toolCalls ?? 0) + (row.total_tool_calls ?? 0);
+    usageByModelId.set(row.model_id, { requests, promptTokens, completionTokens, toolCalls });
   }
 
   const models = CHAT_MODEL_CONFIGS.map((model) => {
-    const used = usageByModelId.get(model.id) ?? 0;
+    const usage = usageByModelId.get(model.id);
+    const used = usage?.requests ?? 0;
     const remaining = Math.max(0, model.dailyLimit - used);
     const reached = remaining <= 0;
     const approaching = !reached && remaining <= approachingThreshold(model.dailyLimit);
@@ -1554,6 +1740,12 @@ async function handleChatUsageAll(request: Request) {
       remaining,
       approaching,
       reached,
+      tokens: {
+        prompt: usage?.promptTokens ?? 0,
+        completion: usage?.completionTokens ?? 0,
+        total: (usage?.promptTokens ?? 0) + (usage?.completionTokens ?? 0),
+      },
+      toolCalls: usage?.toolCalls ?? 0,
     };
   });
 
@@ -1615,9 +1807,17 @@ async function handleChat(request: Request) {
     ...(allowCreateChartTool ? { [CREATE_CHART_TOOL_NAME]: createSyntheticChartTool() } : {}),
   };
   const guardedTools = enforceCreateChartDataPrereq(scopedTools);
+  const { projectedTools, projectedToolNames } = projectToolSchemasForModel(guardedTools, selectedModel.id);
 
-  const { normalizedTools, normalizedToolNames } = normalizeToolSchemas(guardedTools);
+  const { normalizedTools, normalizedToolNames } = normalizeToolSchemas(projectedTools);
   const { safeTools, safeToOriginal, renamedPairs } = buildProviderSafeTools(normalizedTools);
+  if (projectedToolNames.length > 0) {
+    logWarn("[api/chat] Applied model-specific tool schema projection", {
+      modelId: selectedModel.id,
+      projectedCount: projectedToolNames.length,
+      projectedToolNames,
+    });
+  }
   if (normalizedToolNames.length > 0) {
     logWarn("[api/chat] Normalized Gemini-incompatible MCP schemas", {
       normalizedCount: normalizedToolNames.length,
@@ -1762,12 +1962,40 @@ async function handleChat(request: Request) {
       }
     })();
 
+    const tokenTrackingPromise = (async () => {
+      const promptTokens = event.usage?.promptTokens ?? 0;
+      const completionTokens = event.usage?.completionTokens ?? 0;
+      const toolCallCount = Array.isArray(event.toolCalls) ? event.toolCalls.length : 0;
+      if (promptTokens === 0 && completionTokens === 0 && toolCallCount === 0) return;
+
+      const { error: tokenError } = await supabase.rpc("increment_token_usage", {
+        p_user_id: user.id,
+        p_model_id: selectedModel.id,
+        p_usage_date: utcDateStamp(),
+        p_prompt_tokens: promptTokens,
+        p_completion_tokens: completionTokens,
+        p_tool_calls: toolCallCount,
+      });
+      if (tokenError) {
+        logError("[api/chat] Failed to persist token usage", {
+          conversationId: body.conversationId,
+          userId: user.id,
+          modelId: selectedModel.id,
+          promptTokens,
+          completionTokens,
+          toolCallCount,
+          error: tokenError.message,
+        });
+      }
+    })();
+
     try {
       waitUntil(persistPromise);
+      waitUntil(tokenTrackingPromise);
     } catch {
       // Local dev can run outside a waitUntil-capable runtime.
     }
-    await persistPromise;
+    await Promise.all([persistPromise, tokenTrackingPromise]);
   };
 
   const fallbackModels = getOpenRouterFallbackModels(selectedModel.id);
@@ -2790,7 +3018,7 @@ async function handleAccountExport(request: Request) {
       .select(CONVERSATION_SELECT_FIELDS)
       .eq("user_id", user.id)
       .order("updated_at", { ascending: false }),
-    supabase.from("uk_chat_model_usage").select("model_id,usage_date,request_count,created_at,updated_at").eq("user_id", user.id),
+    supabase.from("uk_chat_model_usage").select("model_id,usage_date,request_count,total_prompt_tokens,total_completion_tokens,total_tool_calls,created_at,updated_at").eq("user_id", user.id),
     supabase
       .from("uk_chat_councils")
       .select("id,conversation_id,issue,scope,resolved_geography,routing,agents,resolution,created_at,updated_at")

@@ -6,6 +6,7 @@ export type ChatConversation = {
   starred: boolean;
   is_public: boolean;
   share_token: string | null;
+  share_expires_at?: string | null;
   created_at: string;
   updated_at: string;
 };

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildChartSpecFromVizHint, parseCSV, parseMCPPayload } from "./viz-data-parser";
+import { buildChartSpecFromVizHint, extractMapData, parseCSV, parseMCPPayload } from "./viz-data-parser";
 
 test("parseCSV handles BOM and quoted commas", () => {
   const rows = parseCSV('\uFEFFyear,value,label\n2022,"1,234","North, UK"\n2023,1200,South');
@@ -72,4 +72,64 @@ test("buildChartSpecFromVizHint returns null when suggested is none", () => {
     },
   });
   assert.equal(spec, null);
+});
+
+test("buildChartSpecFromVizHint returns null when suggested is map", () => {
+  const spec = buildChartSpecFromVizHint({
+    payload: {
+      records: [{ geography_code: "E14001423", value: 42 }],
+    },
+    vizHint: {
+      suggested: "map",
+      codeField: "geography_code",
+      valueField: "value",
+    },
+  });
+  assert.equal(spec, null);
+});
+
+test("extractMapData detects points from coordinate rows", () => {
+  const mapData = extractMapData(
+    {
+      payload: {
+        data: [
+          { latitude: 51.501, longitude: -0.141, category: "crime" },
+          { latitude: 51.503, longitude: -0.127, category: "crime" },
+        ],
+      },
+      vizHint: {
+        suggested: "map",
+        latField: "latitude",
+        lngField: "longitude",
+      },
+    },
+    "points",
+  );
+  assert.ok(mapData);
+  assert.equal(mapData.kind, "points");
+  assert.equal(mapData.items.length, 2);
+  assert.equal(mapData.items[0]?.lat, 51.501);
+});
+
+test("extractMapData detects choropleth entries from geography codes", () => {
+  const mapData = extractMapData(
+    {
+      payload: {
+        records: [
+          { pcon24cd: "E14001423", value: "12.5", name: "Sample Constituency" },
+          { pcon24cd: "E14001424", value: "7.2", name: "Another Constituency" },
+        ],
+      },
+      vizHint: {
+        suggested: "map",
+        codeField: "pcon24cd",
+        valueField: "value",
+      },
+    },
+    "choropleth",
+  );
+  assert.ok(mapData);
+  assert.equal(mapData.kind, "choropleth");
+  assert.equal(mapData.entries.length, 2);
+  assert.equal(mapData.entries[0]?.code, "E14001423");
 });

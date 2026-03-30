@@ -23,7 +23,7 @@ export function ChatInput({
   onToolsQueryChange,
   onLoadMoreTools,
 }: {
-  onSubmit: (payload: PromptInputSubmitPayload) => void;
+  onSubmit: (payload: PromptInputSubmitPayload) => void | Promise<boolean | void>;
   onCouncilModeChange?: (enabled: boolean) => void;
   isStreaming: boolean;
   modelId: ChatModelId;

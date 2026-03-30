@@ -1,5 +1,9 @@
 import type { CouncilCreateRequest, CouncilFollowUpRequest, CouncilScope } from "./types.js";
 type CouncilNation = "uk" | "england" | "scotland" | "wales" | "northern_ireland";
+export type CouncilInferScopeRequest = {
+  text: string;
+  modelId?: string | null;
+};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -70,5 +74,15 @@ export function parseCouncilFollowUpRequest(body: unknown): { ok: true; data: Co
       mcpToken,
     },
   };
+}
+
+export function parseCouncilInferScopeRequest(body: unknown): { ok: true; data: CouncilInferScopeRequest } | { ok: false; error: string } {
+  if (!isRecord(body)) return { ok: false, error: "Request body must be an object." };
+  const text = asTrimmedString(body.text);
+  const modelId = asTrimmedString(body.modelId) || null;
+  if (text.length < 3 || text.length > 4000) {
+    return { ok: false, error: "text must be between 3 and 4000 characters." };
+  }
+  return { ok: true, data: { text, modelId } };
 }
 
