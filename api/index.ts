@@ -540,11 +540,88 @@ const MAX_CREATE_CHART_ROWS = 120;
 const MAX_CREATE_CHART_COLUMNS = 14;
 const MAX_CREATE_CHART_STRING_LENGTH = 220;
 
-function compactCreateChartSpec(input: unknown): unknown {
+function parseJsonSafely(value: string): unknown {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+
+function unwrapQuotedField(value: string): string {
+  let current = value.trim();
+  for (let index = 0; index < 3; index += 1) {
+    if (current.length < 2) break;
+    const first = current[0];
+    const last = current[current.length - 1];
+    const wrapped =
+      (first === '"' && last === '"') || (first === "'" && last === "'") || (first === "`" && last === "`");
+    if (!wrapped) break;
+    current = current.slice(1, -1).trim();
+  }
+  return current;
+}
+
+function normalizeChartFieldList(value: unknown, maxItems: number): string[] {
+  const parsed = typeof value === "string" ? parseJsonSafely(value) : value;
+  if (Array.isArray(parsed)) {
+    return parsed
+      .map((item) => (typeof item === "string" ? unwrapQuotedField(item) : ""))
+      .filter((item) => item.length > 0)
+      .slice(0, maxItems);
+  }
+  if (typeof parsed === "string") {
+    const normalized = unwrapQuotedField(parsed);
+    return normalized ? [normalized] : [];
+  }
+  return [];
+}
+
+function normalizeChartDataRows(value: unknown): Array<Record<string, unknown>> {
+  const parsed = typeof value === "string" ? parseJsonSafely(value) : value;
+  if (!Array.isArray(parsed)) return [];
+
+  const rows: Array<Record<string, unknown>> = [];
+  for (const row of parsed) {
+    const candidate = typeof row === "string" ? parseJsonSafely(row) : row;
+    if (!isRecord(candidate)) continue;
+    const normalizedRow: Record<string, unknown> = {};
+    for (const [key, cell] of Object.entries(candidate)) {
+      normalizedRow[unwrapQuotedField(key)] = cell;
+    }
+    rows.push(normalizedRow);
+  }
+  return rows;
+}
+
+function normalizeCreateChartSpec(input: unknown): unknown {
   if (!isRecord(input)) return input;
 
-  const compactedData = Array.isArray(input.data)
-    ? input.data
+  const normalizedData = normalizeChartDataRows(input.data);
+  const normalizedYFields = normalizeChartFieldList(input.yFields, 6);
+  const normalizedSources = normalizeChartFieldList(input.sources, 8);
+
+  const xField = typeof input.xField === "string" ? unwrapQuotedField(input.xField) : input.xField;
+  const labelField = typeof input.labelField === "string" ? unwrapQuotedField(input.labelField) : input.labelField;
+  const groupField = typeof input.groupField === "string" ? unwrapQuotedField(input.groupField) : input.groupField;
+
+  return {
+    ...input,
+    xField,
+    labelField,
+    groupField,
+    data: normalizedData.length > 0 ? normalizedData : input.data,
+    yFields: normalizedYFields.length > 0 ? normalizedYFields : input.yFields,
+    sources: normalizedSources.length > 0 ? normalizedSources : input.sources,
+  };
+}
+
+function compactCreateChartSpec(input: unknown): unknown {
+  const normalizedInput = normalizeCreateChartSpec(input);
+  if (!isRecord(normalizedInput)) return normalizedInput;
+
+  const compactedData = Array.isArray(normalizedInput.data)
+    ? normalizedInput.data
         .slice(0, MAX_CREATE_CHART_ROWS)
         .map((row) => {
           if (!isRecord(row)) return row;
@@ -559,17 +636,17 @@ function compactCreateChartSpec(input: unknown): unknown {
           }
           return compactedRow;
         })
-    : input.data;
+    : normalizedInput.data;
 
-  const yFields = Array.isArray(input.yFields)
-    ? input.yFields.filter((item): item is string => typeof item === "string").slice(0, 6)
-    : input.yFields;
-  const sources = Array.isArray(input.sources)
-    ? input.sources.filter((item): item is string => typeof item === "string").slice(0, 8)
-    : input.sources;
+  const yFields = Array.isArray(normalizedInput.yFields)
+    ? normalizedInput.yFields.filter((item): item is string => typeof item === "string").slice(0, 6)
+    : normalizedInput.yFields;
+  const sources = Array.isArray(normalizedInput.sources)
+    ? normalizedInput.sources.filter((item): item is string => typeof item === "string").slice(0, 8)
+    : normalizedInput.sources;
 
   return {
-    ...input,
+    ...normalizedInput,
     data: compactedData,
     yFields,
     sources,
