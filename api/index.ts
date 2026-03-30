@@ -1963,8 +1963,15 @@ async function handleChat(request: Request) {
     })();
 
     const tokenTrackingPromise = (async () => {
-      const promptTokens = event.usage?.promptTokens ?? 0;
-      const completionTokens = event.usage?.completionTokens ?? 0;
+      const usage = isRecord(event.usage) ? (event.usage as Record<string, unknown>) : null;
+      const promptTokens =
+        (typeof usage?.["inputTokens"] === "number" ? usage["inputTokens"] : null) ??
+        (typeof usage?.["promptTokens"] === "number" ? usage["promptTokens"] : null) ??
+        0;
+      const completionTokens =
+        (typeof usage?.["outputTokens"] === "number" ? usage["outputTokens"] : null) ??
+        (typeof usage?.["completionTokens"] === "number" ? usage["completionTokens"] : null) ??
+        0;
       const toolCallCount = Array.isArray(event.toolCalls) ? event.toolCalls.length : 0;
       if (promptTokens === 0 && completionTokens === 0 && toolCallCount === 0) return;
 

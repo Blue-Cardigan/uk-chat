@@ -1,4 +1,4 @@
-type PromptModelId = "flash" | "opus" | "gpt4o" | "sonnet" | "pro";
+type PromptModelId = "flash" | "opus" | "gpt" | "sonnet" | "pro";
 
 function formatUtcDateForPrompt(date: Date): string {
   const parts = new Intl.DateTimeFormat("en-GB", {
@@ -197,7 +197,7 @@ MODEL PROFILE (OPUS)
 - Spatial outputs: for crimes, flood, postcode, and area-coded metrics, prefer vizHint.suggested as map with explicit map field hints.
 - Failure mode: long narrative repeats; prevent by summarising tool outputs rather than quoting raw rows.
 `.trim();
-    case "gpt4o":
+    case "gpt":
       return `
 MODEL PROFILE (GPT-4O)
 - Strength: reliable structured output and clear chart specs.
