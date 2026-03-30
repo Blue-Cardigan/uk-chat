@@ -524,7 +524,7 @@ type ToolSchemaProjectionRule = {
   removeKindEnumValues?: string[];
 };
 
-const LLAMA_TOOL_SCHEMA_PROJECTION_RULES: ToolSchemaProjectionRule[] = [
+const WEAK_MODEL_TOOL_SCHEMA_PROJECTION_RULES: ToolSchemaProjectionRule[] = [
   {
     toolNames: ["parliament.fetchHansard", "parliament_fetchHansard"],
     removeProperties: ["baseUrl"],
@@ -599,8 +599,8 @@ function projectToolSchemaForRule(schema: unknown, rule: ToolSchemaProjectionRul
 }
 
 const MODELS_NEEDING_SCHEMA_PROJECTION = new Set<string>([
-  // Sonnet 4.6 (currently in `llama` slot) does NOT need projection — strong tool-calling model.
-  // Re-add "llama" here only if the slot is reassigned to a weaker model.
+  // Sonnet 4.6 does NOT need projection — strong tool-calling model.
+  // Add "sonnet" here only if the slot is reassigned to a weaker model.
 ]);
 
 function projectToolSchemasForModel<T extends Record<string, unknown>>(
@@ -612,7 +612,7 @@ function projectToolSchemasForModel<T extends Record<string, unknown>>(
   }
 
   const rulesByToolName = new Map<string, ToolSchemaProjectionRule>();
-  for (const rule of LLAMA_TOOL_SCHEMA_PROJECTION_RULES) {
+  for (const rule of WEAK_MODEL_TOOL_SCHEMA_PROJECTION_RULES) {
     for (const toolName of rule.toolNames) rulesByToolName.set(toolName, rule);
   }
 
