@@ -12,6 +12,7 @@ const PrivacyNoticePage = lazy(() => import("@/components/legal/PrivacyNoticePag
 const SharedChatView = lazy(() => import("@/components/chat/SharedChatView").then((m) => ({ default: m.SharedChatView })));
 const AdminPanel = lazy(() => import("@/components/auth/AdminPanel").then((m) => ({ default: m.AdminPanel })));
 const SettingsPanel = lazy(() => import("@/components/settings/SettingsPanel").then((m) => ({ default: m.SettingsPanel })));
+const OPTIMISTIC_CHAT_ID_PREFIX = "optimistic-chat-";
 
 async function safeJson<T>(response: Response): Promise<T | null> {
   const text = await response.text();
@@ -21,6 +22,23 @@ async function safeJson<T>(response: Response): Promise<T | null> {
   } catch {
     return null;
   }
+}
+
+function getConversationIdFromUrl(): string | null {
+  return new URLSearchParams(window.location.search).get("chat");
+}
+
+function syncConversationIdToUrl(conversationId: string | null) {
+  const url = new URL(window.location.href);
+  if (conversationId) {
+    url.searchParams.set("chat", conversationId);
+  } else {
+    url.searchParams.delete("chat");
+  }
+  const nextUrl = `${url.pathname}${url.search}${url.hash}`;
+  const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  if (nextUrl === currentUrl) return;
+  window.history.replaceState(null, "", nextUrl);
 }
 
 function ProtectedApp() {
@@ -34,15 +52,17 @@ function ProtectedApp() {
   const [mcpToken, setMcpToken] = useState<string | null>(null);
   const isAdmin = (session?.user.email ?? "").toLowerCase() === (import.meta.env.VITE_ADMIN_EMAIL ?? "").toLowerCase();
 
-  const loadConversations = useCallback(async () => {
+  const loadConversations = useCallback(async (signal?: AbortSignal) => {
     if (!session?.access_token) {
       setConversations([]);
       setActiveConversationId(null);
+      syncConversationIdToUrl(null);
       return [] as ChatConversation[];
     }
 
     const response = await fetch("/api/conversations", {
       headers: { Authorization: `Bearer ${session.access_token}` },
+      signal,
     });
     if (!response.ok) throw new Error(`Failed to load conversations (${response.status})`);
 
@@ -57,8 +77,12 @@ function ProtectedApp() {
     setConversations(data);
 
     const current = useAppStore.getState().activeConversationId;
-    const nextActiveId = current && data.some((conversation) => conversation.id === current) ? current : data[0]?.id ?? null;
+    const preferredConversationId = getConversationIdFromUrl();
+    const hasUrlConversation = preferredConversationId && data.some((conversation) => conversation.id === preferredConversationId);
+    const hasCurrentConversation = current && data.some((conversation) => conversation.id === current);
+    const nextActiveId = hasUrlConversation ? preferredConversationId : hasCurrentConversation ? current : data[0]?.id ?? null;
     setActiveConversationId(nextActiveId);
+    syncConversationIdToUrl(nextActiveId);
 
     return data;
   }, [session?.access_token, setActiveConversationId, setConversations]);
@@ -79,35 +103,87 @@ function ProtectedApp() {
   }, [theme]);
 
   useEffect(() => {
-    if (!session?.access_token) return;
-    void loadConversations().catch(() => {
+    if (!session?.access_token) return undefined;
+    const controller = new AbortController();
+    const { signal } = controller;
+
+    void loadConversations(signal).catch(() => {
+      if (signal.aborted) return;
       setConversations([]);
       setActiveConversationId(null);
+      syncConversationIdToUrl(null);
     });
     void (async () => {
-      const response = await fetch("/api/account/profile", {
-        headers: { Authorization: `Bearer ${session.access_token}` },
-      });
-      if (!response.ok) {
+      try {
+        const response = await fetch("/api/account/profile", {
+          headers: { Authorization: `Bearer ${session.access_token}` },
+          signal,
+        });
+        if (signal.aborted) return;
+        if (!response.ok) {
+          setMcpToken(null);
+          return;
+        }
+        const payload = (await safeJson<{ mcpToken?: string | null }>(response)) ?? {};
+        if (signal.aborted) return;
+        setMcpToken(payload.mcpToken ?? null);
+      } catch {
+        if (signal.aborted) return;
         setMcpToken(null);
-        return;
       }
-      const payload = (await safeJson<{ mcpToken?: string | null }>(response)) ?? {};
-      setMcpToken(payload.mcpToken ?? null);
     })();
+
+    return () => {
+      controller.abort();
+    };
   }, [loadConversations, session?.access_token, setActiveConversationId, setConversations]);
 
   const titleForNewConversation = useMemo(() => `New chat ${conversations.length + 1}`, [conversations.length]);
 
-  async function createConversation() {
+  const createConversation = useCallback(async () => {
+    const optimisticConversationId = `${OPTIMISTIC_CHAT_ID_PREFIX}${crypto.randomUUID()}`;
+    const nowIso = new Date().toISOString();
+    const optimisticConversation: ChatConversation = {
+      id: optimisticConversationId,
+      title: titleForNewConversation,
+      starred: false,
+      is_public: false,
+      share_token: null,
+      share_expires_at: null,
+      created_at: nowIso,
+      updated_at: nowIso,
+    };
+    const currentConversations = useAppStore.getState().conversations;
+    setConversations([optimisticConversation, ...currentConversations]);
+    setActiveConversationId(optimisticConversationId);
+    syncConversationIdToUrl(optimisticConversationId);
+
     const response = await fetch("/api/conversations", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token ?? ""}` },
       body: JSON.stringify({ title: titleForNewConversation }),
     });
-    if (!response.ok) return null;
+    if (!response.ok) {
+      const nextConversations = useAppStore.getState().conversations.filter((conversation) => conversation.id !== optimisticConversationId);
+      setConversations(nextConversations);
+      if (useAppStore.getState().activeConversationId === optimisticConversationId) {
+        const fallbackConversationId = nextConversations[0]?.id ?? null;
+        setActiveConversationId(fallbackConversationId);
+        syncConversationIdToUrl(fallbackConversationId);
+      }
+      return null;
+    }
     const created = await safeJson<ChatConversation>(response);
-    if (!created) return null;
+    if (!created) {
+      const nextConversations = useAppStore.getState().conversations.filter((conversation) => conversation.id !== optimisticConversationId);
+      setConversations(nextConversations);
+      if (useAppStore.getState().activeConversationId === optimisticConversationId) {
+        const fallbackConversationId = nextConversations[0]?.id ?? null;
+        setActiveConversationId(fallbackConversationId);
+        syncConversationIdToUrl(fallbackConversationId);
+      }
+      return null;
+    }
     const normalizedCreated = {
       ...created,
       starred: created.starred ?? false,
@@ -115,13 +191,20 @@ function ProtectedApp() {
       share_token: created.share_token ?? null,
       share_expires_at: created.share_expires_at ?? null,
     };
-    const currentConversations = useAppStore.getState().conversations;
-    setConversations([normalizedCreated, ...currentConversations]);
-    setActiveConversationId(normalizedCreated.id);
+    const conversationsAfterCreate = useAppStore.getState().conversations;
+    setConversations(
+      conversationsAfterCreate.map((conversation) =>
+        conversation.id === optimisticConversationId ? normalizedCreated : conversation,
+      ),
+    );
+    if (useAppStore.getState().activeConversationId === optimisticConversationId) {
+      setActiveConversationId(normalizedCreated.id);
+      syncConversationIdToUrl(normalizedCreated.id);
+    }
     return normalizedCreated.id;
-  }
+  }, [session?.access_token, setActiveConversationId, setConversations, titleForNewConversation]);
 
-  async function deleteConversation(id: string) {
+  const deleteConversation = useCallback(async (id: string) => {
     const response = await fetch(`/api/conversations/${id}`, {
       method: "DELETE",
       headers: { Authorization: `Bearer ${session?.access_token ?? ""}` },
@@ -131,11 +214,13 @@ function ProtectedApp() {
     const next = useAppStore.getState().conversations.filter((conversation) => conversation.id !== id);
     setConversations(next);
     if (useAppStore.getState().activeConversationId === id) {
-      setActiveConversationId(next[0]?.id ?? null);
+      const nextActiveConversationId = next[0]?.id ?? null;
+      setActiveConversationId(nextActiveConversationId);
+      syncConversationIdToUrl(nextActiveConversationId);
     }
-  }
+  }, [session?.access_token, setActiveConversationId, setConversations]);
 
-  async function renameConversation(id: string, title: string) {
+  const renameConversation = useCallback(async (id: string, title: string) => {
     const response = await fetch(`/api/conversations/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token ?? ""}` },
@@ -145,9 +230,9 @@ function ProtectedApp() {
 
     const currentConversations = useAppStore.getState().conversations;
     setConversations(currentConversations.map((conversation) => (conversation.id === id ? { ...conversation, title } : conversation)));
-  }
+  }, [session?.access_token, setConversations]);
 
-  async function starConversation(id: string, starred: boolean) {
+  const starConversation = useCallback(async (id: string, starred: boolean) => {
     const response = await fetch(`/api/conversations/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token ?? ""}` },
@@ -162,9 +247,9 @@ function ProtectedApp() {
       return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
     });
     setConversations(next);
-  }
+  }, [session?.access_token, setConversations]);
 
-  async function shareConversation(id: string, enabled = true) {
+  const shareConversation = useCallback(async (id: string, enabled = true) => {
     const headers: Record<string, string> = { Authorization: `Bearer ${session?.access_token ?? ""}` };
     const body = enabled ? undefined : JSON.stringify({ enabled: false });
     if (!enabled) headers["Content-Type"] = "application/json";
@@ -193,11 +278,14 @@ function ProtectedApp() {
       ),
     );
     return shareUrl;
-  }
+  }, [session?.access_token, setConversations]);
 
-  async function unshareConversation(id: string) {
-    await shareConversation(id, false);
-  }
+  const unshareConversation = useCallback(
+    async (id: string) => {
+      await shareConversation(id, false);
+    },
+    [shareConversation],
+  );
 
   async function exportChats() {
     if (!session?.access_token) throw new Error("Missing auth token");
@@ -237,7 +325,9 @@ function ProtectedApp() {
       const nextConversations = useAppStore.getState().conversations.filter((conversation) => conversation.id !== missingId);
       setConversations(nextConversations);
       if (useAppStore.getState().activeConversationId === missingId) {
-        setActiveConversationId(nextConversations[0]?.id ?? null);
+        const nextActiveConversationId = nextConversations[0]?.id ?? null;
+        setActiveConversationId(nextActiveConversationId);
+        syncConversationIdToUrl(nextActiveConversationId);
       }
 
       try {
@@ -247,8 +337,21 @@ function ProtectedApp() {
         // If reloading the canonical list fails, keep the current sidebar state intact.
       }
     },
-    [loadConversations],
+    [loadConversations, setActiveConversationId, setConversations],
   );
+
+  const handleSelectConversation = useCallback(
+    (id: string | null) => {
+      setActiveConversationId(id);
+      syncConversationIdToUrl(id);
+    },
+    [setActiveConversationId],
+  );
+
+  const handleClearActiveConversation = useCallback(() => {
+    setActiveConversationId(null);
+    syncConversationIdToUrl(null);
+  }, [setActiveConversationId]);
 
   const settingsPanelProps = {
     theme,
@@ -276,7 +379,7 @@ function ProtectedApp() {
       mcpToken={mcpToken}
       authToken={session?.access_token ?? null}
       onCreateConversation={createConversation}
-      onSelectConversation={setActiveConversationId}
+      onSelectConversation={handleSelectConversation}
       onDeleteConversation={deleteConversation}
       onRenameConversation={renameConversation}
       onStarConversation={starConversation}
@@ -284,6 +387,7 @@ function ProtectedApp() {
       onUnshareConversation={unshareConversation}
       onConversationMissing={handleConversationMissing}
       settingsContent={settingsContent}
+      onClearActiveConversation={handleClearActiveConversation}
     />
   );
 }
@@ -311,6 +415,7 @@ export default function App() {
             </ProtectedRoute>
           }
         />
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Suspense>
   );

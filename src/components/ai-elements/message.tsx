@@ -57,6 +57,22 @@ type NormalisedTool = {
   stateLabel: string;
 };
 
+function readTextPart(part: UiPart): string | null {
+  if (part.type !== "text") return null;
+  const candidate = part as { text?: unknown; content?: unknown; value?: unknown };
+  const value = candidate.text ?? candidate.content ?? candidate.value;
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? value : null;
+}
+
+function hasRenderableNonReasoningContent(part: UiPart): boolean {
+  if (part.type === "step-start" || part.type === "reasoning") return false;
+  if (readTextPart(part)) return true;
+  const tool = normaliseToolPart(part, 0);
+  return Boolean(tool);
+}
+
 function normalizeToolName(name: string): string {
   return name
     .trim()
@@ -196,7 +212,7 @@ function CouncilDeliberationToolView({ output }: { output: unknown }) {
   );
 }
 
-function ReasoningPartView({ part }: { part: UiPart }) {
+function ReasoningPartView({ part, hideRedacted }: { part: UiPart; hideRedacted: boolean }) {
   const p = part as StreamReasoningPart & PersistedReasoningPart;
   const text =
     p.reasoning ??
@@ -208,11 +224,21 @@ function ReasoningPartView({ part }: { part: UiPart }) {
     trimmed === "[REDACTED]" ||
     trimmed.toLowerCase() === "redacted" ||
     trimmed.toLowerCase().includes("[redacted]");
-  const displayText = isProviderRedacted ? "Reasoning is hidden by the model provider." : text;
+  if (isProviderRedacted) {
+    if (hideRedacted) return null;
+    return (
+      <div className="inline-flex items-center gap-2 py-1 text-xs text-(--color-muted-foreground)">
+        <span className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-(--color-muted-foreground) [animation-delay:0ms]" />
+        <span className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-(--color-muted-foreground) [animation-delay:150ms]" />
+        <span className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-(--color-muted-foreground) [animation-delay:300ms]" />
+        <span>Thinking...</span>
+      </div>
+    );
+  }
   return (
     <details className="text-xs" open>
       <summary className="cursor-pointer text-(--color-muted-foreground)">Thinking</summary>
-      <div className="mt-1 whitespace-pre-wrap text-(--color-muted-foreground)">{displayText}</div>
+      <div className="mt-1 whitespace-pre-wrap text-(--color-muted-foreground)">{text}</div>
     </details>
   );
 }
@@ -220,10 +246,12 @@ function ReasoningPartView({ part }: { part: UiPart }) {
 export function Message({ message }: { message: UiMessage }) {
   const parts = message.parts ?? [];
   const hasAnyContent = parts.length > 0;
+  const hasNonReasoningContent = parts.some(hasRenderableNonReasoningContent);
 
   const renderedParts = parts.map((part, index) => {
-    if (part.type === "text" && typeof (part as { text?: string }).text === "string" && ((part as { text: string }).text).length > 0) {
-      return <MessageResponse key={`text-${index}`}>{(part as { text: string }).text}</MessageResponse>;
+    const textPart = readTextPart(part);
+    if (textPart) {
+      return <MessageResponse key={`text-${index}`}>{textPart}</MessageResponse>;
     }
 
     if (part.type === "step-start") return null;
@@ -234,7 +262,7 @@ export function Message({ message }: { message: UiMessage }) {
     }
 
     if (part.type === "reasoning") {
-      return <ReasoningPartView key={`reasoning-${index}`} part={part} />;
+      return <ReasoningPartView key={`reasoning-${index}`} part={part} hideRedacted={hasNonReasoningContent} />;
     }
 
     return null;

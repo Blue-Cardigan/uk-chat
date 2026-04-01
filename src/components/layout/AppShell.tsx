@@ -22,6 +22,7 @@ export function AppShell({
   onUnshareConversation,
   onConversationMissing,
   settingsContent,
+  onClearActiveConversation,
 }: {
   conversations: ChatConversation[];
   activeConversationId: string | null;
@@ -36,6 +37,7 @@ export function AppShell({
   onUnshareConversation: (id: string) => Promise<void>;
   onConversationMissing: (id: string) => Promise<void> | void;
   settingsContent: React.ReactNode;
+  onClearActiveConversation: () => void;
 }) {
   const sidebarOpen = useAppStore((state) => state.sidebarOpen);
   const rightSidebarOpen = useAppStore((state) => state.rightSidebarOpen);
@@ -129,6 +131,7 @@ export function AppShell({
                 setShareNotice("Sharing disabled for this conversation.");
                 window.setTimeout(() => setShareNotice(null), 3000);
               }}
+              onClearChat={onClearActiveConversation}
               onCollapse={() => setSidebarOpen(false)}
               onToggleSettings={() => setSettingsOpen((v) => !v)}
             />

@@ -17,11 +17,17 @@ type AppState = {
   clearVizPayloads: () => void;
 };
 
+const DESKTOP_MIN_WIDTH_PX = 768;
+
+function getInitialSidebarOpen() {
+  return window.matchMedia(`(min-width: ${DESKTOP_MIN_WIDTH_PX}px)`).matches;
+}
+
 export const useAppStore = create<AppState>((set) => ({
   conversations: [],
   activeConversationId: null,
-  sidebarOpen: true,
-  rightSidebarOpen: true,
+  sidebarOpen: getInitialSidebarOpen(),
+  rightSidebarOpen: false,
   themePreference: "system",
   vizPayloads: [],
   setConversations: (conversations) => set({ conversations }),
@@ -44,7 +50,6 @@ export const useAppStore = create<AppState>((set) => ({
       return {
         // Upsert by ID so streaming updates don't duplicate artifacts.
         vizPayloads: [payload, ...state.vizPayloads.filter((item) => item.id !== payload.id)].slice(0, 20),
-        rightSidebarOpen: true,
       };
     }),
   clearVizPayloads: () => set({ vizPayloads: [] }),

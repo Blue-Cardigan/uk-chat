@@ -19,6 +19,7 @@ export function LeftSidebar({
   onUnshare,
   onCollapse,
   onToggleSettings,
+  onClearChat,
 }: {
   conversations: ChatConversation[];
   activeConversationId: string | null;
@@ -31,6 +32,7 @@ export function LeftSidebar({
   onUnshare: (conversation: ChatConversation) => void;
   onCollapse: () => void;
   onToggleSettings: () => void;
+  onClearChat: () => void;
 }) {
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [openMenuPlacement, setOpenMenuPlacement] = useState<"up" | "down">("down");
@@ -290,11 +292,16 @@ export function LeftSidebar({
     <aside className="flex h-full min-h-0 w-full flex-col gap-3 border-r border-(--color-border) bg-(--color-sidebar) p-3">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1">
-          <span className="font-display text-xl font-semibold">
+          <button
+            type="button"
+            className="font-display text-xl font-semibold"
+            onClick={onClearChat}
+            aria-label="Clear current chat"
+          >
             Chat
             <span className="text-(--color-accent)">G</span>
             <span className="text-(--color-primary)">B</span>
-          </span>
+          </button>
         </div>
         <Button
           variant="ghost"
