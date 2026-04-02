@@ -2106,7 +2106,9 @@ async function handleChat(request: Request) {
     }
   }
 
-  return result.toUIMessageStreamResponse();
+  return result.toUIMessageStreamResponse({
+    originalMessages: body.messages ?? [],
+  });
 }
 
 function isCouncilResolvedGeography(value: unknown): value is CouncilResolvedGeography {
