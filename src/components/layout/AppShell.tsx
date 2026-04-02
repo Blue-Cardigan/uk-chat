@@ -68,6 +68,20 @@ export function AppShell({
     window.setTimeout(() => setShareNotice(null), 3000);
   }
 
+  function handleShareFromMenu(conversation: ChatConversation) {
+    if (conversation.is_public && conversation.share_token) {
+      void copyShareUrl(buildShareUrl(conversation.share_token));
+      return;
+    }
+    setShareModalConversation(conversation);
+  }
+
+  function handleUnshareFromMenu(conversation: ChatConversation) {
+    void onUnshareConversation(conversation.id);
+    setShareNotice("Sharing disabled for this conversation.");
+    window.setTimeout(() => setShareNotice(null), 3000);
+  }
+
   useEffect(() => {
     if (!settingsOpen) return;
     function onKeyDown(e: KeyboardEvent) {
@@ -119,18 +133,8 @@ export function AppShell({
               onDelete={onDeleteConversation}
               onRename={onRenameConversation}
               onToggleStar={onStarConversation}
-              onShare={(conversation) => {
-                if (conversation.is_public && conversation.share_token) {
-                  void copyShareUrl(buildShareUrl(conversation.share_token));
-                  return;
-                }
-                setShareModalConversation(conversation);
-              }}
-              onUnshare={(conversation) => {
-                void onUnshareConversation(conversation.id);
-                setShareNotice("Sharing disabled for this conversation.");
-                window.setTimeout(() => setShareNotice(null), 3000);
-              }}
+              onShare={handleShareFromMenu}
+              onUnshare={handleUnshareFromMenu}
               onClearChat={onClearActiveConversation}
               onCollapse={() => setSidebarOpen(false)}
               onToggleSettings={() => setSettingsOpen((v) => !v)}
@@ -168,6 +172,10 @@ export function AppShell({
             onEnsureConversation={onCreateConversation}
             onRenameConversation={onRenameConversation}
             onConversationMissing={onConversationMissing}
+            onDeleteConversation={onDeleteConversation}
+            onToggleStarConversation={onStarConversation}
+            onShareConversation={handleShareFromMenu}
+            onUnshareConversation={handleUnshareFromMenu}
           />
         </main>
 

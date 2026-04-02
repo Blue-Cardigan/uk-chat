@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import type { UIMessage } from "ai";
+import { MoreVertical } from "lucide-react";
 import { Conversation } from "@/components/ai-elements/conversation";
 import { AssistantThinkingMessage, Message } from "@/components/ai-elements/message";
 import { ChatInput, type ChatToolOption } from "@/components/chat/ChatInput";
@@ -9,7 +10,7 @@ import { SuggestedMessages } from "@/components/chat/SuggestedMessages";
 import { DEFAULT_CHAT_MODEL_ID, getChatModelConfig, type ChatModelId } from "@/shared/chat-models";
 import { useAppStore } from "@/lib/store";
 import { isVizArtifactCandidate, normalizeVizToolName } from "@/lib/viz-helpers";
-import { Input } from "@/components/ui/primitives";
+import { Button, Input } from "@/components/ui/primitives";
 import type { ChatConversation } from "@/lib/types";
 import type { ParsedDocument } from "@/lib/document-parser";
 import type { PromptInputSubmitPayload } from "@/components/ai-elements/prompt-input";
@@ -102,6 +103,15 @@ function isOptimisticConversationId(value: string | null | undefined): boolean {
   return typeof value === "string" && value.startsWith(OPTIMISTIC_CHAT_ID_PREFIX);
 }
 
+function hasRenderableAssistantPart(part: Part): boolean {
+  if (part.type === "step-start") return false;
+  if (part.type === "reasoning" || part.type === "tool-invocation" || part.type.startsWith("tool-")) return true;
+  if (part.type !== "text") return false;
+  const candidate = part as { text?: unknown; content?: unknown; value?: unknown };
+  const value = candidate.text ?? candidate.content ?? candidate.value;
+  return typeof value === "string" && value.trim().length > 0;
+}
+
 export function ChatView({
   conversation,
   conversationId,
@@ -110,6 +120,10 @@ export function ChatView({
   onEnsureConversation,
   onRenameConversation,
   onConversationMissing,
+  onDeleteConversation,
+  onToggleStarConversation,
+  onShareConversation,
+  onUnshareConversation,
 }: {
   conversation: ChatConversation | null;
   conversationId: string | null;
@@ -118,6 +132,10 @@ export function ChatView({
   onEnsureConversation: () => Promise<string | null>;
   onRenameConversation: (id: string, title: string) => void;
   onConversationMissing: (id: string) => Promise<void> | void;
+  onDeleteConversation: (id: string) => void;
+  onToggleStarConversation: (id: string, starred: boolean) => void;
+  onShareConversation: (conversation: ChatConversation) => void;
+  onUnshareConversation: (conversation: ChatConversation) => void;
 }) {
   const pushVizPayload = useAppStore((state) => state.pushVizPayload);
   const clearVizPayloads = useAppStore((state) => state.clearVizPayloads);
@@ -125,6 +143,7 @@ export function ChatView({
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState(false);
   const [draftTitle, setDraftTitle] = useState("");
+  const [menuOpen, setMenuOpen] = useState(false);
   const [selectedModelId, setSelectedModelId] = useState<ChatModelId>(DEFAULT_CHAT_MODEL_ID);
   const selectedModel = getChatModelConfig(selectedModelId);
   const [toolsLoading, setToolsLoading] = useState(false);
@@ -141,9 +160,10 @@ export function ChatView({
   const [pendingConversationId, setPendingConversationId] = useState<string | null>(null);
   const [preparingConversation, setPreparingConversation] = useState(false);
   const toolsCacheRef = useRef<Map<string, ToolsCacheEntry>>(new Map());
+  const titleMenuRef = useRef<HTMLDivElement | null>(null);
   const pushedArtifactKeysRef = useRef<Set<string>>(new Set());
   const artifactSignaturesRef = useRef<Map<string, string>>(new Map());
-  const streamingConversationIdRef = useRef<string | null>(null);
+  const liveSessionConversationIdRef = useRef<string | null>(null);
   const onMissingRef = useRef(onConversationMissing);
   onMissingRef.current = onConversationMissing;
 
@@ -258,7 +278,31 @@ export function ChatView({
   useEffect(() => {
     setDraftTitle(conversation?.title ?? "");
     setEditingTitle(false);
+    setMenuOpen(false);
   }, [conversation?.id, conversation?.title]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+
+    function handleDocumentMouseDown(event: MouseEvent) {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (titleMenuRef.current?.contains(target)) return;
+      setMenuOpen(false);
+    }
+
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      setMenuOpen(false);
+    }
+
+    document.addEventListener("mousedown", handleDocumentMouseDown);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("mousedown", handleDocumentMouseDown);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [menuOpen]);
 
   const refreshUsageBanner = useCallback(async () => {
     if (!authToken) {
@@ -300,10 +344,17 @@ export function ChatView({
   });
 
   useEffect(() => {
-    if (status !== "streaming" && status !== "submitted" && !councilPending) {
-      streamingConversationIdRef.current = null;
+    const activeConversationId = conversationId ?? pendingConversationId;
+    if (!activeConversationId) {
+      liveSessionConversationIdRef.current = null;
+      return;
     }
-  }, [councilPending, status]);
+    // Keep the live-session lock while parent state transitions through optimistic IDs.
+    if (isOptimisticConversationId(activeConversationId)) return;
+    if (liveSessionConversationIdRef.current && liveSessionConversationIdRef.current !== activeConversationId) {
+      liveSessionConversationIdRef.current = null;
+    }
+  }, [conversationId, pendingConversationId]);
 
   const loadConversationMessages = useCallback(
     async (targetConversationId: string) => {
@@ -416,7 +467,7 @@ export function ChatView({
     }
     setPreparingConversation(false);
     setPendingConversationId(ensuredConversationId);
-    streamingConversationIdRef.current = ensuredConversationId;
+    liveSessionConversationIdRef.current = ensuredConversationId;
     const shouldRefreshAutoTitle = messages.length === 0 && isAutoGeneratedTitle(conversation?.title);
     if (payload.mode === "council") {
       const optimisticMessageId = `optimistic-council-${crypto.randomUUID()}`;
@@ -650,7 +701,7 @@ export function ChatView({
     if (isOptimisticConversationId(requestedConversationId)) {
       return;
     }
-    if (streamingConversationIdRef.current === requestedConversationId) {
+    if (liveSessionConversationIdRef.current === requestedConversationId) {
       return;
     }
     const abortController = new AbortController();
@@ -741,28 +792,23 @@ export function ChatView({
     setEditingTitle(false);
   }
 
-  const lastMessage = messages.at(-1);
+  const titleInputWidthCh = Math.min(48, Math.max(12, draftTitle.trim().length + 2));
+
+  const lastAssistantMessage = [...messages].reverse().find((message) => message.role === "assistant");
   const hasAssistantContent =
-    lastMessage?.role === "assistant" &&
-    Array.isArray(lastMessage.parts) &&
-    lastMessage.parts.some((part) => {
-      if (part.type === "text") return typeof part.text === "string" && part.text.trim().length > 0;
-      if (part.type === "reasoning") return true;
-      if (part.type.startsWith("tool-")) return true;
-      return false;
-    });
+    Array.isArray(lastAssistantMessage?.parts) && (lastAssistantMessage.parts as Part[]).some(hasRenderableAssistantPart);
   const showThinkingIndicator = (status === "submitted" || status === "streaming") && !hasAssistantContent;
   const showCouncilThinkingIndicator = councilPending && (status !== "submitted" && status !== "streaming");
   const showPreConversationLoading = preparingConversation && messages.length === 0;
 
   return (
     <section className="flex h-full flex-col">
-      <div className="sticky top-0 z-20 bg-(--color-background)/95 px-12 py-3 backdrop-blur-sm md:px-12">
-        <div className="mx-auto w-full md:max-w-[clamp(0px,calc(100vw-600px),860px)]">
-          <div className="flex items-center justify-center gap-3 text-center md:justify-start md:text-left">
+      <div className="sticky top-0 z-20 bg-(--color-background)/95 px-12 py-3 backdrop-blur-sm md:px-5">
+        <div className="w-full">
+          <div className="flex items-center justify-start gap-2 text-left">
             {editingTitle && conversation ? (
               <form
-                className="min-w-0 flex-1"
+                className="shrink-0"
                 onSubmit={(event) => {
                   event.preventDefault();
                   submitTitleRename();
@@ -771,6 +817,7 @@ export function ChatView({
                 <Input
                   value={draftTitle}
                   className="h-8 text-sm"
+                  style={{ width: `${titleInputWidthCh}ch` }}
                   onChange={(event) => setDraftTitle(event.target.value)}
                   onBlur={submitTitleRename}
                   onKeyDown={(event) => {
@@ -786,7 +833,7 @@ export function ChatView({
             ) : (
               <button
                 type="button"
-                className="min-w-0 truncate text-center text-sm font-medium hover:opacity-80 md:text-left"
+                className="max-w-[70vw] truncate text-center text-sm font-medium hover:opacity-80 md:max-w-[560px] md:text-left"
                 onClick={() => {
                   if (!conversation) return;
                   setDraftTitle(conversation.title);
@@ -798,6 +845,75 @@ export function ChatView({
                 {conversation?.title ?? "New conversation"}
               </button>
             )}
+            <div className="relative" ref={titleMenuRef}>
+              <Button
+                type="button"
+                variant="ghost"
+                className="h-7 w-7 p-0"
+                aria-label={conversation ? `Open actions for ${conversation.title}` : "Conversation actions"}
+                onClick={() => setMenuOpen((current) => !current)}
+                disabled={!conversation}
+              >
+                <MoreVertical className="h-4 w-4" />
+              </Button>
+              {menuOpen && conversation ? (
+                <div className="absolute right-0 top-9 z-50 min-w-40 rounded-md border border-(--color-border) bg-(--color-background) p-1 text-left shadow-xl">
+                  <button
+                    type="button"
+                    className="w-full rounded px-2 py-1 text-left text-xs font-medium hover:bg-[color-mix(in_oklch,var(--color-foreground)_6%,transparent)]"
+                    onClick={() => {
+                      setDraftTitle(conversation.title);
+                      setEditingTitle(true);
+                      setMenuOpen(false);
+                    }}
+                  >
+                    Rename
+                  </button>
+                  <button
+                    type="button"
+                    className="w-full rounded px-2 py-1 text-left text-xs font-medium hover:bg-[color-mix(in_oklch,var(--color-foreground)_6%,transparent)]"
+                    onClick={() => {
+                      onToggleStarConversation(conversation.id, !conversation.starred);
+                      setMenuOpen(false);
+                    }}
+                  >
+                    {conversation.starred ? "Unstar" : "Star"}
+                  </button>
+                  <button
+                    type="button"
+                    className="w-full rounded px-2 py-1 text-left text-xs font-medium hover:bg-[color-mix(in_oklch,var(--color-foreground)_6%,transparent)]"
+                    onClick={() => {
+                      onShareConversation(conversation);
+                      setMenuOpen(false);
+                    }}
+                  >
+                    {conversation.is_public && conversation.share_token ? "Copy share link" : "Share"}
+                  </button>
+                  {conversation.is_public ? (
+                    <button
+                      type="button"
+                      className="w-full rounded px-2 py-1 text-left text-xs font-medium hover:bg-[color-mix(in_oklch,var(--color-foreground)_6%,transparent)]"
+                      onClick={() => {
+                        onUnshareConversation(conversation);
+                        setMenuOpen(false);
+                      }}
+                    >
+                      Stop sharing
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="w-full rounded px-2 py-1 text-left text-xs font-medium text-(--color-accent) hover:bg-[color-mix(in_oklch,var(--color-accent)_14%,transparent)]"
+                    onClick={() => {
+                      onDeleteConversation(conversation.id);
+                      setMenuOpen(false);
+                    }}
+                  >
+                    Delete
+                  </button>
+                </div>
+              ) : null}
+            </div>
           </div>
         </div>
       </div>

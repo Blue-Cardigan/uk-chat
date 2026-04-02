@@ -57,6 +57,27 @@ type NormalisedTool = {
   stateLabel: string;
 };
 
+function readReasoningText(part: UiPart): string {
+  if (part.type !== "reasoning") return "";
+  const p = part as StreamReasoningPart & PersistedReasoningPart;
+  return (
+    p.reasoning ??
+    p.text ??
+    (p.details?.filter((d) => d.type === "text").map((d) => d.text ?? d.data ?? "").join("") || "")
+  );
+}
+
+function isProviderRedactedReasoning(part: UiPart): boolean {
+  const text = readReasoningText(part);
+  if (!text) return false;
+  const trimmed = text.trim();
+  return (
+    trimmed === "[REDACTED]" ||
+    trimmed.toLowerCase() === "redacted" ||
+    trimmed.toLowerCase().includes("[redacted]")
+  );
+}
+
 function readTextPart(part: UiPart): string | null {
   if (part.type !== "text") return null;
   const candidate = part as { text?: unknown; content?: unknown; value?: unknown };
@@ -213,17 +234,9 @@ function CouncilDeliberationToolView({ output }: { output: unknown }) {
 }
 
 function ReasoningPartView({ part, hideRedacted }: { part: UiPart; hideRedacted: boolean }) {
-  const p = part as StreamReasoningPart & PersistedReasoningPart;
-  const text =
-    p.reasoning ??
-    p.text ??
-    (p.details?.filter((d) => d.type === "text").map((d) => d.text ?? d.data ?? "").join("") || "");
+  const text = readReasoningText(part);
   if (!text) return null;
-  const trimmed = text.trim();
-  const isProviderRedacted =
-    trimmed === "[REDACTED]" ||
-    trimmed.toLowerCase() === "redacted" ||
-    trimmed.toLowerCase().includes("[redacted]");
+  const isProviderRedacted = isProviderRedactedReasoning(part);
   if (isProviderRedacted) {
     if (hideRedacted) return null;
     return (
@@ -238,7 +251,9 @@ function ReasoningPartView({ part, hideRedacted }: { part: UiPart; hideRedacted:
   return (
     <details className="text-xs" open>
       <summary className="cursor-pointer text-(--color-muted-foreground)">Thinking</summary>
-      <div className="mt-1 whitespace-pre-wrap text-(--color-muted-foreground)">{text}</div>
+      <div className="prose-chat mt-1 text-(--color-muted-foreground)">
+        <Markdown remarkPlugins={[remarkGfm]}>{text}</Markdown>
+      </div>
     </details>
   );
 }
@@ -247,6 +262,7 @@ export function Message({ message }: { message: UiMessage }) {
   const parts = message.parts ?? [];
   const hasAnyContent = parts.length > 0;
   const hasNonReasoningContent = parts.some(hasRenderableNonReasoningContent);
+  const firstRedactedReasoningIndex = parts.findIndex(isProviderRedactedReasoning);
 
   const renderedParts = parts.map((part, index) => {
     const textPart = readTextPart(part);
@@ -262,7 +278,13 @@ export function Message({ message }: { message: UiMessage }) {
     }
 
     if (part.type === "reasoning") {
-      return <ReasoningPartView key={`reasoning-${index}`} part={part} hideRedacted={hasNonReasoningContent} />;
+      return (
+        <ReasoningPartView
+          key={`reasoning-${index}`}
+          part={part}
+          hideRedacted={hasNonReasoningContent || (isProviderRedactedReasoning(part) && index !== firstRedactedReasoningIndex)}
+        />
+      );
     }
 
     return null;

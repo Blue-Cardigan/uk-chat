@@ -210,18 +210,16 @@ export function LeftSidebar({
             aria-label={`Open actions for ${conversation.title}`}
             onClick={(event) => {
               event.stopPropagation();
-              setOpenMenuId((current) => {
-                if (current === conversation.id) return null;
-
+              const nextMenuId = openMenuId === conversation.id ? null : conversation.id;
+              if (nextMenuId) {
                 const triggerRect = event.currentTarget.getBoundingClientRect();
                 const estimatedMenuHeight = 140;
                 const spaceBelow = window.innerHeight - triggerRect.bottom;
                 const spaceAbove = triggerRect.top;
                 const shouldOpenDown = spaceBelow >= estimatedMenuHeight || spaceBelow >= spaceAbove;
                 setOpenMenuPlacement(shouldOpenDown ? "down" : "up");
-
-                return conversation.id;
-              });
+              }
+              setOpenMenuId(nextMenuId);
             }}
           >
             <MoreHorizontal className="h-4 w-4" />
