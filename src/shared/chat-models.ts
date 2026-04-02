@@ -13,6 +13,10 @@ export type ChatModelConfig = {
   minDataToolCallsForQuant: number;
   runEvidencePrefetchForQuant: boolean;
   enableMetadataRetryForQuant: boolean;
+  maxMainToolStepsForQuant: number;
+  maxPrefetchToolStepsForQuant: number;
+  maxRepeatedToolCallsPerTurn: number;
+  restrictQuantToolsForWeakModels: boolean;
 };
 
 export const CHAT_MODEL_CONFIGS: ChatModelConfig[] = [
@@ -27,6 +31,10 @@ export const CHAT_MODEL_CONFIGS: ChatModelConfig[] = [
     minDataToolCallsForQuant: 1,
     runEvidencePrefetchForQuant: true,
     enableMetadataRetryForQuant: true,
+    maxMainToolStepsForQuant: 4,
+    maxPrefetchToolStepsForQuant: 1,
+    maxRepeatedToolCallsPerTurn: 2,
+    restrictQuantToolsForWeakModels: true,
   },
   {
     id: "opus",
@@ -39,6 +47,10 @@ export const CHAT_MODEL_CONFIGS: ChatModelConfig[] = [
     minDataToolCallsForQuant: 1,
     runEvidencePrefetchForQuant: true,
     enableMetadataRetryForQuant: true,
+    maxMainToolStepsForQuant: 8,
+    maxPrefetchToolStepsForQuant: 3,
+    maxRepeatedToolCallsPerTurn: 4,
+    restrictQuantToolsForWeakModels: false,
   },
   {
     id: "gpt",
@@ -51,6 +63,10 @@ export const CHAT_MODEL_CONFIGS: ChatModelConfig[] = [
     minDataToolCallsForQuant: 2,
     runEvidencePrefetchForQuant: true,
     enableMetadataRetryForQuant: true,
+    maxMainToolStepsForQuant: 6,
+    maxPrefetchToolStepsForQuant: 2,
+    maxRepeatedToolCallsPerTurn: 3,
+    restrictQuantToolsForWeakModels: false,
   },
   {
     id: "sonnet",
@@ -63,6 +79,10 @@ export const CHAT_MODEL_CONFIGS: ChatModelConfig[] = [
     minDataToolCallsForQuant: 1,
     runEvidencePrefetchForQuant: true,
     enableMetadataRetryForQuant: true,
+    maxMainToolStepsForQuant: 5,
+    maxPrefetchToolStepsForQuant: 2,
+    maxRepeatedToolCallsPerTurn: 2,
+    restrictQuantToolsForWeakModels: true,
   },
   {
     id: "pro",
@@ -75,6 +95,10 @@ export const CHAT_MODEL_CONFIGS: ChatModelConfig[] = [
     minDataToolCallsForQuant: 2,
     runEvidencePrefetchForQuant: true,
     enableMetadataRetryForQuant: true,
+    maxMainToolStepsForQuant: 5,
+    maxPrefetchToolStepsForQuant: 2,
+    maxRepeatedToolCallsPerTurn: 2,
+    restrictQuantToolsForWeakModels: false,
   },
 ];
 

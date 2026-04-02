@@ -3,7 +3,7 @@ import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { generateText, jsonSchema, stepCountIs } from "ai";
 import { CHAT_MODEL_CONFIGS } from "../src/shared/chat-models.ts";
 import { getSystemPrompt } from "../api/_lib/system-prompt.ts";
-import { enforceCreateChartDataPrereq } from "../api/_lib/tool-pipeline.ts";
+import { enforceCreateChartDataPrereq, summarizeToolLoopHealth } from "../api/_lib/tool-pipeline.ts";
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const MCP_SERVER_URL = process.env.MCP_SERVER_URL ?? "https://mcp.explorethekingdom.co.uk/sse";
@@ -177,6 +177,8 @@ async function run() {
         const system = getSystemPrompt(new Date(), model.id);
         const tools = toProviderSafeTools(pickTools(mcpTools, prompt.id));
         const prefetchTools = withoutCreateChart(tools);
+        const prefetchStepLimit = Math.max(1, Math.min(model.maxPrefetchToolStepsForQuant ?? 2, model.toolStepLimit ?? 6));
+        const mainStepLimit = Math.max(2, Math.min(model.maxMainToolStepsForQuant ?? 6, model.toolStepLimit ?? 6));
         try {
           const fallbackModels = fallbackModelsFor(model.id);
           const prefetch = await withTimeout(
@@ -195,7 +197,7 @@ async function run() {
               ].join("\n"),
               tools: prefetchTools,
               toolChoice: "required",
-              stopWhen: stepCountIs(2),
+              stopWhen: stepCountIs(prefetchStepLimit),
               temperature: 0,
             }),
             REQUEST_TIMEOUT_MS,
@@ -210,7 +212,7 @@ async function run() {
               prompt: prompt.text,
               tools,
               toolChoice: "required",
-              stopWhen: stepCountIs(6),
+              stopWhen: stepCountIs(mainStepLimit),
             }),
             REQUEST_TIMEOUT_MS,
             `${model.id}/${prompt.id}/main`,
@@ -226,6 +228,11 @@ async function run() {
           const dataBearingResultCount = toolResults.filter((row) => hasNumericValue(row?.output)).length;
           const minRequired = typeof model.minDataToolCallsForQuant === "number" ? model.minDataToolCallsForQuant : 1;
           const evidenceSufficient = nonChartToolCallCount >= minRequired && dataBearingResultCount > 0;
+          const loopHealth = summarizeToolLoopHealth({
+            toolCalls,
+            toolResults,
+            steps: [...(prefetch.steps ?? []), ...(result.steps ?? [])],
+          });
           output.push({
             modelId: model.id,
             modelLabel: model.label,
@@ -243,9 +250,16 @@ async function run() {
             minNonChartCallsRequired: minRequired,
             evidenceSufficient,
             createChartCalled: toolNames.includes("create_chart"),
+            repeatedCallCount: loopHealth.repeatedCallCount,
+            maxRepeatCount: loopHealth.maxRepeatCount,
+            uniqueCallSignatures: loopHealth.uniqueCallSignatures,
+            fallbackPath: "none",
+            timeoutStage: null,
           });
           console.log(`[matrix] model=${model.id} prompt=${prompt.id} ok toolCalls=${toolNames.length}`);
         } catch (error) {
+          const errorText = error instanceof Error ? error.message : String(error);
+          const timeoutStage = /\/prefetch\b/i.test(errorText) ? "prefetch" : /\/main\b/i.test(errorText) ? "main" : null;
           output.push({
             modelId: model.id,
             modelLabel: model.label,
@@ -253,9 +267,14 @@ async function run() {
             promptId: prompt.id,
             ok: false,
             latencyMs: Date.now() - startedAt,
-            error: error instanceof Error ? error.message : String(error),
+            error: errorText,
+            repeatedCallCount: null,
+            maxRepeatCount: null,
+            uniqueCallSignatures: null,
+            fallbackPath: timeoutStage ? `timeout_${timeoutStage}` : "error",
+            timeoutStage,
           });
-          console.log(`[matrix] model=${model.id} prompt=${prompt.id} failed: ${error instanceof Error ? error.message : String(error)}`);
+          console.log(`[matrix] model=${model.id} prompt=${prompt.id} failed: ${errorText}`);
         }
       }
     }
@@ -282,6 +301,54 @@ async function run() {
               name === "postcodes.lookup" ||
               name === "police.fetchCrimes",
           ),
+      ),
+      flashEnergyNoTimeout: output.some(
+        (row) => row.modelId === "flash" && row.promptId === "energy_comparison" && row.ok === true,
+      ),
+      flashCrimeNoTimeout: output.some(
+        (row) => row.modelId === "flash" && row.promptId === "crime_trend" && row.ok === true,
+      ),
+      flashCrimeHasRetrieval: output.some(
+        (row) =>
+          row.modelId === "flash" &&
+          row.promptId === "crime_trend" &&
+          row.ok === true &&
+          row.nonChartToolCallCount >= 1 &&
+          Array.isArray(row.toolNames) &&
+          row.toolNames.some(
+            (name) =>
+              name === "postcodes_lookup" ||
+              name === "police_fetchCrimes" ||
+              name === "postcodes.lookup" ||
+              name === "police.fetchCrimes",
+          ),
+      ),
+      flashToolCallCap: output.some(
+        (row) => row.modelId === "flash" && row.promptId === "crime_trend" && row.ok === true && row.toolCallCount <= 12,
+      ),
+      sonnetEnergyNoTimeout: output.some(
+        (row) => row.modelId === "sonnet" && row.promptId === "energy_comparison" && row.ok === true,
+      ),
+      sonnetCrimeNoTimeout: output.some(
+        (row) => row.modelId === "sonnet" && row.promptId === "crime_trend" && row.ok === true,
+      ),
+      sonnetCrimeHasRetrieval: output.some(
+        (row) =>
+          row.modelId === "sonnet" &&
+          row.promptId === "crime_trend" &&
+          row.ok === true &&
+          row.nonChartToolCallCount >= 1 &&
+          Array.isArray(row.toolNames) &&
+          row.toolNames.some(
+            (name) =>
+              name === "postcodes_lookup" ||
+              name === "police_fetchCrimes" ||
+              name === "postcodes.lookup" ||
+              name === "police.fetchCrimes",
+          ),
+      ),
+      sonnetToolCallCap: output.some(
+        (row) => row.modelId === "sonnet" && row.promptId === "crime_trend" && row.ok === true && row.toolCallCount <= 12,
       ),
     };
 

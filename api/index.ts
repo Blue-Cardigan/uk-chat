@@ -21,7 +21,9 @@ import {
   enforceCreateChartDataPrereq as enforceCreateChartDataPrereqFromLib,
   hasPriorNonChartToolOutput as hasPriorNonChartToolOutputFromLib,
   selectToolsForChat as selectToolsForChatFromLib,
+  selectWeakModelQuantTools as selectWeakModelQuantToolsFromLib,
   summarizeQuantEvidence,
+  summarizeToolLoopHealth as summarizeToolLoopHealthFromLib,
   shouldRequireDataToolCall as shouldRequireDataToolCallFromLib,
 } from "./_lib/tool-pipeline.js";
 import type { CouncilDeliberation, CouncilResolvedGeography, CouncilScope } from "./_lib/council/types.js";
@@ -128,6 +130,19 @@ function isProviderInvalidRequestError(error: unknown): boolean {
   }
   const message = `${maybeError.message ?? ""} ${maybeError.cause?.message ?? ""}`.toLowerCase();
   return message.includes("invalid_request");
+}
+
+function isProviderTimeoutError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const maybeError = error as {
+    statusCode?: number;
+    cause?: { statusCode?: number; message?: string };
+    message?: string;
+  };
+  if ([408, 504, 524].includes(maybeError.statusCode ?? -1)) return true;
+  if ([408, 504, 524].includes(maybeError.cause?.statusCode ?? -1)) return true;
+  const message = `${maybeError.message ?? ""} ${maybeError.cause?.message ?? ""}`.toLowerCase();
+  return message.includes("timeout") || message.includes("timed out") || message.includes("deadline exceeded");
 }
 
 function isLoopbackHostname(hostname: string): boolean {
@@ -1411,6 +1426,18 @@ function selectToolsForChat(tools: Record<string, unknown>, query: string, limit
   return selectToolsForChatFromLib(tools, query, limit);
 }
 
+function selectWeakModelQuantTools(
+  tools: Record<string, unknown>,
+  query: string,
+  options?: { minimumTools?: number },
+): Record<string, unknown> {
+  return selectWeakModelQuantToolsFromLib(tools, query, options);
+}
+
+function summarizeToolLoopHealth(resultLike: unknown) {
+  return summarizeToolLoopHealthFromLib(resultLike);
+}
+
 function createSyntheticChartTool() {
   return createSyntheticChartToolFromLib(compactCreateChartSpec);
 }
@@ -1670,10 +1697,23 @@ async function handleChat(request: Request) {
   });
   const latestUserQuery = extractLatestUserText(body.messages);
   const requireDataToolCall = shouldRequireDataToolCall(latestUserQuery);
+  const quantPrefetchStepLimit = Math.max(
+    1,
+    Math.min(selectedModel.maxPrefetchToolStepsForQuant, selectedModel.toolStepLimit),
+  );
+  const quantMainStepLimit = Math.max(
+    2,
+    Math.min(selectedModel.maxMainToolStepsForQuant, selectedModel.toolStepLimit),
+  );
+  const weakQuantToolRestrictionApplied = requireDataToolCall && selectedModel.restrictQuantToolsForWeakModels;
   const priorDataToolOutputExists = hasPriorNonChartToolOutput(body.messages);
   const allowCreateChartTool = !requireDataToolCall || priorDataToolOutputExists;
+  const selectedBaseTools = selectToolsForChat(tools, latestUserQuery, 18);
+  const quantScopedBaseTools = weakQuantToolRestrictionApplied
+    ? selectWeakModelQuantTools(selectedBaseTools, latestUserQuery, { minimumTools: 3 })
+    : selectedBaseTools;
   const scopedTools = {
-    ...selectToolsForChat(tools, latestUserQuery, 18),
+    ...quantScopedBaseTools,
     ...(allowCreateChartTool ? { [CREATE_CHART_TOOL_NAME]: createSyntheticChartTool() } : {}),
   };
   const guardedTools = enforceCreateChartDataPrereq(scopedTools);
@@ -1684,6 +1724,9 @@ async function handleChat(request: Request) {
   const quantitativeSafeTools = Object.fromEntries(
     Object.entries(safeTools).filter(([toolName]) => toolName !== CREATE_CHART_TOOL_NAME),
   );
+  const quantitativeReducedSafeTools = selectWeakModelQuantTools(quantitativeSafeTools, latestUserQuery, {
+    minimumTools: 3,
+  });
   if (projectedToolNames.length > 0) {
     logWarn("[api/chat] Applied model-specific tool schema projection", {
       modelId: selectedModel.id,
@@ -1704,6 +1747,7 @@ async function handleChat(request: Request) {
     requireDataToolCall,
     allowCreateChartTool,
     priorDataToolOutputExists,
+    weakQuantToolRestrictionApplied,
   });
   if (renamedPairs.length > 0) {
     logWarn("[api/chat] Remapped tool names for provider compatibility", {
@@ -1784,6 +1828,9 @@ async function handleChat(request: Request) {
     minNonChartCalls: selectedModel.minDataToolCallsForQuant,
     continuationInjected: false,
     fallbackPath: "none",
+    quantPrefetchStepLimit,
+    quantMainStepLimit,
+    weakQuantToolRestrictionApplied,
   };
   const planSteps = requireDataToolCall
     ? await generateExecutionPlan({
@@ -1797,6 +1844,7 @@ async function handleChat(request: Request) {
   const systemPromptBase = getSystemPrompt(new Date(), selectedModel.id);
   let withPlanContext = planContext ? `${systemPromptBase}\n\n${planContext}` : systemPromptBase;
   let quantContinuationContext = "";
+  let forceReducedMainTools = false;
   const compactedMessages = compactUiMessagesForModel(body.messages ?? []);
   if (quantPolicyActive) {
     try {
@@ -1812,11 +1860,13 @@ async function handleChat(request: Request) {
         ].join("\n"),
         tools: quantitativeSafeTools as Parameters<typeof streamText>[0]["tools"],
         toolChoice: "required",
-        stopWhen: stepCountIs(Math.max(2, Math.min(4, selectedModel.toolStepLimit))),
+        stopWhen: stepCountIs(quantPrefetchStepLimit),
         temperature: 0,
       });
       const prefetchSummary = summarizeQuantEvidence(prefetch, selectedModel.minDataToolCallsForQuant);
+      const prefetchLoopHealth = summarizeToolLoopHealth(prefetch);
       quantTelemetry.prefetchSummary = prefetchSummary;
+      quantTelemetry.prefetchLoopHealth = prefetchLoopHealth;
       quantTelemetry.prefetchToolCallCount = prefetchSummary.toolCallCount;
       quantTelemetry.prefetchNonChartCalls = prefetchSummary.nonChartToolCallCount;
       quantTelemetry.prefetchDataBearingResults = prefetchSummary.dataBearingResultCount;
@@ -1834,6 +1884,18 @@ async function handleChat(request: Request) {
           forceNoChartFirst: true,
         });
         quantTelemetry.continuationInjected = true;
+      }
+      if (prefetchLoopHealth.maxRepeatCount > selectedModel.maxRepeatedToolCallsPerTurn) {
+        forceReducedMainTools = true;
+        quantTelemetry.prefetchLoopBreakerTriggered = true;
+        quantTelemetry.prefetchMaxRepeatCount = prefetchLoopHealth.maxRepeatCount;
+        quantContinuationContext = [
+          quantContinuationContext,
+          "TOOL LOOP SAFETY: avoid repeating the same tool call with identical parameters.",
+          "If one call fails, switch to a different retrieval tool or narrower filters.",
+        ]
+          .filter(Boolean)
+          .join("\n");
       }
 
       const prefetchToolsLine = Array.isArray(prefetch.steps)
@@ -1980,6 +2042,7 @@ async function handleChat(request: Request) {
     requireToolCall: boolean;
     toolsOverride?: Parameters<typeof streamText>[0]["tools"];
     systemOverride?: string;
+    stepLimitOverride?: number;
   }) =>
     streamText({
       model: openrouter.chat(selectedModel.providerModel, {
@@ -1990,7 +2053,9 @@ async function handleChat(request: Request) {
         ? (options.toolsOverride ?? (safeTools as Parameters<typeof streamText>[0]["tools"]))
         : undefined,
       toolChoice: options.includeTools ? (options.requireToolCall ? "required" : "auto") : undefined,
-      stopWhen: stepCountIs(selectedModel.toolStepLimit),
+      stopWhen: stepCountIs(
+        options.stepLimitOverride ?? (requireDataToolCall ? quantMainStepLimit : selectedModel.toolStepLimit),
+      ),
       temperature: selectedModel.toolTemperature,
       system: options.systemOverride ?? systemPrompt,
       onFinish: onAssistantFinish,
@@ -2002,8 +2067,43 @@ async function handleChat(request: Request) {
       includeFallbackModels: true,
       includeTools: true,
       requireToolCall: requireDataToolCall,
+      toolsOverride: forceReducedMainTools
+        ? (quantitativeReducedSafeTools as Parameters<typeof streamText>[0]["tools"])
+        : undefined,
     });
   } catch (error) {
+    if (isProviderTimeoutError(error)) {
+      if (requireDataToolCall) {
+        logWarn("[api/chat] Provider timed out, retrying with reduced quantitative tools", {
+          modelId: selectedModel.id,
+          providerModel: selectedModel.providerModel,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        try {
+          quantTelemetry.fallbackPath = "timeout_reduced_tools";
+          result = tryStream({
+            includeFallbackModels: false,
+            includeTools: true,
+            requireToolCall: true,
+            toolsOverride: quantitativeReducedSafeTools as Parameters<typeof streamText>[0]["tools"],
+            stepLimitOverride: Math.max(2, Math.min(4, quantMainStepLimit)),
+            systemOverride: `${systemPrompt}\n\nTimeout recovery: run one lookup, one concrete data retrieval, then synthesize.`,
+          });
+        } catch (timeoutRetryError) {
+          if (!isProviderTimeoutError(timeoutRetryError) && !isProviderInvalidRequestError(timeoutRetryError)) {
+            throw timeoutRetryError;
+          }
+          quantTelemetry.fallbackPath = "timeout_bounded_synthesis";
+          result = tryStream({ includeFallbackModels: false, includeTools: false, requireToolCall: false });
+        }
+      } else {
+        quantTelemetry.fallbackPath = "timeout_no_tools_non_quant";
+        result = tryStream({ includeFallbackModels: false, includeTools: false, requireToolCall: false });
+      }
+      return result.toUIMessageStreamResponse({
+        originalMessages: (body.messages ?? []) as never,
+      });
+    }
     if (!isProviderInvalidRequestError(error)) throw error;
     logWarn("[api/chat] Provider rejected request, retrying without fallback model chain", {
       modelId: selectedModel.id,

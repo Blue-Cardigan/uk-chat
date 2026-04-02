@@ -18,6 +18,11 @@ const METADATA_TOOL_PATTERNS = [
   /(^|[_.-])(search|list|describe|catalog|datasets|layers)([_.-]|$)/i,
   /(^|[_.-])(lookup)([_.-]|$)/i,
 ];
+const CRIME_QUERY_PATTERN = /\b(crime|offence|offense|safety|police)\b/i;
+const ENERGY_QUERY_PATTERN = /\b(energy|electricity|gas|co2|emissions?)\b/i;
+const WEAK_QUANT_CORE_PATTERNS = [/^postcodes[_.-]/i, /^geo[_.-]/i, /^ons[_.-]fetchObservations/i];
+const WEAK_QUANT_CRIME_PATTERNS = [/^postcodes[_.-]/i, /^police[_.-]fetchCrimes/i, /^geo[_.-]convert/i];
+const WEAK_QUANT_ENERGY_PATTERNS = [/^desnz[_.-](fetchEnergy|energy)/i, /^nomis[_.-]fetchTable/i, /^ons[_.-]fetchObservations/i];
 
 type ToolCatalogItem = {
   name: string;
@@ -203,6 +208,34 @@ export function selectToolsForChat(tools: Record<string, unknown>, query: string
   return Object.fromEntries(selectedEntries);
 }
 
+function selectByPatterns(tools: Record<string, unknown>, patterns: RegExp[]): Record<string, unknown> {
+  const selectedEntries = Object.entries(tools).filter(([name]) => patterns.some((pattern) => pattern.test(name)));
+  return Object.fromEntries(selectedEntries);
+}
+
+export function selectWeakModelQuantTools(
+  tools: Record<string, unknown>,
+  query: string,
+  options?: { minimumTools?: number },
+): Record<string, unknown> {
+  const minimumTools = Math.max(1, options?.minimumTools ?? 3);
+  const baseSelection = selectByPatterns(tools, WEAK_QUANT_CORE_PATTERNS);
+  const topicSelection = CRIME_QUERY_PATTERN.test(query)
+    ? selectByPatterns(tools, WEAK_QUANT_CRIME_PATTERNS)
+    : ENERGY_QUERY_PATTERN.test(query)
+      ? selectByPatterns(tools, WEAK_QUANT_ENERGY_PATTERNS)
+      : {};
+
+  const merged = { ...baseSelection, ...topicSelection };
+  const mergedEntries = Object.entries(merged);
+  if (mergedEntries.length >= minimumTools) {
+    return Object.fromEntries(mergedEntries);
+  }
+
+  const fallbackEntries = Object.entries(tools).slice(0, minimumTools);
+  return Object.fromEntries([...mergedEntries, ...fallbackEntries].slice(0, Math.max(minimumTools, mergedEntries.length)));
+}
+
 const CREATE_CHART_INPUT_SCHEMA: Record<string, unknown> = {
   type: "object",
   additionalProperties: false,
@@ -373,6 +406,73 @@ export type QuantEvidenceSummary = {
   dataBearingResultCount: number;
   hasEnoughEvidence: boolean;
 };
+
+export type ToolLoopHealthSummary = {
+  uniqueCallSignatures: number;
+  repeatedCallCount: number;
+  maxRepeatCount: number;
+  repeatedSignatures: string[];
+};
+
+function compactSignatureValue(value: unknown, depth = 0): unknown {
+  if (depth > 2) return "[depth]";
+  if (value == null || typeof value === "string" || typeof value === "number" || typeof value === "boolean") return value;
+  if (Array.isArray(value)) return value.slice(0, 4).map((item) => compactSignatureValue(item, depth + 1));
+  if (!isRecord(value)) return String(value);
+  const sortedKeys = Object.keys(value).sort().slice(0, 8);
+  const compacted: Record<string, unknown> = {};
+  for (const key of sortedKeys) {
+    compacted[key] = compactSignatureValue(value[key], depth + 1);
+  }
+  return compacted;
+}
+
+function stringifySignature(value: unknown): string {
+  try {
+    return JSON.stringify(compactSignatureValue(value));
+  } catch {
+    return "[unserializable]";
+  }
+}
+
+export function summarizeToolLoopHealth(resultLike: unknown): ToolLoopHealthSummary {
+  const source = isRecord(resultLike) ? resultLike : {};
+  const steps = Array.isArray(source.steps) ? source.steps : [];
+  const topCalls = Array.isArray(source.toolCalls) ? source.toolCalls : [];
+  const allCalls = [...topCalls];
+  for (const step of steps) {
+    if (!isRecord(step) || !Array.isArray(step.toolCalls)) continue;
+    allCalls.push(...step.toolCalls);
+  }
+
+  const counts = new Map<string, number>();
+  for (const call of allCalls) {
+    if (!isRecord(call) || typeof call.toolName !== "string") continue;
+    const rawInput = call.input ?? call.args ?? call.arguments ?? null;
+    const signature = `${call.toolName}:${stringifySignature(rawInput)}`;
+    counts.set(signature, (counts.get(signature) ?? 0) + 1);
+  }
+
+  let repeatedCallCount = 0;
+  let maxRepeatCount = 0;
+  const repeatedSignatures: string[] = [];
+  for (const [signature, count] of counts.entries()) {
+    if (count > 1) {
+      repeatedCallCount += count - 1;
+      maxRepeatCount = Math.max(maxRepeatCount, count);
+      if (repeatedSignatures.length < 5) {
+        repeatedSignatures.push(signature);
+      }
+    }
+  }
+
+  return {
+    uniqueCallSignatures: counts.size,
+    repeatedCallCount,
+    maxRepeatCount,
+    repeatedSignatures,
+  };
+}
 
 export function summarizeQuantEvidence(resultLike: unknown, minNonChartCalls: number): QuantEvidenceSummary {
   const { calls, results } = extractToolActivity(resultLike);
