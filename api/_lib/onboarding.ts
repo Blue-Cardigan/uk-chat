@@ -58,24 +58,24 @@ async function issueMcpToken(email: string) {
 
 async function createMagicLink(email: string, appUrlOverride?: string) {
   const supabase = getSupabaseAdmin();
-  const appUrl = (appUrlOverride ?? env("APP_URL"))?.trim();
+  const appUrl = (appUrlOverride ?? env("INVITE_APP_URL") ?? env("APP_URL") ?? "https://chatgb.co.uk").trim();
   if (!appUrl) {
-    throw new Error("APP_URL must be set before sending onboarding emails.");
+    throw new Error("A valid invite app URL must be set before sending onboarding emails.");
   }
 
   let redirectTo: string;
   try {
     const parsed = new URL(appUrl);
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      throw new Error("APP_URL must use http or https.");
+      throw new Error("Invite app URL must use http or https.");
     }
     if (isLoopbackHostname(parsed.hostname)) {
-      throw new Error("APP_URL must not be a localhost/loopback URL when sending onboarding emails.");
+      throw new Error("Invite app URL must not be a localhost/loopback URL when sending onboarding emails.");
     }
     redirectTo = `${parsed.origin}/auth/callback`;
   } catch (error) {
-    const message = error instanceof Error ? error.message : "APP_URL is invalid.";
-    throw new Error(`Invalid APP_URL configuration: ${message}`);
+    const message = error instanceof Error ? error.message : "Invite app URL is invalid.";
+    throw new Error(`Invalid invite URL configuration: ${message}`);
   }
 
   const { data, error } = await supabase.auth.admin.generateLink({
