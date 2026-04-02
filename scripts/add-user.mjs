@@ -22,8 +22,8 @@ function loadEnvFromWorkspace() {
 
 function printUsage() {
   console.log(`Usage:
-  npm run user:add -- --email user@example.com [--token MCP_TOKEN] [--no-email] [--rotate-token]
-  npm run user:add -- user@example.com [--token MCP_TOKEN] [--no-email] [--rotate-token]
+  npm run user:add -- --email user@example.com [--token MCP_TOKEN] [--no-email] [--rotate-token] [--app-url https://chatgb.co.uk]
+  npm run user:add -- user@example.com [--token MCP_TOKEN] [--no-email] [--rotate-token] [--app-url https://chatgb.co.uk]
 
 Flags:
   --email <email>   Email to onboard
@@ -31,12 +31,13 @@ Flags:
   --no-email        Skip sending a magic-link email
   --rotate-token    Force issuing a fresh MCP token
   --api-url <url>   Base URL for API requests (defaults to ADMIN_API_URL or http://localhost:3000)
+  --app-url <url>   App URL used for magic-link redirect (defaults to INVITE_APP_URL or https://chatgb.co.uk)
   --help            Show this help
 `);
 }
 
 function parseArgs(argv) {
-  const args = { email: "", token: undefined, help: false, sendEmail: true, rotateToken: false, apiUrl: "" };
+  const args = { email: "", token: undefined, help: false, sendEmail: true, rotateToken: false, apiUrl: "", appUrl: "" };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--help" || arg === "-h") {
@@ -63,6 +64,11 @@ function parseArgs(argv) {
     }
     if (arg === "--api-url") {
       args.apiUrl = argv[i + 1] ?? "";
+      i += 1;
+      continue;
+    }
+    if (arg === "--app-url") {
+      args.appUrl = argv[i + 1] ?? "";
       i += 1;
       continue;
     }
@@ -95,6 +101,7 @@ async function main() {
   }
 
   const apiBase = (args.apiUrl || process.env.ADMIN_API_URL || "http://localhost:3000").replace(/\/$/, "");
+  const appUrl = (args.appUrl || process.env.INVITE_APP_URL || "https://chatgb.co.uk").replace(/\/$/, "");
   const bootstrapSecret = process.env.ADMIN_BOOTSTRAP_SECRET;
 
   if (!bootstrapSecret) {
@@ -112,6 +119,7 @@ async function main() {
       sendEmail: args.sendEmail,
       token: args.token,
       rotateToken: args.rotateToken,
+      appUrl,
     }),
   });
 

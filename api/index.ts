@@ -2905,6 +2905,7 @@ async function handleAdminOnboardUser(request: Request) {
     sendEmail?: boolean;
     token?: string;
     rotateToken?: boolean;
+    appUrl?: string;
   };
   if (!body.email) return json({ error: "Email is required" }, 400);
 
@@ -2914,6 +2915,7 @@ async function handleAdminOnboardUser(request: Request) {
       sendEmail: body.sendEmail,
       token: body.token,
       rotateToken: body.rotateToken,
+      appUrl: body.appUrl,
     });
     await writeAdminAuditLog({
       actorUserId: auth.user?.id ?? null,

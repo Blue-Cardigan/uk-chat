@@ -10,6 +10,7 @@ type OnboardUserInput = {
   sendEmail?: boolean;
   token?: string;
   rotateToken?: boolean;
+  appUrl?: string;
 };
 
 type OnboardUserResult = {
@@ -22,6 +23,10 @@ type OnboardUserResult = {
 
 function normalizeEmail(email: string) {
   return email.trim().toLowerCase();
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
 }
 
 async function issueMcpToken(email: string) {
@@ -51,14 +56,32 @@ async function issueMcpToken(email: string) {
   return payload.token;
 }
 
-async function createMagicLink(email: string) {
+async function createMagicLink(email: string, appUrlOverride?: string) {
   const supabase = getSupabaseAdmin();
-  const appUrl = env("APP_URL");
-  const redirectTo = appUrl ? `${appUrl}/auth/callback` : undefined;
+  const appUrl = (appUrlOverride ?? env("APP_URL"))?.trim();
+  if (!appUrl) {
+    throw new Error("APP_URL must be set before sending onboarding emails.");
+  }
+
+  let redirectTo: string;
+  try {
+    const parsed = new URL(appUrl);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      throw new Error("APP_URL must use http or https.");
+    }
+    if (isLoopbackHostname(parsed.hostname)) {
+      throw new Error("APP_URL must not be a localhost/loopback URL when sending onboarding emails.");
+    }
+    redirectTo = `${parsed.origin}/auth/callback`;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "APP_URL is invalid.";
+    throw new Error(`Invalid APP_URL configuration: ${message}`);
+  }
+
   const { data, error } = await supabase.auth.admin.generateLink({
     type: "magiclink",
     email,
-    options: redirectTo ? { redirectTo } : undefined,
+    options: { redirectTo },
   });
   if (error) {
     throw new Error(`Failed to generate magic link: ${error.message}`);
@@ -156,7 +179,7 @@ export async function onboardUser(input: OnboardUserInput): Promise<OnboardUserR
 
   let emailSent = false;
   if (shouldSendEmail) {
-    const actionLink = await createMagicLink(email);
+    const actionLink = await createMagicLink(email, input.appUrl);
     await sendResendMagicLink(email, actionLink);
     emailSent = true;
   }
