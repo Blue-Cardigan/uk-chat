@@ -77,6 +77,7 @@ function detectCouncilScopeHint(text: string): string {
 export function PromptInput({
   onSubmit,
   onCouncilModeChange,
+  councilModeEnabled: controlledCouncilModeEnabled,
   isLoading,
   placeholder,
   councilPlaceholder,
@@ -94,6 +95,7 @@ export function PromptInput({
 }: {
   onSubmit: (payload: PromptInputSubmitPayload) => void | Promise<boolean | void>;
   onCouncilModeChange?: (enabled: boolean) => void;
+  councilModeEnabled?: boolean;
   isLoading?: boolean;
   placeholder?: string;
   councilPlaceholder?: string;
@@ -115,7 +117,7 @@ export function PromptInput({
   const OVERSCAN = 120;
 
   const [value, setValue] = useState("");
-  const [councilModeEnabled, setCouncilModeEnabled] = useState(false);
+  const [councilModeEnabled, setCouncilModeEnabled] = useState(controlledCouncilModeEnabled ?? false);
   const [selectedDocuments, setSelectedDocuments] = useState<File[]>([]);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [slashMenuIndex, setSlashMenuIndex] = useState(0);
@@ -321,6 +323,11 @@ export function PromptInput({
   useEffect(() => {
     onCouncilModeChange?.(councilModeEnabled);
   }, [councilModeEnabled, onCouncilModeChange]);
+
+  useEffect(() => {
+    if (typeof controlledCouncilModeEnabled !== "boolean") return;
+    setCouncilModeEnabled(controlledCouncilModeEnabled);
+  }, [controlledCouncilModeEnabled]);
 
   useEffect(() => {
     if (!isModelMenuOpen) return;

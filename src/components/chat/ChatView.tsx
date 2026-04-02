@@ -954,6 +954,7 @@ export function ChatView({
           <ChatInput
             onSubmit={(payload) => void submitPrompt(payload)}
             onCouncilModeChange={setCouncilModeEnabled}
+            councilModeEnabled={councilModeEnabled}
             isStreaming={status === "streaming" || status === "submitted" || councilPending || preparingConversation}
             modelId={selectedModelId}
             onModelChange={setSelectedModelId}
