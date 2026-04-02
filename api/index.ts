@@ -3,6 +3,12 @@ import { createMCPClient } from "@ai-sdk/mcp";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { waitUntil } from "@vercel/functions";
 import { CHAT_MODEL_CONFIGS, CHAT_SUPPORT_CONTACT, getChatModelConfig } from "../src/shared/chat-models.js";
+import type {
+  ResumableChatContinueRequest,
+  ResumableChatCreateRequest,
+  ResumableChatJobPayload,
+  ResumableChatStatus,
+} from "../src/shared/resumable-chat.js";
 import { onboardUser } from "./_lib/onboarding.js";
 import { ensureAdmin, ensureAdminOrBootstrap, getSupabaseAdmin, getUserFromRequest, json } from "./_lib/server.js";
 import { writeAdminAuditLog } from "./_lib/audit.js";
@@ -63,6 +69,18 @@ function env(key: string): string | undefined {
   return maybeProcess.process?.env?.[key];
 }
 
+function getResumableMaxSlices(): number {
+  const raw = Number(env("RESUMABLE_CHAT_MAX_SLICES") ?? DEFAULT_RESUMABLE_MAX_SLICES);
+  if (!Number.isFinite(raw)) return DEFAULT_RESUMABLE_MAX_SLICES;
+  return Math.max(2, Math.min(20, Math.round(raw)));
+}
+
+function getResumableSliceStepLimit(): number {
+  const raw = Number(env("RESUMABLE_CHAT_SLICE_STEP_LIMIT") ?? DEFAULT_RESUMABLE_SLICE_STEP_LIMIT);
+  if (!Number.isFinite(raw)) return DEFAULT_RESUMABLE_SLICE_STEP_LIMIT;
+  return Math.max(1, Math.min(3, Math.round(raw)));
+}
+
 let cachedAllowedEmailDomainsRaw: string | null = null;
 let cachedAllowedEmailDomains = new Set<string>();
 
@@ -94,6 +112,8 @@ function isAllowedEmailDomain(email: string): boolean {
 const PRIVACY_NOTICE_VERSION = "2026-03-30";
 const DEFAULT_SHARE_EXPIRY_DAYS = 30;
 const DEFAULT_RETENTION_DAYS = 365;
+const DEFAULT_RESUMABLE_MAX_SLICES = 6;
+const DEFAULT_RESUMABLE_SLICE_STEP_LIMIT = 1;
 
 const openrouter = createOpenRouter({
   apiKey: env("OPENROUTER_API_KEY"),
@@ -103,6 +123,26 @@ const AUTO_CHAT_TITLE_MAX_LENGTH = 72;
 const AUTO_CHAT_TITLE_DEFAULT_REGEX = /^(new chat(?:\s+\d+)?|untitled)$/i;
 const AUTO_CHAT_TITLE_MODEL = "google/gemini-2.5-flash-lite";
 const UK_POSTCODE_REGEX = /\b([A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2})\b/i;
+
+type ResumableChatJobRow = {
+  id: string;
+  conversation_id: string;
+  user_id: string;
+  status: ResumableChatStatus;
+  model_id: string;
+  require_data_tool_call: boolean;
+  completed_slices: number;
+  max_slices: number;
+  latest_messages: unknown;
+  assistant_parts: unknown;
+  quant_telemetry: unknown;
+  prompt_tokens: number;
+  completion_tokens: number;
+  tool_calls: number;
+  last_continue_key: string | null;
+  last_error: string | null;
+  updated_at: string;
+};
 
 function getOpenRouterFallbackModels(modelId: string): string[] {
   switch (modelId) {
@@ -1533,6 +1573,47 @@ async function loadAuthorizedMcpTools({
   return { tools: mcpLoad.tools as Record<string, unknown> };
 }
 
+function normalizeJobMessages(value: unknown): Array<{ role: string; parts: PersistedMessagePart[] }> {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry) => {
+      if (!isRecord(entry) || typeof entry.role !== "string" || !Array.isArray(entry.parts)) return null;
+      const parts = entry.parts.filter((part): part is PersistedMessagePart => isRecord(part) && typeof part.type === "string");
+      return { role: entry.role, parts };
+    })
+    .filter((entry): entry is { role: string; parts: PersistedMessagePart[] } => entry !== null);
+}
+
+function toResumableJobPayload(row: ResumableChatJobRow): ResumableChatJobPayload {
+  return {
+    id: row.id,
+    conversationId: row.conversation_id,
+    status: row.status,
+    completedSlices: row.completed_slices ?? 0,
+    maxSlices: row.max_slices ?? DEFAULT_RESUMABLE_MAX_SLICES,
+    assistantParts: Array.isArray(row.assistant_parts)
+      ? (row.assistant_parts as Array<{ type: string; [key: string]: unknown }>)
+      : null,
+    lastError: row.last_error ?? null,
+    updatedAt: row.updated_at,
+  };
+}
+
+function parseUsage(event: unknown): { promptTokens: number; completionTokens: number; toolCalls: number } {
+  if (!isRecord(event)) return { promptTokens: 0, completionTokens: 0, toolCalls: 0 };
+  const usage = isRecord(event.usage) ? (event.usage as Record<string, unknown>) : null;
+  const promptTokens =
+    (typeof usage?.["inputTokens"] === "number" ? usage["inputTokens"] : null) ??
+    (typeof usage?.["promptTokens"] === "number" ? usage["promptTokens"] : null) ??
+    0;
+  const completionTokens =
+    (typeof usage?.["outputTokens"] === "number" ? usage["outputTokens"] : null) ??
+    (typeof usage?.["completionTokens"] === "number" ? usage["completionTokens"] : null) ??
+    0;
+  const toolCalls = Array.isArray(event.toolCalls) ? event.toolCalls.length : 0;
+  return { promptTokens, completionTokens, toolCalls };
+}
+
 async function handleChatTools(request: Request) {
   const user = await getUserFromRequest(request);
   if (!user) return json({ error: "Unauthorized" }, 401);
@@ -2169,6 +2250,379 @@ async function handleChat(request: Request) {
   return result.toUIMessageStreamResponse({
     originalMessages: (body.messages ?? []) as never,
   });
+}
+
+async function runResumableChatSlice(params: {
+  supabase: ReturnType<typeof getSupabaseAdmin>;
+  user: { id: string; email?: string | null };
+  job: ResumableChatJobRow;
+  mcpToken?: string | null;
+  continueKey?: string | null;
+}): Promise<ResumableChatJobRow | Response> {
+  const { supabase, user, job, mcpToken, continueKey } = params;
+  const selectedModel = getChatModelConfig(job.model_id);
+  const latestMessages = normalizeJobMessages(job.latest_messages);
+  const latestUserQuery = extractLatestUserText(latestMessages);
+  const requireDataToolCall = Boolean(job.require_data_tool_call);
+
+  const toolLoad = await loadAuthorizedMcpTools({
+    supabase,
+    user,
+    mcpToken,
+    conversationId: job.conversation_id,
+  });
+  if ("response" in toolLoad) return toolLoad.response;
+
+  const tools = compactMcpToolsForModelContext(toolLoad.tools, {
+    outputBudgetChars: selectedModel.toolOutputBudgetChars,
+  });
+  const priorDataToolOutputExists = hasPriorNonChartToolOutput(latestMessages);
+  const allowCreateChartTool = !requireDataToolCall || priorDataToolOutputExists;
+  const selectedBaseTools = selectToolsForChat(tools, latestUserQuery, 18);
+  const quantScopedBaseTools = selectedModel.restrictQuantToolsForWeakModels
+    ? selectWeakModelQuantTools(selectedBaseTools, latestUserQuery, { minimumTools: 3 })
+    : selectedBaseTools;
+  const scopedTools = {
+    ...quantScopedBaseTools,
+    ...(allowCreateChartTool ? { [CREATE_CHART_TOOL_NAME]: createSyntheticChartTool() } : {}),
+  };
+  const guardedTools = enforceCreateChartDataPrereq(scopedTools);
+  const { projectedTools } = projectToolSchemasForModel(guardedTools, selectedModel.id);
+  const { normalizedTools } = normalizeToolSchemas(projectedTools);
+  const { safeTools, safeToOriginal } = buildProviderSafeTools(normalizedTools);
+
+  const documentContext = await loadConversationDocumentContext({
+    supabase,
+    conversationId: job.conversation_id,
+  });
+  const systemPromptBase = getSystemPrompt(new Date(), selectedModel.id);
+  const systemPrompt = documentContext ? `${systemPromptBase}\n\n${documentContext}` : systemPromptBase;
+  const compactedMessages = compactUiMessagesForModel(latestMessages as never);
+  const modelMessages = await convertToModelMessages(compactedMessages as never);
+
+  const stepResult = await generateText({
+    model: openrouter.chat(selectedModel.providerModel),
+    system: systemPrompt,
+    messages: modelMessages,
+    tools: safeTools as Parameters<typeof streamText>[0]["tools"],
+    toolChoice: requireDataToolCall ? "required" : "auto",
+    stopWhen: stepCountIs(getResumableSliceStepLimit()),
+    temperature: selectedModel.toolTemperature,
+  });
+  const stepParts = buildAssistantPartsFromFinishEvent(stepResult, (name) => safeToOriginal.get(name) ?? name);
+  const sliceUsage = parseUsage(stepResult);
+  const nextMessages = [...latestMessages, { role: "assistant", parts: stepParts }];
+  const nextCompletedSlices = (job.completed_slices ?? 0) + 1;
+  const shouldContinue =
+    requireDataToolCall && sliceUsage.toolCalls > 0 && nextCompletedSlices < Math.max(2, job.max_slices ?? DEFAULT_RESUMABLE_MAX_SLICES);
+
+  if (shouldContinue) {
+    const { data: updated, error: updateError } = await supabase
+      .from("uk_chat_jobs")
+      .update({
+        status: "in_progress",
+        completed_slices: nextCompletedSlices,
+        latest_messages: nextMessages,
+        prompt_tokens: (job.prompt_tokens ?? 0) + sliceUsage.promptTokens,
+        completion_tokens: (job.completion_tokens ?? 0) + sliceUsage.completionTokens,
+        tool_calls: (job.tool_calls ?? 0) + sliceUsage.toolCalls,
+        quant_telemetry: {
+          ...(isRecord(job.quant_telemetry) ? job.quant_telemetry : {}),
+          lastSliceToolCalls: sliceUsage.toolCalls,
+          lastSliceAt: new Date().toISOString(),
+        },
+        last_continue_key: continueKey ?? null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", job.id)
+      .eq("user_id", user.id)
+      .select(
+        "id,conversation_id,user_id,status,model_id,require_data_tool_call,completed_slices,max_slices,latest_messages,assistant_parts,quant_telemetry,prompt_tokens,completion_tokens,tool_calls,last_continue_key,last_error,updated_at",
+      )
+      .single();
+    if (updateError || !updated) throw new Error(updateError?.message ?? "Failed to update in-progress chat job");
+    logWarn("[api/chat/jobs] Resumable slice completed", {
+      jobId: job.id,
+      conversationId: job.conversation_id,
+      completedSlices: nextCompletedSlices,
+      maxSlices: job.max_slices,
+      toolCalls: sliceUsage.toolCalls,
+    });
+    return updated as ResumableChatJobRow;
+  }
+
+  const synthesisMessages = await convertToModelMessages(compactUiMessagesForModel(nextMessages as never) as never);
+  const finalResult = await generateText({
+    model: openrouter.chat(selectedModel.providerModel),
+    system: `${systemPrompt}\n\nSynthesize a concise, grounded final answer using the gathered evidence.`,
+    messages: synthesisMessages,
+    temperature: selectedModel.toolTemperature,
+  });
+  const finalUsage = parseUsage(finalResult);
+  const assistantParts = buildAssistantPartsFromFinishEvent(finalResult, (name) => safeToOriginal.get(name) ?? name);
+  const totalPromptTokens = (job.prompt_tokens ?? 0) + sliceUsage.promptTokens + finalUsage.promptTokens;
+  const totalCompletionTokens = (job.completion_tokens ?? 0) + sliceUsage.completionTokens + finalUsage.completionTokens;
+  const totalToolCalls = (job.tool_calls ?? 0) + sliceUsage.toolCalls + finalUsage.toolCalls;
+
+  const { error: assistantInsertError } = await supabase.from("uk_chat_messages").insert({
+    conversation_id: job.conversation_id,
+    role: "assistant",
+    parts: assistantParts,
+  });
+  if (assistantInsertError) throw new Error(assistantInsertError.message);
+
+  const { error: updateConversationError } = await supabase
+    .from("uk_chat_conversations")
+    .update({ updated_at: new Date().toISOString() })
+    .eq("id", job.conversation_id)
+    .eq("user_id", user.id);
+  if (updateConversationError) throw new Error(updateConversationError.message);
+
+  if (totalPromptTokens > 0 || totalCompletionTokens > 0 || totalToolCalls > 0) {
+    const { error: tokenError } = await supabase.rpc("increment_token_usage", {
+      p_user_id: user.id,
+      p_model_id: selectedModel.id,
+      p_usage_date: utcDateStamp(),
+      p_prompt_tokens: totalPromptTokens,
+      p_completion_tokens: totalCompletionTokens,
+      p_tool_calls: totalToolCalls,
+    });
+    if (tokenError) {
+      logError("[api/chat/jobs] Failed to persist aggregated token usage", {
+        jobId: job.id,
+        userId: user.id,
+        modelId: selectedModel.id,
+        error: tokenError.message,
+      });
+    }
+  }
+
+  const finalMessages = [...nextMessages, { role: "assistant", parts: assistantParts }];
+  const { data: completed, error: completeError } = await supabase
+    .from("uk_chat_jobs")
+    .update({
+      status: "completed",
+      completed_slices: nextCompletedSlices,
+      latest_messages: finalMessages,
+      assistant_parts: assistantParts,
+      prompt_tokens: totalPromptTokens,
+      completion_tokens: totalCompletionTokens,
+      tool_calls: totalToolCalls,
+      last_continue_key: continueKey ?? null,
+      last_error: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", job.id)
+    .eq("user_id", user.id)
+    .select(
+      "id,conversation_id,user_id,status,model_id,require_data_tool_call,completed_slices,max_slices,latest_messages,assistant_parts,quant_telemetry,prompt_tokens,completion_tokens,tool_calls,last_continue_key,last_error,updated_at",
+    )
+    .single();
+  if (completeError || !completed) throw new Error(completeError?.message ?? "Failed to finalize chat job");
+
+  logWarn("[api/chat/jobs] Resumable job completed", {
+    jobId: job.id,
+    conversationId: job.conversation_id,
+    completedSlices: nextCompletedSlices,
+    totalPromptTokens,
+    totalCompletionTokens,
+    totalToolCalls,
+  });
+  return completed as ResumableChatJobRow;
+}
+
+async function handleChatJobCreate(request: Request) {
+  const user = await getUserFromRequest(request);
+  if (!user) return json({ error: "Unauthorized" }, 401);
+
+  const body = (await request.json()) as ResumableChatCreateRequest;
+  if (!body.conversationId) return json({ error: "Missing conversationId" }, 400);
+  if (!Array.isArray(body.messages) || body.messages.length === 0) {
+    return json({ error: "Missing messages" }, 400);
+  }
+
+  const supabase = getSupabaseAdmin();
+  const { data: conversation } = await supabase
+    .from("uk_chat_conversations")
+    .select("id,title")
+    .eq("id", body.conversationId)
+    .eq("user_id", user.id)
+    .single();
+  if (!conversation) return json({ error: "Conversation not found" }, 404);
+
+  const selectedModel = getChatModelConfig(body.modelId);
+  const usageReservation = await reserveModelUsageSlot({
+    supabase,
+    userId: user.id,
+    modelId: selectedModel.id,
+    dailyLimit: selectedModel.dailyLimit,
+  });
+  if (!usageReservation.ok) {
+    if (usageReservation.error) return json({ error: usageReservation.error }, 500);
+    return json(
+      {
+        error: `You've hit today's conservative limit for ${selectedModel.label}. Please try again tomorrow - ${CHAT_SUPPORT_CONTACT}.`,
+        code: "MODEL_USAGE_LIMIT_REACHED",
+      },
+      429,
+    );
+  }
+
+  if (body.idempotencyKey) {
+    const { data: existing } = await supabase
+      .from("uk_chat_jobs")
+      .select(
+        "id,conversation_id,user_id,status,model_id,require_data_tool_call,completed_slices,max_slices,latest_messages,assistant_parts,quant_telemetry,prompt_tokens,completion_tokens,tool_calls,last_continue_key,last_error,updated_at",
+      )
+      .eq("user_id", user.id)
+      .eq("conversation_id", body.conversationId)
+      .eq("request_idempotency_key", body.idempotencyKey)
+      .maybeSingle();
+    if (existing) return json({ job: toResumableJobPayload(existing as ResumableChatJobRow) });
+  }
+
+  const incomingDocuments = sanitizeIncomingDocuments(body.documents);
+  const latestUserMessage = [...body.messages].reverse().find((message) => message.role === "user");
+  if (!latestUserMessage) return json({ error: "No user message found in payload" }, 400);
+  const userParts = Array.isArray(latestUserMessage.parts) ? [...latestUserMessage.parts] : [];
+  incomingDocuments.forEach((document) => userParts.push(document));
+  userParts.push({ type: "meta-model", modelId: selectedModel.id });
+  const { error: insertUserError } = await supabase.from("uk_chat_messages").insert({
+    conversation_id: body.conversationId,
+    role: "user",
+    parts: userParts,
+  });
+  if (insertUserError) return json({ error: "Failed to save your message. Please try again." }, 500);
+
+  let latestUserMessageIndex = -1;
+  for (let index = body.messages.length - 1; index >= 0; index -= 1) {
+    if (body.messages[index]?.role === "user") {
+      latestUserMessageIndex = index;
+      break;
+    }
+  }
+  const jobMessages =
+    latestUserMessageIndex >= 0
+      ? body.messages.map((message, index) =>
+          index === latestUserMessageIndex ? { ...message, parts: userParts } : message,
+        )
+      : body.messages;
+  const requireDataToolCall = shouldRequireDataToolCall(extractLatestUserText(jobMessages));
+
+  const { data: inserted, error: insertJobError } = await supabase
+    .from("uk_chat_jobs")
+    .insert({
+      user_id: user.id,
+      conversation_id: body.conversationId,
+      status: "in_progress",
+      model_id: selectedModel.id,
+      require_data_tool_call: requireDataToolCall,
+      completed_slices: 0,
+      max_slices: getResumableMaxSlices(),
+      latest_messages: jobMessages,
+      request_idempotency_key: body.idempotencyKey ?? null,
+      quant_telemetry: {
+        resumable: true,
+        createdAt: new Date().toISOString(),
+      },
+    })
+    .select(
+      "id,conversation_id,user_id,status,model_id,require_data_tool_call,completed_slices,max_slices,latest_messages,assistant_parts,quant_telemetry,prompt_tokens,completion_tokens,tool_calls,last_continue_key,last_error,updated_at",
+    )
+    .single();
+  if (insertJobError || !inserted) return json({ error: insertJobError?.message ?? "Failed to create chat job" }, 500);
+
+  try {
+    const result = await runResumableChatSlice({
+      supabase,
+      user,
+      job: inserted as ResumableChatJobRow,
+      mcpToken: body.mcpToken,
+      continueKey: body.idempotencyKey ?? null,
+    });
+    if (result instanceof Response) return result;
+    return json({ job: toResumableJobPayload(result) });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await supabase
+      .from("uk_chat_jobs")
+      .update({
+        status: "failed",
+        last_error: message,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", inserted.id)
+      .eq("user_id", user.id);
+    return json({ error: "Failed to start resumable chat job", details: message }, 500);
+  }
+}
+
+async function handleChatJobStatus(request: Request, jobId: string) {
+  const user = await getUserFromRequest(request);
+  if (!user) return json({ error: "Unauthorized" }, 401);
+  const supabase = getSupabaseAdmin();
+  const { data: job } = await supabase
+    .from("uk_chat_jobs")
+    .select(
+      "id,conversation_id,user_id,status,model_id,require_data_tool_call,completed_slices,max_slices,latest_messages,assistant_parts,quant_telemetry,prompt_tokens,completion_tokens,tool_calls,last_continue_key,last_error,updated_at",
+    )
+    .eq("id", jobId)
+    .eq("user_id", user.id)
+    .maybeSingle();
+  if (!job) return json({ error: "Job not found" }, 404);
+  return json({ job: toResumableJobPayload(job as ResumableChatJobRow) });
+}
+
+async function handleChatJobContinue(request: Request, jobId: string) {
+  const user = await getUserFromRequest(request);
+  if (!user) return json({ error: "Unauthorized" }, 401);
+  const supabase = getSupabaseAdmin();
+  const body = (await request.json()) as ResumableChatContinueRequest;
+  const { data: job } = await supabase
+    .from("uk_chat_jobs")
+    .select(
+      "id,conversation_id,user_id,status,model_id,require_data_tool_call,completed_slices,max_slices,latest_messages,assistant_parts,quant_telemetry,prompt_tokens,completion_tokens,tool_calls,last_continue_key,last_error,updated_at",
+    )
+    .eq("id", jobId)
+    .eq("user_id", user.id)
+    .maybeSingle();
+  if (!job) return json({ error: "Job not found" }, 404);
+
+  const typedJob = job as ResumableChatJobRow;
+  if (typedJob.status !== "in_progress") return json({ job: toResumableJobPayload(typedJob) });
+  if (body.idempotencyKey && typedJob.last_continue_key === body.idempotencyKey) {
+    return json({ job: toResumableJobPayload(typedJob) });
+  }
+
+  try {
+    const result = await runResumableChatSlice({
+      supabase,
+      user,
+      job: typedJob,
+      mcpToken: body.mcpToken,
+      continueKey: body.idempotencyKey ?? null,
+    });
+    if (result instanceof Response) return result;
+    return json({ job: toResumableJobPayload(result) });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const { data: failed } = await supabase
+      .from("uk_chat_jobs")
+      .update({
+        status: "failed",
+        last_error: message,
+        last_continue_key: body.idempotencyKey ?? null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", typedJob.id)
+      .eq("user_id", user.id)
+      .select(
+        "id,conversation_id,user_id,status,model_id,require_data_tool_call,completed_slices,max_slices,latest_messages,assistant_parts,quant_telemetry,prompt_tokens,completion_tokens,tool_calls,last_continue_key,last_error,updated_at",
+      )
+      .single();
+    if (failed) return json({ job: toResumableJobPayload(failed as ResumableChatJobRow) }, 500);
+    return json({ error: "Failed to continue chat job", details: message }, 500);
+  }
 }
 
 function isCouncilResolvedGeography(value: unknown): value is CouncilResolvedGeography {
@@ -3243,6 +3697,18 @@ async function routeRequest(request: Request) {
   }
 
   if (parts[0] === "chat") {
+    if (parts.length === 2 && parts[1] === "jobs") {
+      if (request.method !== "POST") return methodNotAllowed();
+      return handleChatJobCreate(request);
+    }
+    if (parts.length === 3 && parts[1] === "jobs") {
+      if (request.method !== "GET") return methodNotAllowed();
+      return handleChatJobStatus(request, parts[2]);
+    }
+    if (parts.length === 4 && parts[1] === "jobs" && parts[3] === "continue") {
+      if (request.method !== "POST") return methodNotAllowed();
+      return handleChatJobContinue(request, parts[2]);
+    }
     if (parts.length === 2 && parts[1] === "tools") {
       if (request.method !== "POST") return methodNotAllowed();
       return handleChatTools(request);
