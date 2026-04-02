@@ -91,6 +91,17 @@ TOOL STRATEGY RULES
 `.trim();
 }
 
+function buildPlanningDisciplineBlock(): string {
+  return `
+PLAN BEFORE CALLING TOOLS (IMPORTANT)
+- For quantitative or multi-part requests, privately draft a short execution plan before your first tool call.
+- The plan should include: required geographies, primary datasets/tools, comparison dimensions, and output format.
+- Then execute the plan in order and keep going until you have enough evidence to answer confidently.
+- Do not stop after a single exploratory/search call when the user asked for comparison, trend, or charted output.
+- If one call returns only metadata/search results, follow up with concrete data retrieval calls before finalising.
+`.trim();
+}
+
 function buildVisualizationBlock(): string {
   return `
 VISUALISATION DECISION FRAMEWORK
@@ -199,12 +210,15 @@ MODEL PROFILE (OPUS)
 `.trim();
     case "gpt":
       return `
-MODEL PROFILE (GPT-4O)
+MODEL PROFILE (GPT-5.4)
 - Strength: reliable structured output and clear chart specs.
 - Risk: can rely on prior knowledge for UK metrics if not constrained.
 - Behaviour: verify UK numbers with tools before asserting quantitative claims.
 - Tooling: prefer focused, parameterised calls with explicit geography/date filters.
 - Charting: use create_chart when data is chartable and keep payload compact (<= 100 rows unless user asks otherwise).
+- Hard rule: NEVER call create_chart as your first or only tool call.
+- Hard rule: call at least one MCP data-retrieval tool and receive concrete numeric outputs before create_chart.
+- Hard rule: do not fabricate create_chart rows; every row must come from prior tool results.
 - Spatial outputs: use vizHint.suggested as map for coordinate or area-code outputs, including latField/lngField or codeField/valueField.
 - Failure mode: skipping evidence step; explicitly perform at least one validating data call for place/time numeric questions.
 `.trim();
@@ -252,6 +266,7 @@ export function getSystemPrompt(now: Date = new Date(), modelId?: PromptModelId)
     buildIdentityAndToneBlock(today),
     buildToolGuideBlock(),
     buildRoutingPatternsBlock(),
+    buildPlanningDisciplineBlock(),
     buildVisualizationBlock(),
     buildResponseFormatBlock(),
     buildErrorRecoveryBlock(),

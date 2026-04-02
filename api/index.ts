@@ -1,4 +1,4 @@
-import { generateText, jsonSchema, stepCountIs, streamText } from "ai";
+import { convertToModelMessages, generateText, jsonSchema, stepCountIs, streamText } from "ai";
 import { createMCPClient } from "@ai-sdk/mcp";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { waitUntil } from "@vercel/functions";
@@ -11,6 +11,19 @@ import { logError, logWarn } from "./_lib/logger.js";
 import { getSystemPrompt } from "./_lib/system-prompt.js";
 import { continueCouncilDeliberation, createCouncilDeliberation } from "./_lib/council/handler.js";
 import { parseCouncilCreateRequest, parseCouncilFollowUpRequest, parseCouncilInferScopeRequest } from "./_lib/council/schemas.js";
+import { compactMessagesForModel as compactUiMessagesForModel } from "./_lib/context.js";
+import { buildExecutionPlanContext, buildQuantContinuationContext, generateExecutionPlan } from "./_lib/chat-handler.js";
+import { buildMcpCandidates as buildMcpCandidatesFromLib, loadMcpToolsWithFallback as loadMcpToolsWithFallbackFromLib } from "./_lib/mcp.js";
+import {
+  CREATE_CHART_TOOL_NAME as CREATE_CHART_TOOL_NAME_FROM_LIB,
+  compactMcpToolsForModelContext as compactMcpToolsForModelContextFromLib,
+  createSyntheticChartTool as createSyntheticChartToolFromLib,
+  enforceCreateChartDataPrereq as enforceCreateChartDataPrereqFromLib,
+  hasPriorNonChartToolOutput as hasPriorNonChartToolOutputFromLib,
+  selectToolsForChat as selectToolsForChatFromLib,
+  summarizeQuantEvidence,
+  shouldRequireDataToolCall as shouldRequireDataToolCallFromLib,
+} from "./_lib/tool-pipeline.js";
 import type { CouncilDeliberation, CouncilResolvedGeography, CouncilScope } from "./_lib/council/types.js";
 
 const CONVERSATION_SELECT_FIELDS = "id,title,starred,is_public,share_token,created_at,updated_at";
@@ -322,91 +335,22 @@ function errorMessage(error: unknown): string {
 }
 
 function buildMcpCandidates(configuredUrl: string): McpCandidate[] {
-  const raw = configuredUrl.trim();
-  const url = parseHttpUrl(raw);
-  if (!url) {
-    return [{ type: "sse", url: raw }];
-  }
-
-  const root = new URL(url.toString());
-  root.pathname = root.pathname.replace(/\/+$/, "");
-  const rootUrl = root.toString();
-  const path = root.pathname;
-  const looksLikeSse = /\/sse$/i.test(path);
-  const looksLikeMcp = /\/mcp$/i.test(path);
-
-  const candidates: McpCandidate[] = [];
-  const seen = new Set<string>();
-  const add = (type: McpTransportType, candidateUrl: string) => {
-    const key = `${type}:${candidateUrl}`;
-    if (seen.has(key)) return;
-    seen.add(key);
-    candidates.push({ type, url: candidateUrl });
-  };
-
-  add("sse", url.toString());
-  add("http", url.toString());
-
-  if (looksLikeSse) {
-    const base = url.toString().replace(/\/sse\/?$/i, "");
-    add("http", `${base}/mcp`);
-    add("http", base);
-  } else if (looksLikeMcp) {
-    const base = url.toString().replace(/\/mcp\/?$/i, "");
-    add("sse", `${base}/sse`);
-    add("sse", base);
-  } else {
-    add("sse", `${rootUrl}/sse`);
-    add("http", `${rootUrl}/mcp`);
-    add("http", rootUrl);
-  }
-
-  return candidates;
+  return buildMcpCandidatesFromLib(configuredUrl) as McpCandidate[];
 }
 
 async function loadMcpToolsWithFallback(configuredUrl: string, token: string) {
-  const candidates = buildMcpCandidates(configuredUrl);
-  const attempts: McpAttempt[] = [];
-
-  for (const candidate of candidates) {
-    try {
-      const mcpClient = await createMCPClient({
-        transport: {
-          type: candidate.type,
-          url: candidate.url,
-          headers: { Authorization: `Bearer ${token}` },
-        },
-      });
-      const tools = await mcpClient.tools();
-      return { tools, connectedVia: candidate, attempts };
-    } catch (error) {
-      attempts.push({
-        type: candidate.type,
-        url: candidate.url,
-        error: errorMessage(error),
-      });
-    }
-  }
-
-  return { tools: null, connectedVia: null, attempts };
+  return (await loadMcpToolsWithFallbackFromLib(configuredUrl, token)) as {
+    tools: Record<string, unknown> | null;
+    connectedVia: McpCandidate | null;
+    attempts: McpAttempt[];
+  };
 }
 
-function compactMcpToolsForModelContext(tools: Record<string, unknown>): Record<string, unknown> {
-  const compactedEntries = Object.entries(tools).map(([toolName, definition]) => {
-    if (!isRecord(definition) || typeof definition.execute !== "function") return [toolName, definition] as const;
-
-    const originalExecute = definition.execute as (...args: unknown[]) => unknown;
-    const wrappedDefinition = {
-      ...definition,
-      execute: async (...args: unknown[]) => {
-        const result = await originalExecute(...args);
-        return compactToolOutputForModel(result);
-      },
-    };
-    return [toolName, wrappedDefinition] as const;
-  });
-
-  return Object.fromEntries(compactedEntries);
+function compactMcpToolsForModelContext(
+  tools: Record<string, unknown>,
+  options?: { outputBudgetChars?: number },
+): Record<string, unknown> {
+  return compactMcpToolsForModelContextFromLib(tools, options);
 }
 
 function isMcpUnauthorized(attempts: McpAttempt[]): boolean {
@@ -714,7 +658,7 @@ const MAX_MODEL_CONTEXT_MESSAGES = 12;
 const MAX_MODEL_MESSAGE_PARTS = 10;
 const MAX_MODEL_TEXT_PART_CHARS = 4_000;
 type CompactModelMessage = { role: "user" | "assistant" | "system"; content: string };
-const CREATE_CHART_TOOL_NAME = "create_chart";
+const CREATE_CHART_TOOL_NAME = CREATE_CHART_TOOL_NAME_FROM_LIB;
 
 const CREATE_CHART_INPUT_SCHEMA: Record<string, unknown> = {
   type: "object",
@@ -901,35 +845,15 @@ function truncateText(text: string, maxChars: number): string {
 }
 
 function compactMessagesForModel(messages: unknown): CompactModelMessage[] {
-  if (!Array.isArray(messages)) return [];
-
-  const compacted: CompactModelMessage[] = [];
-  for (const message of messages.slice(-MAX_MODEL_CONTEXT_MESSAGES)) {
-    if (!isRecord(message)) continue;
-    const role = message.role === "assistant" || message.role === "system" ? message.role : "user";
-    const rawParts = Array.isArray(message.parts) ? message.parts : [];
-    const textChunks: string[] = [];
-
-    for (const part of rawParts.slice(0, MAX_MODEL_MESSAGE_PARTS)) {
-      if (!isRecord(part) || typeof part.type !== "string") continue;
-      if (part.type === "text" && typeof part.text === "string") {
-        textChunks.push(truncateText(part.text, MAX_MODEL_TEXT_PART_CHARS));
-        continue;
-      }
-      // Exclude heavy reasoning/tool payloads from replay context.
-      if (part.type === "reasoning" || part.type.startsWith("tool-")) continue;
-    }
-
-    if (textChunks.length === 0 && typeof message.content === "string" && message.content.trim()) {
-      textChunks.push(truncateText(message.content, MAX_MODEL_TEXT_PART_CHARS));
-    }
-
-    const content = textChunks.join("\n\n").trim();
-    if (!content) continue;
-    compacted.push({ role, content });
-  }
-
-  return compacted;
+  const compacted = compactUiMessagesForModel(messages);
+  return compacted.map((message) => {
+    const content = message.parts
+      .map((part) => (typeof part.text === "string" ? part.text : ""))
+      .filter(Boolean)
+      .join("\n\n")
+      .trim();
+    return { role: message.role, content };
+  });
 }
 
 function sanitizeToolName(name: unknown): string | null {
@@ -1155,8 +1079,9 @@ function logToolSequenceForRequest(params: {
   conversationId?: string | null;
   modelId: string;
   providerModel: string;
+  quantTelemetry?: Record<string, unknown>;
 }) {
-  const { event, conversationId, modelId, providerModel } = params;
+  const { event, conversationId, modelId, providerModel, quantTelemetry } = params;
   if (!isRecord(event)) return;
 
   const toolCalls = Array.isArray(event.toolCalls) ? event.toolCalls : [];
@@ -1190,6 +1115,8 @@ function logToolSequenceForRequest(params: {
 
   const firstTool = sequence[0]?.toolName ?? null;
   const calledCreateChartFirst = firstTool === CREATE_CHART_TOOL_NAME;
+  const finishReason = typeof event.finishReason === "string" ? event.finishReason : null;
+  const stepCount = Array.isArray(event.steps) ? event.steps.length : null;
   const createChartGuardrailTriggered = sequence.some(
     (step) =>
       step.toolName === CREATE_CHART_TOOL_NAME &&
@@ -1202,9 +1129,12 @@ function logToolSequenceForRequest(params: {
     modelId,
     providerModel,
     toolCallCount: sequence.length,
+    finishReason,
+    stepCount,
     firstTool,
     calledCreateChartFirst,
     createChartGuardrailTriggered,
+    quantTelemetry: quantTelemetry ?? null,
     sequence,
   });
 }
@@ -1427,45 +1357,11 @@ function extractLatestUserText(messages: Array<{ role?: string; parts?: unknown[
 }
 
 function shouldRequireDataToolCall(query: string): boolean {
-  const normalized = query.trim().toLowerCase();
-  if (!normalized) return false;
-
-  const quantitativeSignals = [
-    /\bcompare\b/,
-    /\btrend\b/,
-    /\bchange(?:d)?\b/,
-    /\bhow many\b/,
-    /\bhow much\b/,
-    /\bnumber of\b/,
-    /\bmonthly\b/,
-    /\byearly\b/,
-    /\bover the last\b/,
-    /\b\d{4}\b/,
-    /\bchart\b/,
-    /\bgraph\b/,
-    /\bborough\b/,
-    /\bpostcode\b/,
-    /\bcrime\b/,
-    /\benergy\b/,
-    /\belectricity\b/,
-    /\bgas\b/,
-  ];
-
-  return quantitativeSignals.some((pattern) => pattern.test(normalized));
+  return shouldRequireDataToolCallFromLib(query);
 }
 
 function hasPriorNonChartToolOutput(messages: Array<{ role?: string; parts?: unknown[] }> | undefined): boolean {
-  if (!Array.isArray(messages)) return false;
-  for (const message of messages) {
-    if (!message || !Array.isArray(message.parts)) continue;
-    for (const part of message.parts) {
-      if (!isRecord(part) || typeof part.type !== "string") continue;
-      if (!part.type.startsWith("tool-")) continue;
-      const toolName = part.type.slice("tool-".length);
-      if (toolName !== CREATE_CHART_TOOL_NAME) return true;
-    }
-  }
-  return false;
+  return hasPriorNonChartToolOutputFromLib(messages);
 }
 
 function isAutoGeneratedConversationTitle(title?: string | null): boolean {
@@ -1512,71 +1408,15 @@ async function generateAutoChatTitleFromFirstMessage(message: string): Promise<s
 }
 
 function selectToolsForChat(tools: Record<string, unknown>, query: string, limit: number): Record<string, unknown> {
-  const catalog = buildToolCatalog(tools, "");
-  const keywords = query
-    .toLowerCase()
-    .split(/[^a-z0-9]+/)
-    .filter((keyword) => keyword.length >= 3);
-  const ranked = [...catalog].sort((a, b) => {
-    const aHaystack = `${a.name} ${a.description}`.toLowerCase();
-    const bHaystack = `${b.name} ${b.description}`.toLowerCase();
-    const aMatches = keywords.reduce((sum, keyword) => sum + (aHaystack.includes(keyword) ? 1 : 0), 0);
-    const bMatches = keywords.reduce((sum, keyword) => sum + (bHaystack.includes(keyword) ? 1 : 0), 0);
-    return bMatches - aMatches || b.score - a.score;
-  });
-  const selectedNames = new Set(ranked.slice(0, Math.max(8, limit)).map((item) => item.name));
-
-  const selectedEntries = Object.entries(tools).filter(([name]) => selectedNames.has(name));
-  return Object.fromEntries(selectedEntries);
+  return selectToolsForChatFromLib(tools, query, limit);
 }
 
 function createSyntheticChartTool() {
-  return {
-    description: "Create a chart specification from one or more tool outputs.",
-    inputSchema: jsonSchema(CREATE_CHART_INPUT_SCHEMA),
-    execute: async (input: unknown) => compactCreateChartSpec(input),
-  };
+  return createSyntheticChartToolFromLib(compactCreateChartSpec);
 }
 
 function enforceCreateChartDataPrereq(tools: Record<string, unknown>): Record<string, unknown> {
-  let hasCalledNonChartDataTool = false;
-
-  const wrappedEntries = Object.entries(tools).map(([toolName, definition]) => {
-    if (!isRecord(definition)) return [toolName, definition] as const;
-    const execute = definition.execute;
-    if (typeof execute !== "function") return [toolName, definition] as const;
-
-    if (toolName === CREATE_CHART_TOOL_NAME) {
-      return [
-        toolName,
-        {
-          ...definition,
-          execute: async (...args: unknown[]) => {
-            if (!hasCalledNonChartDataTool) {
-              return {
-                error:
-                  "create_chart requires at least one non-create_chart data tool call earlier in this turn. Call a data retrieval tool first, then synthesize with create_chart.",
-              };
-            }
-            return execute(...args);
-          },
-        },
-      ] as const;
-    }
-
-    return [
-      toolName,
-      {
-        ...definition,
-        execute: async (...args: unknown[]) => {
-          hasCalledNonChartDataTool = true;
-          return execute(...args);
-        },
-      },
-    ] as const;
-  });
-
-  return Object.fromEntries(wrappedEntries);
+  return enforceCreateChartDataPrereqFromLib(tools);
 }
 
 async function loadAuthorizedMcpTools({
@@ -1825,7 +1665,9 @@ async function handleChat(request: Request) {
     conversationId: body.conversationId,
   });
   if ("response" in toolLoad) return toolLoad.response;
-  const tools = compactMcpToolsForModelContext(toolLoad.tools);
+  const tools = compactMcpToolsForModelContext(toolLoad.tools, {
+    outputBudgetChars: selectedModel.toolOutputBudgetChars,
+  });
   const latestUserQuery = extractLatestUserText(body.messages);
   const requireDataToolCall = shouldRequireDataToolCall(latestUserQuery);
   const priorDataToolOutputExists = hasPriorNonChartToolOutput(body.messages);
@@ -1839,6 +1681,9 @@ async function handleChat(request: Request) {
 
   const { normalizedTools, normalizedToolNames } = normalizeToolSchemas(projectedTools);
   const { safeTools, safeToOriginal, renamedPairs } = buildProviderSafeTools(normalizedTools);
+  const quantitativeSafeTools = Object.fromEntries(
+    Object.entries(safeTools).filter(([toolName]) => toolName !== CREATE_CHART_TOOL_NAME),
+  );
   if (projectedToolNames.length > 0) {
     logWarn("[api/chat] Applied model-specific tool schema projection", {
       modelId: selectedModel.id,
@@ -1933,16 +1778,105 @@ async function handleChat(request: Request) {
     supabase,
     conversationId: body.conversationId,
   });
+  const quantPolicyActive = requireDataToolCall && selectedModel.runEvidencePrefetchForQuant;
+  const quantTelemetry: Record<string, unknown> = {
+    quantPolicyActive,
+    minNonChartCalls: selectedModel.minDataToolCallsForQuant,
+    continuationInjected: false,
+    fallbackPath: "none",
+  };
+  const planSteps = requireDataToolCall
+    ? await generateExecutionPlan({
+        model: openrouter.chat(selectedModel.providerModel),
+        query: latestUserQuery,
+        availableTools: Object.keys(scopedTools),
+        maxSteps: Math.min(5, selectedModel.toolStepLimit),
+      })
+    : [];
+  const planContext = buildExecutionPlanContext(planSteps);
   const systemPromptBase = getSystemPrompt(new Date(), selectedModel.id);
-  const systemPrompt = documentContext ? `${systemPromptBase}\n\n${documentContext}` : systemPromptBase;
-  const compactedMessages = compactMessagesForModel(body.messages ?? []);
+  let withPlanContext = planContext ? `${systemPromptBase}\n\n${planContext}` : systemPromptBase;
+  let quantContinuationContext = "";
+  const compactedMessages = compactUiMessagesForModel(body.messages ?? []);
+  if (quantPolicyActive) {
+    try {
+      const prefetch = await generateText({
+        model: openrouter.chat(selectedModel.providerModel),
+        system: withPlanContext,
+        prompt: [
+          "Run tool calls to gather concrete numeric evidence for this quantitative query.",
+          "Do not finalise an answer yet.",
+          "Prefer non-create_chart data tools first.",
+          "",
+          `User query: ${latestUserQuery}`,
+        ].join("\n"),
+        tools: quantitativeSafeTools as Parameters<typeof streamText>[0]["tools"],
+        toolChoice: "required",
+        stopWhen: stepCountIs(Math.max(2, Math.min(4, selectedModel.toolStepLimit))),
+        temperature: 0,
+      });
+      const prefetchSummary = summarizeQuantEvidence(prefetch, selectedModel.minDataToolCallsForQuant);
+      quantTelemetry.prefetchSummary = prefetchSummary;
+      quantTelemetry.prefetchToolCallCount = prefetchSummary.toolCallCount;
+      quantTelemetry.prefetchNonChartCalls = prefetchSummary.nonChartToolCallCount;
+      quantTelemetry.prefetchDataBearingResults = prefetchSummary.dataBearingResultCount;
+      quantTelemetry.prefetchFirstTool = prefetchSummary.firstToolName;
+      quantTelemetry.prefetchFirstToolMetadataLike = prefetchSummary.firstToolMetadataLike;
+      quantTelemetry.prefetchHasEnoughEvidence = prefetchSummary.hasEnoughEvidence;
+
+      if (
+        !prefetchSummary.hasEnoughEvidence ||
+        (selectedModel.enableMetadataRetryForQuant && prefetchSummary.firstToolMetadataLike)
+      ) {
+        quantContinuationContext = buildQuantContinuationContext({
+          minNonChartCalls: selectedModel.minDataToolCallsForQuant,
+          firstToolMetadataLike: prefetchSummary.firstToolMetadataLike,
+          forceNoChartFirst: true,
+        });
+        quantTelemetry.continuationInjected = true;
+      }
+
+      const prefetchToolsLine = Array.isArray(prefetch.steps)
+        ? prefetch.steps
+            .flatMap((step) =>
+              Array.isArray((step as { toolCalls?: unknown[] }).toolCalls)
+                ? ((step as { toolCalls?: unknown[] }).toolCalls as unknown[])
+                : [],
+            )
+            .map((call) =>
+              isRecord(call) && typeof call.toolName === "string" ? call.toolName : null,
+            )
+            .filter((name): name is string => Boolean(name))
+            .slice(0, 8)
+            .join(", ")
+        : "";
+      if (prefetchToolsLine) {
+        compactedMessages.push({
+          role: "assistant",
+          parts: [{ type: "text", text: `Evidence prefetch calls: ${prefetchToolsLine}` }],
+        });
+      }
+    } catch (error) {
+      quantTelemetry.prefetchError = error instanceof Error ? error.message : String(error);
+    }
+  }
+  if (quantContinuationContext) {
+    withPlanContext = `${withPlanContext}\n\n${quantContinuationContext}`;
+  }
+  const systemPrompt = documentContext ? `${withPlanContext}\n\n${documentContext}` : withPlanContext;
+  const modelMessages = await convertToModelMessages(compactedMessages as never);
   if (Array.isArray(body.messages) && compactedMessages.length !== body.messages.length) {
     logWarn("[api/chat] Compacted message history for model context", {
       originalCount: body.messages.length,
       compactedCount: compactedMessages.length,
     });
   }
-  const compactedChars = compactedMessages.reduce((sum, message) => sum + message.content.length, 0);
+  const compactedChars = compactedMessages.reduce(
+    (sum, message) =>
+      sum +
+      message.parts.reduce((partSum, part) => partSum + (typeof part.text === "string" ? part.text.length : 0), 0),
+    0,
+  );
   if (compactedChars > 40_000) {
     logWarn("[api/chat] Compacted message payload is still large", {
       compactedCount: compactedMessages.length,
@@ -1951,11 +1885,17 @@ async function handleChat(request: Request) {
   }
 
   const onAssistantFinish: Parameters<typeof streamText>[0]["onFinish"] = async (event) => {
+    if (requireDataToolCall) {
+      const finalEvidence = summarizeQuantEvidence(event, selectedModel.minDataToolCallsForQuant);
+      quantTelemetry.finalEvidence = finalEvidence;
+      quantTelemetry.finalHasEnoughEvidence = finalEvidence.hasEnoughEvidence;
+    }
     logToolSequenceForRequest({
       event,
       conversationId: body.conversationId,
       modelId: selectedModel.id,
       providerModel: selectedModel.providerModel,
+      quantTelemetry,
     });
 
     const persistPromise = (async () => {
@@ -2038,16 +1978,21 @@ async function handleChat(request: Request) {
     includeFallbackModels: boolean;
     includeTools: boolean;
     requireToolCall: boolean;
+    toolsOverride?: Parameters<typeof streamText>[0]["tools"];
+    systemOverride?: string;
   }) =>
     streamText({
       model: openrouter.chat(selectedModel.providerModel, {
         extraBody: options.includeFallbackModels && fallbackModels.length > 0 ? { models: fallbackModels } : undefined,
       }),
-      messages: compactedMessages,
-      tools: options.includeTools ? (safeTools as Parameters<typeof streamText>[0]["tools"]) : undefined,
+      messages: modelMessages,
+      tools: options.includeTools
+        ? (options.toolsOverride ?? (safeTools as Parameters<typeof streamText>[0]["tools"]))
+        : undefined,
       toolChoice: options.includeTools ? (options.requireToolCall ? "required" : "auto") : undefined,
-      stopWhen: stepCountIs(10),
-      system: systemPrompt,
+      stopWhen: stepCountIs(selectedModel.toolStepLimit),
+      temperature: selectedModel.toolTemperature,
+      system: options.systemOverride ?? systemPrompt,
       onFinish: onAssistantFinish,
     });
 
@@ -2067,6 +2012,7 @@ async function handleChat(request: Request) {
       error: error instanceof Error ? error.message : String(error),
     });
     try {
+      quantTelemetry.fallbackPath = "no_fallback_models";
       result = tryStream({
         includeFallbackModels: false,
         includeTools: true,
@@ -2081,6 +2027,7 @@ async function handleChat(request: Request) {
           error: retryError instanceof Error ? retryError.message : String(retryError),
         });
         try {
+          quantTelemetry.fallbackPath = "auto_tool_choice";
           result = tryStream({
             includeFallbackModels: false,
             includeTools: true,
@@ -2088,12 +2035,24 @@ async function handleChat(request: Request) {
           });
         } catch (autoToolChoiceError) {
           if (!isProviderInvalidRequestError(autoToolChoiceError)) throw autoToolChoiceError;
-          logWarn("[api/chat] Provider still rejected request, retrying without tools", {
+          logWarn("[api/chat] Provider still rejected request, retrying with reduced tool set", {
             modelId: selectedModel.id,
             providerModel: selectedModel.providerModel,
             error: autoToolChoiceError instanceof Error ? autoToolChoiceError.message : String(autoToolChoiceError),
           });
-          result = tryStream({ includeFallbackModels: false, includeTools: false, requireToolCall: false });
+          try {
+            quantTelemetry.fallbackPath = "reduced_tools";
+            result = tryStream({
+              includeFallbackModels: false,
+              includeTools: true,
+              requireToolCall: true,
+              toolsOverride: quantitativeSafeTools as Parameters<typeof streamText>[0]["tools"],
+            });
+          } catch (reducedToolError) {
+            if (!isProviderInvalidRequestError(reducedToolError)) throw reducedToolError;
+            quantTelemetry.fallbackPath = "no_tools";
+            result = tryStream({ includeFallbackModels: false, includeTools: false, requireToolCall: false });
+          }
         }
       } else {
         logWarn("[api/chat] Provider still rejected request, retrying without tools", {
@@ -2101,13 +2060,14 @@ async function handleChat(request: Request) {
           providerModel: selectedModel.providerModel,
           error: retryError instanceof Error ? retryError.message : String(retryError),
         });
+        quantTelemetry.fallbackPath = "no_tools_non_quant";
         result = tryStream({ includeFallbackModels: false, includeTools: false, requireToolCall: false });
       }
     }
   }
 
   return result.toUIMessageStreamResponse({
-    originalMessages: body.messages ?? [],
+    originalMessages: (body.messages ?? []) as never,
   });
 }
 
