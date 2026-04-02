@@ -7,7 +7,7 @@ function SimpleTable({ headers, rows }: { headers: string[]; rows: string[][] })
         <thead>
           <tr>
             {headers.map((header) => (
-              <th key={header} className="border-b border-[var(--color-border)] py-2">
+              <th key={header} scope="col" className="border-b border-(--color-border) py-2">
                 {header}
               </th>
             ))}
@@ -17,7 +17,7 @@ function SimpleTable({ headers, rows }: { headers: string[]; rows: string[][] })
           {rows.map((row, index) => (
             <tr key={index}>
               {row.map((cell, cellIndex) => (
-                <td key={cellIndex} className="border-b border-[var(--color-border)] py-2">
+                <td key={cellIndex} className="border-b border-(--color-border) py-2">
                   {cell}
                 </td>
               ))}

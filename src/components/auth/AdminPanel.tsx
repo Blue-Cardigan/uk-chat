@@ -9,15 +9,23 @@ export function AdminPanel() {
   const [email, setEmail] = useState("");
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [message, setMessage] = useState<string | null>(null);
+  const [usersLoading, setUsersLoading] = useState(false);
+  const [usersError, setUsersError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!session?.access_token) return;
+    setUsersLoading(true);
+    setUsersError(null);
     fetch("/api/admin/users", {
       headers: { Authorization: `Bearer ${session.access_token}` },
     })
       .then((response) => response.json())
       .then((data: AdminUser[]) => setUsers(Array.isArray(data) ? data : []))
-      .catch(() => setUsers([]));
+      .catch(() => {
+        setUsers([]);
+        setUsersError("Could not load invited users right now.");
+      })
+      .finally(() => setUsersLoading(false));
   }, [session?.access_token]);
 
   async function inviteUser(event: React.FormEvent) {
@@ -38,12 +46,24 @@ export function AdminPanel() {
 
   return (
     <Card className="space-y-4">
-      <h3 className="text-sm font-semibold uppercase tracking-wide text-[var(--color-muted-foreground)]">Admin Setup</h3>
+      <h3 className="text-sm font-semibold uppercase tracking-wide text-(--color-muted-foreground)">Admin Setup</h3>
       <form onSubmit={inviteUser} className="flex gap-2">
-        <Input type="email" required placeholder="new-user@example.com" value={email} onChange={(e) => setEmail(e.target.value)} />
+        <label htmlFor="admin-invite-email" className="sr-only">
+          Invite email
+        </label>
+        <Input
+          id="admin-invite-email"
+          type="email"
+          required
+          placeholder="new-user@example.com"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+        />
         <Button type="submit">Invite</Button>
       </form>
-      {message ? <p className="text-xs text-[var(--color-muted-foreground)]">{message}</p> : null}
+      {message ? <p className="text-xs text-(--color-muted-foreground)">{message}</p> : null}
+      {usersLoading ? <p className="text-xs text-(--color-muted-foreground)">Loading users...</p> : null}
+      {usersError ? <p role="alert" className="text-xs text-(--color-muted-foreground)">{usersError}</p> : null}
       <div className="space-y-2">
         {users.map((user) => (
           <Card key={user.email} className="flex items-center justify-between p-3 text-xs">

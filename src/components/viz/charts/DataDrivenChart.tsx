@@ -33,7 +33,7 @@ function renderTable(spec: ChartSpec) {
         <thead>
           <tr>
             {headers.map((header) => (
-              <th key={header} className="border-b border-(--color-border) py-2">
+              <th key={header} scope="col" className="border-b border-(--color-border) py-2">
                 {header}
               </th>
             ))}

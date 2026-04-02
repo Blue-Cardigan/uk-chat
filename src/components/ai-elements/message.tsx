@@ -150,7 +150,7 @@ function ToolPartView({ tool, index }: { tool: NormalisedTool; index: number }) 
           <span className="font-medium">
             {tool.isRunning ? (
               <span className="inline-flex items-center gap-1.5">
-                <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-blue-400" />
+                <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-(--color-primary)" />
                 {tool.toolName}
               </span>
             ) : (
@@ -241,9 +241,9 @@ function ReasoningPartView({ part, hideRedacted }: { part: UiPart; hideRedacted:
     if (hideRedacted) return null;
     return (
       <div className="inline-flex items-center gap-2 py-1 text-xs text-(--color-muted-foreground)">
-        <span className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-(--color-muted-foreground) [animation-delay:0ms]" />
-        <span className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-(--color-muted-foreground) [animation-delay:150ms]" />
-        <span className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-(--color-muted-foreground) [animation-delay:300ms]" />
+        <span className="inline-block h-1.5 w-1.5 animate-[streamDot_900ms_ease-out_infinite] rounded-full bg-(--color-muted-foreground) [animation-delay:0ms]" />
+        <span className="inline-block h-1.5 w-1.5 animate-[streamDot_900ms_ease-out_infinite] rounded-full bg-(--color-muted-foreground) [animation-delay:150ms]" />
+        <span className="inline-block h-1.5 w-1.5 animate-[streamDot_900ms_ease-out_infinite] rounded-full bg-(--color-muted-foreground) [animation-delay:300ms]" />
         <span>Thinking...</span>
       </div>
     );
@@ -312,9 +312,9 @@ export function Message({ message }: { message: UiMessage }) {
 function StreamingIndicator() {
   return (
     <div className="flex items-center gap-1 py-1">
-      <span className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-(--color-muted-foreground) [animation-delay:0ms]" />
-      <span className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-(--color-muted-foreground) [animation-delay:150ms]" />
-      <span className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-(--color-muted-foreground) [animation-delay:300ms]" />
+      <span className="inline-block h-1.5 w-1.5 animate-[streamDot_900ms_ease-out_infinite] rounded-full bg-(--color-muted-foreground) [animation-delay:0ms]" />
+      <span className="inline-block h-1.5 w-1.5 animate-[streamDot_900ms_ease-out_infinite] rounded-full bg-(--color-muted-foreground) [animation-delay:150ms]" />
+      <span className="inline-block h-1.5 w-1.5 animate-[streamDot_900ms_ease-out_infinite] rounded-full bg-(--color-muted-foreground) [animation-delay:300ms]" />
     </div>
   );
 }

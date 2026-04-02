@@ -6,7 +6,7 @@ import { useAuth } from "@/lib/auth";
 export function LoginPage() {
   const { session, loading: authLoading } = useAuth();
   const [email, setEmail] = useState("");
-  const [status, setStatus] = useState<string | null>(null);
+  const [status, setStatus] = useState<{ type: "error" | "info"; message: string } | null>(null);
   const [loading, setLoading] = useState(false);
 
   if (session) {
@@ -14,7 +14,7 @@ export function LoginPage() {
   }
 
   const statusToneClass =
-    status && status.toLowerCase().includes("unable")
+    status?.type === "error"
       ? "text-[color-mix(in_oklch,var(--color-accent)_80%,var(--color-foreground)_20%)]"
       : "text-(--color-muted-foreground)";
 
@@ -35,18 +35,18 @@ export function LoginPage() {
     };
     setLoading(false);
     if (!response.ok) {
-      setStatus(payload.error ?? payload.message ?? "Unable to verify email");
+      setStatus({ type: "error", message: payload.error ?? payload.message ?? "Unable to verify email" });
       return;
     }
     if (payload.allowed === false) {
-      setStatus(payload.message ?? "Email not found. Ask Jethro to get you access.");
+      setStatus({ type: "info", message: payload.message ?? "Email not found. Ask Jethro to get you access." });
       return;
     }
     if (payload.redirectTo) {
       window.location.assign(payload.redirectTo);
       return;
     }
-    setStatus("Unable to sign in right now. Please try again.");
+    setStatus({ type: "error", message: "Unable to sign in right now. Please try again." });
   }
 
   return (
@@ -107,7 +107,7 @@ export function LoginPage() {
             .
           </p>
 
-          {status ? <p className={`text-xs ${statusToneClass}`}>{status}</p> : null}
+          {status ? <p className={`text-xs ${statusToneClass}`}>{status.message}</p> : null}
         </div>
       </Card>
     </main>

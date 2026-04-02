@@ -131,6 +131,7 @@ export function PromptInput({
   const modelOptionRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const modelListboxId = useId();
+  const toolsListboxId = useId();
   const canSubmit = value.trim().length > 0 && !isLoading;
   const slashQuery = useMemo(() => {
     const trimmed = value.trimStart();
@@ -338,8 +339,7 @@ export function PromptInput({
     <form
       ref={formRef}
       aria-label="Chat composer"
-      role="search"
-      className="rounded-3xl border border-(--color-border) bg-[color-mix(in_oklch,var(--color-card)_82%,var(--color-background)_18%)] p-3 shadow-[0_10px_30px_-24px_rgba(0,0,0,0.95)] transition-colors focus-within:border-[color-mix(in_oklch,var(--color-primary)_26%,var(--color-border)_74%)]"
+      className="rounded-3xl border border-(--color-border) bg-[color-mix(in_oklch,var(--color-card)_82%,var(--color-background)_18%)] p-3 shadow-md transition-colors focus-within:border-[color-mix(in_oklch,var(--color-primary)_26%,var(--color-border)_74%)]"
       onSubmit={(event) => {
         event.preventDefault();
         void handleSubmit();
@@ -351,6 +351,7 @@ export function PromptInput({
             <button
               key={`selected-${tool.name}`}
               type="button"
+              aria-label={`Remove /${tool.name} tool`}
               className="inline-flex items-center gap-1 rounded-full border border-(--color-border) bg-(--color-card) px-2 py-1 text-xs"
               onClick={() => onToggleToolSelection(tool)}
             >
@@ -366,6 +367,7 @@ export function PromptInput({
             <button
               key={`${document.name}:${document.size}:${document.lastModified}`}
               type="button"
+              aria-label={`Remove ${document.name}`}
               className="inline-flex items-center gap-1 rounded-full border border-(--color-border) bg-(--color-card) px-2 py-1 text-xs"
               onClick={() =>
                 setSelectedDocuments((current) =>
@@ -394,8 +396,10 @@ export function PromptInput({
           ) : (
             <div
               ref={menuRef}
+              id={toolsListboxId}
               className="h-64 overflow-y-auto"
               role="listbox"
+              aria-label="Available tools"
               onScroll={(event) => {
                 const target = event.currentTarget;
                 setMenuScrollTop(target.scrollTop);
@@ -417,6 +421,9 @@ export function PromptInput({
                     <button
                       key={row.key}
                       type="button"
+                      id={`tool-option-${row.itemIndex}`}
+                      role="option"
+                      aria-selected={selectedToolNames.has(row.tool.name)}
                       className={`absolute left-0 right-0 flex items-start gap-2 rounded-xl px-2 py-2 text-left transition-colors ${
                         selectedToolNames.has(row.tool.name)
                           ? "bg-[color-mix(in_oklch,var(--color-primary)_18%,var(--color-card)_82%)]"
@@ -456,10 +463,12 @@ export function PromptInput({
       <Textarea
         placeholder={
           councilModeEnabled
-            ? councilPlaceholder ?? "Council mode: include postcode or constituency name for a local council; otherwise we'll create a national MPs council."
+            ? councilPlaceholder ?? "Ask your council question..."
             : placeholder ?? "Ask a UK data question..."
         }
         value={value}
+        aria-controls={showSlashMenu ? toolsListboxId : undefined}
+        aria-activedescendant={showSlashMenu && itemRows.length > 0 ? `tool-option-${slashMenuIndex}` : undefined}
         onChange={(event) => setValue(event.target.value)}
         onKeyDown={(event) => {
           if (event.key === "Backspace" && value.length === 0 && selectedTools.length > 0) {
@@ -503,7 +512,9 @@ export function PromptInput({
         className="min-h-[52px] resize-none border-0 bg-transparent px-1 py-1.5 text-[15px] leading-relaxed placeholder:text-(--color-muted-foreground) focus:ring-0 md:min-h-[86px]"
       />
       {councilModeEnabled ? (
-        <p className="mt-1 text-xs text-(--color-muted-foreground)">{detectCouncilScopeHint(value)}</p>
+        <p className="mt-1 text-xs text-(--color-muted-foreground)">
+          Include a postcode or constituency for local council context. {detectCouncilScopeHint(value)}
+        </p>
       ) : null}
       {attachmentError ? <p className="mt-1 text-xs text-(--color-muted-foreground)">{attachmentError}</p> : null}
       <div className="mt-2 flex items-center justify-between">

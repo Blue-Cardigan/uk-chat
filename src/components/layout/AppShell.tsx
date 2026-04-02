@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { BarChart3, ChevronLeft, PanelLeftOpen, X } from "lucide-react";
 import { Button } from "@/components/ui/primitives";
 import { LeftSidebar } from "@/components/layout/LeftSidebar";
@@ -39,6 +39,8 @@ export function AppShell({
   settingsContent: React.ReactNode;
   onClearActiveConversation: () => void;
 }) {
+  const FOCUSABLE_SELECTOR =
+    'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
   const sidebarOpen = useAppStore((state) => state.sidebarOpen);
   const rightSidebarOpen = useAppStore((state) => state.rightSidebarOpen);
   const setSidebarOpen = useAppStore((state) => state.setSidebarOpen);
@@ -47,6 +49,8 @@ export function AppShell({
   const [shareModalConversation, setShareModalConversation] = useState<ChatConversation | null>(null);
   const [shareNotice, setShareNotice] = useState<string | null>(null);
   const [sharePending, setSharePending] = useState(false);
+  const settingsDialogRef = useRef<HTMLDivElement | null>(null);
+  const shareDialogRef = useRef<HTMLDivElement | null>(null);
   const activeConversation = useMemo(
     () => conversations.find((conversation) => conversation.id === activeConversationId) ?? null,
     [activeConversationId, conversations],
@@ -84,14 +88,71 @@ export function AppShell({
 
   useEffect(() => {
     if (!settingsOpen) return;
+    const previousFocusedElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const focusables = settingsDialogRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR);
+    focusables?.[0]?.focus();
+
     function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") setSettingsOpen(false);
+      if (e.key === "Escape") {
+        setSettingsOpen(false);
+        return;
+      }
+      if (e.key !== "Tab") return;
+      if (!focusables || focusables.length === 0) {
+        e.preventDefault();
+        return;
+      }
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      const active = document.activeElement;
+      if (e.shiftKey && active === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault();
+        first.focus();
+      }
     }
     document.addEventListener("keydown", onKeyDown);
     return () => {
       document.removeEventListener("keydown", onKeyDown);
+      previousFocusedElement?.focus();
     };
-  }, [settingsOpen]);
+  }, [FOCUSABLE_SELECTOR, settingsOpen]);
+
+  useEffect(() => {
+    if (!shareModalConversation) return;
+    const previousFocusedElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const focusables = shareDialogRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR);
+    focusables?.[0]?.focus();
+
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        setShareModalConversation(null);
+        return;
+      }
+      if (e.key !== "Tab") return;
+      if (!focusables || focusables.length === 0) {
+        e.preventDefault();
+        return;
+      }
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      const active = document.activeElement;
+      if (e.shiftKey && active === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      previousFocusedElement?.focus();
+    };
+  }, [FOCUSABLE_SELECTOR, shareModalConversation]);
 
   const desktopGridClass = sidebarOpen
     ? rightSidebarOpen
@@ -114,7 +175,7 @@ export function AppShell({
             <button
               type="button"
               aria-label="Close navigation sidebar"
-              className="absolute inset-0 bg-black/45 md:hidden"
+              className="absolute inset-0 bg-[color-mix(in_oklch,var(--color-foreground)_45%,transparent)] md:hidden"
               onClick={() => setSidebarOpen(false)}
             />
           ) : null}
@@ -184,7 +245,7 @@ export function AppShell({
             <button
               type="button"
               aria-label="Close insights sidebar"
-              className="absolute inset-0 bg-black/45 md:hidden"
+              className="absolute inset-0 bg-[color-mix(in_oklch,var(--color-foreground)_45%,transparent)] md:hidden"
               onClick={() => setRightSidebarOpen(false)}
             />
           ) : null}
@@ -205,6 +266,10 @@ export function AppShell({
               "absolute inset-y-0 right-0 z-50 overflow-y-auto bg-(--color-background)/95 backdrop-blur-sm",
               sidebarOpen ? "left-0 md:left-[280px]" : "left-0",
             )}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Settings"
+            ref={settingsDialogRef}
           >
             <div className="flex justify-end p-3">
               <Button
@@ -225,9 +290,13 @@ export function AppShell({
         {shareModalConversation ? (
           <div
             className={cn(
-              "absolute inset-y-0 right-0 z-60 flex items-center justify-center bg-black/40 px-4",
+              "absolute inset-y-0 right-0 z-60 flex items-center justify-center bg-[color-mix(in_oklch,var(--color-foreground)_40%,transparent)] px-4",
               sidebarOpen ? "left-0 md:left-[280px]" : "left-0",
             )}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Share conversation"
+            ref={shareDialogRef}
           >
             <div className="w-full max-w-md rounded-lg border border-(--color-border) bg-(--color-card) p-4 shadow-xl">
               <h3 className="text-sm font-semibold">Share conversation publicly?</h3>
@@ -261,7 +330,11 @@ export function AppShell({
           </div>
         ) : null}
         {shareNotice ? (
-          <div className="pointer-events-none absolute bottom-4 right-4 z-70 rounded-md border border-(--color-border) bg-(--color-card) px-3 py-2 text-xs shadow-md">
+          <div
+            role="status"
+            aria-live="polite"
+            className="pointer-events-none absolute bottom-4 right-4 z-70 rounded-md border border-(--color-border) bg-(--color-card) px-3 py-2 text-xs shadow-md"
+          >
             {shareNotice}
           </div>
         ) : null}

@@ -89,6 +89,16 @@ export function D3MapCanvas({
   const tileRendererRef = useRef<TileRenderer | null>(null);
   const zoomTransformRef = useRef<ZoomTransform>(zoomIdentity);
   const [mapZoom, setMapZoom] = useState(5.5);
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const mediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const update = () => setPrefersReducedMotion(mediaQuery.matches);
+    update();
+    mediaQuery.addEventListener("change", update);
+    return () => mediaQuery.removeEventListener("change", update);
+  }, []);
 
   const projection = useMemo(() => createUkProjection(width, height), [height, width]);
   const pathGen = useMemo(() => createPathGenerator(projection), [projection]);
@@ -151,6 +161,10 @@ export function D3MapCanvas({
 
     const zoomBehavior: ZoomBehavior<SVGSVGElement, unknown> = zoom<SVGSVGElement, unknown>()
       .scaleExtent([0.5, 30])
+      .filter((event) => {
+        if (!prefersReducedMotion) return true;
+        return event.type !== "wheel" && event.type !== "dblclick";
+      })
       .on("zoom", (event: { transform: ZoomTransform }) => {
         zoomTransformRef.current = event.transform;
         const nextMapZoom = scaleToZoom(event.transform.k);
@@ -171,12 +185,12 @@ export function D3MapCanvas({
             .scale(zoomToScale(activeFocus?.zoom ?? 8.5))
             .translate(-projectedFocus[0], -projectedFocus[1])
         : null;
-    svg.call(zoomBehavior.transform, focusTransform ?? defaultTransform);
+    svg.call(zoomBehavior.transform, prefersReducedMotion ? defaultTransform : focusTransform ?? defaultTransform);
     return () => {
       svg.on(".zoom", null);
       tileRendererRef.current?.dispose();
     };
-  }, [focusPoint, height, projection, tileConfig, width]);
+  }, [focusPoint, height, prefersReducedMotion, projection, tileConfig, width]);
 
   return (
     <div className="relative overflow-hidden rounded-xl border border-(--color-border)">

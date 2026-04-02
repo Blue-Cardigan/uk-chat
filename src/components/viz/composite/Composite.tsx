@@ -2,8 +2,8 @@ import { VisualizationCard } from "@/components/viz/VisualizationCard";
 
 function GridItem({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-md border border-[var(--color-border)] p-2 text-xs">
-      <div className="text-[var(--color-muted-foreground)]">{label}</div>
+    <div className="rounded-md border border-(--color-border) p-2 text-xs">
+      <div className="text-(--color-muted-foreground)">{label}</div>
       <div className="mt-1 font-medium">{value}</div>
     </div>
   );
@@ -53,7 +53,7 @@ export function ElectionSwing() {
 export function DemographicPyramid() {
   return (
     <VisualizationCard title="DemographicPyramid">
-      <p className="text-xs text-[var(--color-muted-foreground)]">Population age distribution by gender.</p>
+      <p className="text-xs text-(--color-muted-foreground)">Population age distribution by gender.</p>
     </VisualizationCard>
   );
 }

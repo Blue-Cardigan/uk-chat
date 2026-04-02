@@ -1,4 +1,4 @@
-import { useMemo, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { FeatureCollection, Geometry } from "geojson";
 import { VisualizationCard } from "@/components/viz/VisualizationCard";
 import { D3MapCanvas } from "@/components/uk-map/d3/D3MapCanvas";
@@ -6,6 +6,7 @@ import { useUkMapGeography } from "@/components/uk-map/useUkMapGeography";
 import { useAppStore } from "@/lib/store";
 import { extractMapData } from "@/lib/viz-data-parser";
 import type { VizPayload } from "@/lib/types";
+import type { ChoroplethEntry, FocusPoint, OverlayPoint } from "@/lib/viz-data-parser";
 
 function useFeatures(): FeatureCollection<Geometry> | null {
   const { collection } = useUkMapGeography();
@@ -30,6 +31,51 @@ function useIsDarkMode() {
   return themePreference === "dark" || (themePreference === "system" && systemPrefersDark);
 }
 
+function ResponsiveMapFrame({
+  isDarkMode,
+  features,
+  choropleth,
+  points,
+  focusPoint,
+}: {
+  isDarkMode: boolean;
+  features: FeatureCollection<Geometry> | null;
+  choropleth?: ChoroplethEntry[];
+  points?: OverlayPoint[];
+  focusPoint?: FocusPoint;
+}) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [width, setWidth] = useState(360);
+
+  useEffect(() => {
+    if (typeof ResizeObserver === "undefined" || !containerRef.current) return;
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+      const nextWidth = Math.max(240, Math.round(entry.contentRect.width));
+      setWidth(nextWidth);
+    });
+    observer.observe(containerRef.current);
+    return () => observer.disconnect();
+  }, []);
+
+  const height = Math.max(200, Math.round(width * (230 / 360)));
+
+  return (
+    <div ref={containerRef} className="w-full">
+      <D3MapCanvas
+        width={width}
+        height={height}
+        isDarkMode={isDarkMode}
+        features={features}
+        choropleth={choropleth}
+        points={points}
+        focusPoint={focusPoint}
+      />
+    </div>
+  );
+}
+
 export function ChoroplethMap({ payload }: { payload?: VizPayload }) {
   const features = useFeatures();
   const isDarkMode = useIsDarkMode();
@@ -39,7 +85,7 @@ export function ChoroplethMap({ payload }: { payload?: VizPayload }) {
   }, [payload]);
   return (
     <VisualizationCard title="ChoroplethMap" subtitle="D3 + CARTO custom renderer">
-      <D3MapCanvas width={360} height={230} isDarkMode={isDarkMode} features={features} choropleth={choropleth} />
+      <ResponsiveMapFrame isDarkMode={isDarkMode} features={features} choropleth={choropleth} />
     </VisualizationCard>
   );
 }
@@ -53,7 +99,7 @@ export function PointMap({ payload }: { payload?: VizPayload }) {
   }, [payload]);
   return (
     <VisualizationCard title="PointMap">
-      <D3MapCanvas width={360} height={230} isDarkMode={isDarkMode} features={features} points={points} />
+      <ResponsiveMapFrame isDarkMode={isDarkMode} features={features} points={points} />
     </VisualizationCard>
   );
 }
@@ -67,7 +113,7 @@ export function FloodRiskMap({ payload }: { payload?: VizPayload }) {
   }, [payload]);
   return (
     <VisualizationCard title="FloodRiskMap">
-      <D3MapCanvas width={360} height={230} isDarkMode={isDarkMode} features={features} points={points} />
+      <ResponsiveMapFrame isDarkMode={isDarkMode} features={features} points={points} />
     </VisualizationCard>
   );
 }
@@ -99,7 +145,7 @@ export function PostcodeZoom({ payload }: { payload?: VizPayload }) {
   );
   return (
     <VisualizationCard title="PostcodeZoom">
-      <D3MapCanvas width={360} height={230} isDarkMode={isDarkMode} features={features} points={points} focusPoint={focusPoint} />
+      <ResponsiveMapFrame isDarkMode={isDarkMode} features={features} points={points} focusPoint={focusPoint} />
     </VisualizationCard>
   );
 }

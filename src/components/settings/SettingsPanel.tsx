@@ -23,6 +23,7 @@ type PrivacyConsentResponse = {
   aiProcessingAcknowledgedAt?: string | null;
   currentVersion?: string;
 };
+type ActionStatus = { type: "success" | "error"; message: string } | null;
 
 export function SettingsPanel({
   theme,
@@ -42,7 +43,7 @@ export function SettingsPanel({
   onSignOut: () => Promise<void>;
 }) {
   const masked = mcpToken ? `${mcpToken.slice(0, 6)}...${mcpToken.slice(-4)}` : "No token yet";
-  const [actionStatus, setActionStatus] = useState<string | null>(null);
+  const [actionStatus, setActionStatus] = useState<ActionStatus>(null);
   const [isExporting, setIsExporting] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
@@ -70,7 +71,7 @@ export function SettingsPanel({
         });
         if (!response.ok) {
           if (!active) return;
-          setUsageError("Could not load model usage right now.");
+          setUsageError("Usage data is not available right now. Try refreshing.");
           return;
         }
         const payload = (await response.json()) as ModelUsageAllResponse;
@@ -78,7 +79,7 @@ export function SettingsPanel({
         setUsageRows(Array.isArray(payload.models) ? payload.models : []);
       } catch {
         if (!active) return;
-        setUsageError("Could not load model usage right now.");
+        setUsageError("Usage data is not available right now. Try refreshing.");
       } finally {
         if (active) setUsageLoading(false);
       }
@@ -119,9 +120,9 @@ export function SettingsPanel({
     setIsExporting(true);
     try {
       await onExportChats();
-      setActionStatus("Chat export downloaded.");
+      setActionStatus({ type: "success", message: "Chat export downloaded." });
     } catch {
-      setActionStatus("Could not export chats right now.");
+      setActionStatus({ type: "error", message: "Could not export chats right now." });
     } finally {
       setIsExporting(false);
     }
@@ -133,7 +134,7 @@ export function SettingsPanel({
     try {
       await onSignOut();
     } catch {
-      setActionStatus("Could not sign out right now.");
+      setActionStatus({ type: "error", message: "Could not sign out right now." });
       setIsSigningOut(false);
     }
   }
@@ -148,7 +149,7 @@ export function SettingsPanel({
     try {
       await onDeleteAccount();
     } catch {
-      setActionStatus("Could not delete your account right now.");
+      setActionStatus({ type: "error", message: "Could not delete your account right now." });
       setIsDeletingAccount(false);
     }
   }
@@ -158,9 +159,9 @@ export function SettingsPanel({
     setActionStatus(null);
     try {
       await navigator.clipboard.writeText(mcpToken);
-      setActionStatus("MCP token copied.");
+      setActionStatus({ type: "success", message: "Developer token copied." });
     } catch {
-      setActionStatus("Could not copy token right now.");
+      setActionStatus({ type: "error", message: "Could not copy token right now." });
     }
   }
 
@@ -183,9 +184,9 @@ export function SettingsPanel({
       if (!response.ok) throw new Error("Failed");
       const payload = (await response.json()) as PrivacyConsentResponse;
       setPrivacyConsent(payload);
-      setActionStatus("Privacy acknowledgement saved.");
+      setActionStatus({ type: "success", message: "Privacy acknowledgement saved." });
     } catch {
-      setActionStatus("Could not save privacy acknowledgement.");
+      setActionStatus({ type: "error", message: "Could not save privacy acknowledgement." });
     } finally {
       setConsentPending(false);
     }
@@ -193,7 +194,7 @@ export function SettingsPanel({
 
   function progressClassName(row: ModelUsage) {
     if (row.reached) return "bg-[var(--color-accent)]";
-    if (row.approaching) return "bg-amber-500";
+    if (row.approaching) return "bg-[var(--color-warning)]";
     return "bg-[var(--color-primary)]";
   }
 
@@ -205,7 +206,7 @@ export function SettingsPanel({
 
   function usageStatusClassName(row: ModelUsage) {
     if (row.reached) return "border-(--color-accent) text-(--color-accent)";
-    if (row.approaching) return "border-amber-500 text-amber-400";
+    if (row.approaching) return "border-(--color-warning) text-(--color-warning)";
     return "border-(--color-border) text-(--color-muted-foreground)";
   }
 
@@ -243,6 +244,7 @@ export function SettingsPanel({
               <button
                 key={option}
                 type="button"
+                aria-pressed={theme === option}
                 className={
                   theme === option
                     ? "rounded-md bg-(--color-primary) px-3 py-1.5 text-sm font-medium text-(--color-primary-foreground) transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--color-ring)"
@@ -302,7 +304,8 @@ export function SettingsPanel({
         </section>
 
         <section className="space-y-2 border-t border-(--color-border) pt-4">
-          <h4 className="text-xs font-semibold uppercase tracking-wide text-(--color-muted-foreground)">MCP Token</h4>
+          <h4 className="text-xs font-semibold uppercase tracking-wide text-(--color-muted-foreground)">Developer Token</h4>
+          <p className="text-xs text-(--color-muted-foreground)">Use this token to connect external tools via MCP.</p>
           <div className="flex items-center justify-between gap-2 rounded-md border border-(--color-border) bg-(--color-background) px-3 py-2">
             <code className="truncate text-xs">{masked}</code>
             <Button
@@ -342,7 +345,11 @@ export function SettingsPanel({
         </section>
       </div>
 
-      {actionStatus ? <p className="text-xs text-(--color-muted-foreground)">{actionStatus}</p> : null}
+      {actionStatus ? (
+        <p role="status" className={actionStatus.type === "error" ? "text-xs text-(--color-accent)" : "text-xs text-(--color-muted-foreground)"}>
+          {actionStatus.message}
+        </p>
+      ) : null}
     </section>
   );
 }

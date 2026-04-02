@@ -15,6 +15,14 @@
   --color-primary-foreground: oklch(0.98 0.005 255);
   --color-accent: oklch(0.55 0.19 22);
   --color-accent-foreground: oklch(0.98 0.005 22);
+  --color-warning: oklch(0.8 0.13 85);
+  --color-warning-foreground: oklch(0.3 0.05 85);
+  --color-chart-1: oklch(0.5 0.19 255);
+  --color-chart-2: oklch(0.55 0.19 22);
+  --color-chart-3: oklch(0.58 0.12 160);
+  --color-chart-4: oklch(0.6 0.14 55);
+  --color-chart-5: oklch(0.5 0.14 300);
+  --color-chart-6: oklch(0.55 0.1 130);
   --color-ring: oklch(0.55 0.15 255);
   --color-water: oklch(0.93 0.03 245);
   --color-water-line: oklch(0.55 0.1 255);
@@ -31,6 +39,14 @@
   --color-primary-foreground: oklch(0.14 0.015 255);
   --color-accent: oklch(0.62 0.15 22);
   --color-accent-foreground: oklch(0.14 0.01 22);
+  --color-warning: oklch(0.73 0.12 85);
+  --color-warning-foreground: oklch(0.2 0.03 85);
+  --color-chart-1: oklch(0.63 0.14 255);
+  --color-chart-2: oklch(0.67 0.14 22);
+  --color-chart-3: oklch(0.7 0.1 160);
+  --color-chart-4: oklch(0.72 0.11 55);
+  --color-chart-5: oklch(0.67 0.11 300);
+  --color-chart-6: oklch(0.69 0.08 130);
   --color-ring: oklch(0.6 0.12 255);
   --color-water: oklch(0.2 0.03 245);
   --color-water-line: oklch(0.5 0.1 255);
@@ -89,6 +105,17 @@ body {
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@keyframes streamDot {
+  0%, 100% {
+    opacity: 0.35;
+    transform: translateY(0);
+  }
+  40% {
+    opacity: 0.95;
+    transform: translateY(-1.5px);
   }
 }
 

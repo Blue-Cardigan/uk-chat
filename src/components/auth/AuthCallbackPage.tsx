@@ -12,8 +12,8 @@ export function AuthCallbackPage() {
   }, [navigate]);
 
   return (
-    <main className="flex min-h-screen items-center justify-center">
-      <p className="text-sm text-[var(--color-muted-foreground)]">Finishing sign in...</p>
+    <main aria-live="polite" className="flex min-h-screen items-center justify-center">
+      <p className="text-sm text-(--color-muted-foreground)">Finishing sign in...</p>
     </main>
   );
 }

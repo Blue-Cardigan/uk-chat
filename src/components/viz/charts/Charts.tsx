@@ -30,12 +30,12 @@ const demoSeries = [
 ];
 
 export const categorical = [
-  "oklch(0.50 0.19 255)",
-  "oklch(0.55 0.19 22)",
-  "oklch(0.58 0.12 160)",
-  "oklch(0.60 0.14 55)",
-  "oklch(0.50 0.14 300)",
-  "oklch(0.55 0.10 130)",
+  "var(--color-chart-1)",
+  "var(--color-chart-2)",
+  "var(--color-chart-3)",
+  "var(--color-chart-4)",
+  "var(--color-chart-5)",
+  "var(--color-chart-6)",
 ];
 
 export function TimeSeriesLine() {

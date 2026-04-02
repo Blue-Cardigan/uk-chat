@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { MoreHorizontal, PanelLeftClose, Plus, Search, Settings, Star } from "lucide-react";
+import { ConversationContextMenu } from "@/components/chat/ConversationContextMenu";
 import { Button, Input } from "@/components/ui/primitives";
 import type { ChatConversation } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -129,10 +130,10 @@ export function LeftSidebar({
     const isMenuOpen = openMenuId === conversation.id;
 
     return (
-      <div
+      <li
         key={conversation.id}
         className={cn(
-          "relative animate-[slideUp_200ms_ease-out_both] transition-colors duration-200 ease-out",
+          "relative list-none animate-[slideUp_200ms_ease-out_both] transition-colors duration-200 ease-out",
           isMenuOpen ? "z-40" : "z-0",
           isActive ? "border-(--color-primary)" : "",
         )}
@@ -158,6 +159,7 @@ export function LeftSidebar({
               <Input
                 value={draftTitle}
                 className="h-8 text-xs"
+                aria-label="Rename chat"
                 onChange={(event) => setDraftTitle(event.target.value)}
                 onBlur={() => submitRename(conversation.id)}
                 onKeyDown={(event) => {
@@ -190,7 +192,7 @@ export function LeftSidebar({
             variant="ghost"
             className={cn(
               "h-7 w-7 p-0 transition-opacity",
-              conversation.starred ? "opacity-100 text-amber-400" : "opacity-0 group-hover:opacity-100 focus:opacity-100",
+              conversation.starred ? "opacity-100 text-(--color-warning)" : "opacity-0 group-hover:opacity-100 focus:opacity-100",
             )}
             aria-label={conversation.starred ? `Unstar ${conversation.title}` : `Star ${conversation.title}`}
             onClick={(event) => {
@@ -226,63 +228,31 @@ export function LeftSidebar({
           </Button>
 
           {isMenuOpen ? (
-            <div
-              ref={menuRef}
+            <ConversationContextMenu
+              conversation={conversation}
+              containerRef={menuRef}
               className={cn(
                 "absolute right-0 z-120 min-w-40 rounded-md border border-(--color-border) bg-(--color-background) p-1 shadow-xl",
                 openMenuPlacement === "up" ? "bottom-10" : "top-10",
               )}
-            >
-              <button
-                type="button"
-                className="w-full rounded px-2 py-1 text-left text-xs font-medium hover:bg-[color-mix(in_oklch,var(--color-foreground)_6%,transparent)]"
-                onClick={() => startRename(conversation.id)}
-              >
-                Rename
-              </button>
-              <button
-                type="button"
-                className="w-full rounded px-2 py-1 text-left text-xs font-medium hover:bg-[color-mix(in_oklch,var(--color-foreground)_6%,transparent)]"
-                onClick={() => {
-                  onToggleStar(conversation.id, !conversation.starred);
-                  setOpenMenuId(null);
-                }}
-              >
-                {conversation.starred ? "Unstar" : "Star"}
-              </button>
-              <button
-                type="button"
-                className="w-full rounded px-2 py-1 text-left text-xs font-medium hover:bg-[color-mix(in_oklch,var(--color-foreground)_6%,transparent)]"
-                onClick={() => {
-                  onShare(conversation);
-                  setOpenMenuId(null);
-                }}
-              >
-                {conversation.is_public && conversation.share_token ? "Copy share link" : "Share"}
-              </button>
-              {conversation.is_public ? (
-                <button
-                  type="button"
-                  className="w-full rounded px-2 py-1 text-left text-xs font-medium hover:bg-[color-mix(in_oklch,var(--color-foreground)_6%,transparent)]"
-                  onClick={() => {
-                    onUnshare(conversation);
-                    setOpenMenuId(null);
-                  }}
-                >
-                  Stop sharing
-                </button>
-              ) : null}
-              <button
-                type="button"
-                className="w-full rounded px-2 py-1 text-left text-xs font-medium text-(--color-accent) hover:bg-[color-mix(in_oklch,var(--color-accent)_14%,transparent)]"
-                onClick={() => onDelete(conversation.id)}
-              >
-                Delete
-              </button>
-            </div>
+              onRename={() => startRename(conversation.id)}
+              onToggleStar={() => {
+                onToggleStar(conversation.id, !conversation.starred);
+                setOpenMenuId(null);
+              }}
+              onShare={() => {
+                onShare(conversation);
+                setOpenMenuId(null);
+              }}
+              onUnshare={() => {
+                onUnshare(conversation);
+                setOpenMenuId(null);
+              }}
+              onDelete={() => onDelete(conversation.id)}
+            />
           ) : null}
         </div>
-      </div>
+      </li>
     );
   }
 
@@ -331,11 +301,11 @@ export function LeftSidebar({
           aria-label="Search chats"
         />
       </div>
-      <div ref={listRef} className="relative isolate flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
+      <nav aria-label="Conversations" ref={listRef} className="relative isolate flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
         {filteredStarredConversations.length > 0 ? (
           <div className="space-y-1">
             <p className="px-2 text-[11px] font-semibold uppercase tracking-wide text-(--color-muted-foreground)">Starred</p>
-            {visibleStarredConversations.map(renderConversation)}
+            <ul className="space-y-1">{visibleStarredConversations.map(renderConversation)}</ul>
             {visibleStarredConversations.length < filteredStarredConversations.length ? (
               <Button
                 variant="ghost"
@@ -352,7 +322,7 @@ export function LeftSidebar({
             {filteredStarredConversations.length > 0 ? (
               <p className="px-2 pt-2 text-[11px] font-semibold uppercase tracking-wide text-(--color-muted-foreground)">Recent</p>
             ) : null}
-            {visibleRecentConversations.map(renderConversation)}
+            <ul className="space-y-1">{visibleRecentConversations.map(renderConversation)}</ul>
             {visibleRecentConversations.length < filteredRecentConversations.length ? (
               <Button
                 variant="ghost"
@@ -369,7 +339,7 @@ export function LeftSidebar({
             {normalizedSearchQuery ? "No chats match your search." : "No chats yet."}
           </p>
         ) : null}
-      </div>
+      </nav>
 
       <div className="border-t border-(--color-border) pt-2">
         <Button
