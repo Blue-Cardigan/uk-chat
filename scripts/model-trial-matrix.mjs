@@ -66,19 +66,19 @@ function fallbackModelsFor(modelId) {
 
 function pickTools(tools, promptId) {
   const baseTools = [
-    "postcodes.lookup",
-    "geo.convertCode",
-    "ons.fetchObservations",
-    "desnz.energy",
-    "desnz.fetchEnergy",
-    "police.fetchCrimes",
-    "sources.describe",
-    "nomis.fetchTable",
+    "postcodes_lookup",
+    "geo_convertCode",
+    "ons_fetchObservations",
+    "desnz_energy",
+    "desnz_fetchEnergy",
+    "police_fetchCrimes",
+    "sources_describe",
+    "nomis_fetchTable",
   ];
   const preferred =
     promptId === "energy_comparison"
-      ? ["desnz.fetchEnergy", "desnz.energy", "nomis.fetchTable"]
-      : ["postcodes.lookup", "police.fetchCrimes"];
+      ? ["desnz_fetchEnergy", "desnz_energy", "nomis_fetchTable"]
+      : ["postcodes_lookup", "police_fetchCrimes"];
   const selectedNames = [...new Set([...preferred, ...baseTools])];
   const selectedEntries = Object.entries(tools).filter(([name]) => selectedNames.includes(name));
   const selected = Object.fromEntries(selectedEntries);
@@ -297,9 +297,7 @@ async function run() {
           row.toolNames.some(
             (name) =>
               name === "postcodes_lookup" ||
-              name === "police_fetchCrimes" ||
-              name === "postcodes.lookup" ||
-              name === "police.fetchCrimes",
+              name === "police_fetchCrimes",
           ),
       ),
       flashEnergyNoTimeout: output.some(
@@ -318,9 +316,7 @@ async function run() {
           row.toolNames.some(
             (name) =>
               name === "postcodes_lookup" ||
-              name === "police_fetchCrimes" ||
-              name === "postcodes.lookup" ||
-              name === "police.fetchCrimes",
+              name === "police_fetchCrimes",
           ),
       ),
       flashToolCallCap: output.some(
@@ -342,9 +338,7 @@ async function run() {
           row.toolNames.some(
             (name) =>
               name === "postcodes_lookup" ||
-              name === "police_fetchCrimes" ||
-              name === "postcodes.lookup" ||
-              name === "police.fetchCrimes",
+              name === "police_fetchCrimes",
           ),
       ),
       sonnetToolCallCap: output.some(

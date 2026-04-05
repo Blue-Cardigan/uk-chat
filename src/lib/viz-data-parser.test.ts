@@ -32,7 +32,7 @@ test("buildChartSpecFromVizHint parses wrapped MCP content payload", () => {
       {
         type: "text",
         text: JSON.stringify({
-          tool: "desnz.fetchEnergy",
+          tool: "desnz_fetchEnergy",
           source: "desnz-energy",
           payload: {
             format: "csv",

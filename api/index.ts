@@ -553,20 +553,20 @@ type ToolSchemaProjectionRule = {
 
 const WEAK_MODEL_TOOL_SCHEMA_PROJECTION_RULES: ToolSchemaProjectionRule[] = [
   {
-    toolNames: ["parliament.fetchHansard", "parliament_fetchHansard"],
+    toolNames: ["parliament_fetchHansard"],
     removeProperties: ["baseUrl"],
   },
   {
-    toolNames: ["osm.assets", "osm_assets"],
+    toolNames: ["osm_assets"],
     removeProperties: ["endpoint"],
   },
   {
-    toolNames: ["desnz.fetchCo2", "desnz_fetchCo2"],
+    toolNames: ["desnz_fetchCo2"],
     removeProperties: ["url"],
     removeKindEnumValues: ["custom_csv"],
   },
   {
-    toolNames: ["finance.laRevenue", "finance_laRevenue"],
+    toolNames: ["finance_laRevenue"],
     removeProperties: ["url"],
     removeKindEnumValues: ["custom_csv"],
   },
