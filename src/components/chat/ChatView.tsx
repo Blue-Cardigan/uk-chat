@@ -627,6 +627,7 @@ export function ChatView({
           throw new Error(createPayload?.error ?? `Failed to start resumable chat (${createResponse.status})`);
         }
         let job = createPayload.job;
+        const streamingAssistantMessageId = `streaming-assistant-${job.id}`;
         let guard = 0;
         while (job.status === "in_progress" && guard < 32) {
           guard += 1;
@@ -646,8 +647,28 @@ export function ChatView({
             throw new Error(continuePayload?.error ?? `Failed to continue chat (${continueResponse.status})`);
           }
           job = continuePayload.job;
+          if (Array.isArray(job.assistantParts) && job.assistantParts.length > 0) {
+            setMessages([
+              ...optimisticMessages,
+              {
+                id: streamingAssistantMessageId,
+                role: "assistant",
+                parts: job.assistantParts as UIMessage["parts"],
+              } as UIMessage,
+            ]);
+          }
         }
         finalStatus = job.status;
+        if (Array.isArray(job.assistantParts) && job.assistantParts.length > 0) {
+          setMessages([
+            ...optimisticMessages,
+            {
+              id: streamingAssistantMessageId,
+              role: "assistant",
+              parts: job.assistantParts as UIMessage["parts"],
+            } as UIMessage,
+          ]);
+        }
         if (job.status === "failed") {
           finalError = job.lastError ?? "The assistant couldn't finish that response. Please try again.";
         }
@@ -875,7 +896,14 @@ export function ChatView({
 
   const titleInputWidthCh = Math.min(48, Math.max(12, draftTitle.trim().length + 2));
 
-  const lastAssistantMessage = [...messages].reverse().find((message) => message.role === "assistant");
+  let lastUserMessageIndex = -1;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.role === "user") {
+      lastUserMessageIndex = index;
+      break;
+    }
+  }
+  const lastAssistantMessage = [...messages.slice(lastUserMessageIndex + 1)].reverse().find((message) => message.role === "assistant");
   const hasAssistantContent =
     Array.isArray(lastAssistantMessage?.parts) && (lastAssistantMessage.parts as Part[]).some(hasRenderableAssistantPart);
   const showThinkingIndicator = (status === "submitted" || status === "streaming" || resumablePending) && !hasAssistantContent;
