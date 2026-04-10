@@ -24,7 +24,7 @@ export function LeftSidebar({
 }: {
   conversations: ChatConversation[];
   activeConversationId: string | null;
-  onCreate: () => Promise<string | null>;
+  onCreate: () => void;
   onSelect: (id: string) => void;
   onDelete: (id: string) => void;
   onRename: (id: string, title: string) => void;

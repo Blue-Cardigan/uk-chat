@@ -13,7 +13,8 @@ export function AppShell({
   activeConversationId,
   mcpToken,
   authToken,
-  onCreateConversation,
+  onStartNewConversation,
+  onEnsureConversation,
   onSelectConversation,
   onDeleteConversation,
   onRenameConversation,
@@ -28,7 +29,8 @@ export function AppShell({
   activeConversationId: string | null;
   mcpToken: string | null;
   authToken: string | null;
-  onCreateConversation: () => Promise<string | null>;
+  onStartNewConversation: () => void;
+  onEnsureConversation: () => Promise<string | null>;
   onSelectConversation: (id: string | null) => void;
   onDeleteConversation: (id: string) => void;
   onRenameConversation: (id: string, title: string) => void;
@@ -189,7 +191,7 @@ export function AppShell({
             <LeftSidebar
               conversations={conversations}
               activeConversationId={activeConversationId}
-              onCreate={onCreateConversation}
+              onCreate={onStartNewConversation}
               onSelect={onSelectConversation}
               onDelete={onDeleteConversation}
               onRename={onRenameConversation}
@@ -230,7 +232,7 @@ export function AppShell({
             conversationId={activeConversationId}
             mcpToken={mcpToken}
             authToken={authToken}
-            onEnsureConversation={onCreateConversation}
+            onEnsureConversation={onEnsureConversation}
             onRenameConversation={onRenameConversation}
             onConversationMissing={onConversationMissing}
             onDeleteConversation={onDeleteConversation}

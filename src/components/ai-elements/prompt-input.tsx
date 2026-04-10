@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { ArrowUp, BarChart3, Check, ChevronDown, Landmark, Plus, Wrench, X } from "lucide-react";
 import { Button, Textarea } from "@/components/ui/primitives";
 import type { ChatModelConfig, ChatModelId } from "@/shared/chat-models";
@@ -76,6 +76,8 @@ function detectCouncilScopeHint(text: string): string {
 }
 
 export function PromptInput({
+  value: initialValue,
+  onValueChange,
   onSubmit,
   onCouncilModeChange,
   councilModeEnabled: controlledCouncilModeEnabled,
@@ -96,6 +98,8 @@ export function PromptInput({
   pinnedArtifacts,
   onRemovePinnedArtifact,
 }: {
+  value: string;
+  onValueChange: (value: string) => void;
   onSubmit: (payload: PromptInputSubmitPayload) => void | Promise<boolean | void>;
   onCouncilModeChange?: (enabled: boolean) => void;
   councilModeEnabled?: boolean;
@@ -121,7 +125,7 @@ export function PromptInput({
   const ITEM_HEIGHT = 52;
   const OVERSCAN = 120;
 
-  const [value, setValue] = useState("");
+  const [value, setValue] = useState(initialValue);
   const [councilModeEnabled, setCouncilModeEnabled] = useState(controlledCouncilModeEnabled ?? false);
   const [selectedDocuments, setSelectedDocuments] = useState<File[]>([]);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
@@ -218,6 +222,17 @@ export function PromptInput({
     [menuScrollTop, virtualRows.rows],
   );
 
+  const updateValue = useCallback(
+    (nextValue: string | ((current: string) => string)) => {
+      setValue((current) => {
+        const resolved = typeof nextValue === "function" ? nextValue(current) : nextValue;
+        onValueChange(resolved);
+        return resolved;
+      });
+    },
+    [onValueChange],
+  );
+
   function closeModelMenu({ restoreFocus }: { restoreFocus: boolean }) {
     setIsModelMenuOpen(false);
     if (restoreFocus) {
@@ -249,7 +264,7 @@ export function PromptInput({
     } catch {
       return;
     }
-    setValue("");
+    updateValue("");
     setSelectedDocuments([]);
     setAttachmentError(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
@@ -261,7 +276,7 @@ export function PromptInput({
 
   function toggleToolSelection(tool: ChatToolOption) {
     onToggleToolSelection(tool);
-    setValue((current) => clearSlashPrefix(current));
+    updateValue((current) => clearSlashPrefix(current));
   }
 
   function handleFileSelection(list: FileList | null) {
@@ -289,6 +304,10 @@ export function PromptInput({
   }, [slashQuery, itemRows.length]);
 
   useEffect(() => {
+    setValue(initialValue);
+  }, [initialValue]);
+
+  useEffect(() => {
     onToolsQueryChange(showSlashMenu ? slashQuery?.trim() ?? "" : null);
   }, [onToolsQueryChange, showSlashMenu, slashQuery]);
 
@@ -297,11 +316,11 @@ export function PromptInput({
     function onPointerDown(event: PointerEvent) {
       if (!formRef.current) return;
       if (formRef.current.contains(event.target as Node)) return;
-      setValue((current) => (current.trimStart().startsWith("/") ? clearSlashPrefix(current) : current));
+      updateValue((current) => (current.trimStart().startsWith("/") ? clearSlashPrefix(current) : current));
     }
     window.addEventListener("pointerdown", onPointerDown);
     return () => window.removeEventListener("pointerdown", onPointerDown);
-  }, [showSlashMenu]);
+  }, [showSlashMenu, updateValue]);
 
   useEffect(() => {
     if (!isModelMenuOpen) return;
@@ -494,7 +513,7 @@ export function PromptInput({
         value={value}
         aria-controls={showSlashMenu ? toolsListboxId : undefined}
         aria-activedescendant={showSlashMenu && itemRows.length > 0 ? `tool-option-${slashMenuIndex}` : undefined}
-        onChange={(event) => setValue(event.target.value)}
+        onChange={(event) => updateValue(event.target.value)}
         onKeyDown={(event) => {
           if (event.key === "Backspace" && value.length === 0 && selectedTools.length > 0) {
             event.preventDefault();
@@ -526,7 +545,7 @@ export function PromptInput({
           }
           if (event.key === "Escape" && showSlashMenu) {
             event.preventDefault();
-            setValue((current) => clearSlashPrefix(current));
+            updateValue((current) => clearSlashPrefix(current));
             return;
           }
           if (event.key === "Enter" && !event.shiftKey) {

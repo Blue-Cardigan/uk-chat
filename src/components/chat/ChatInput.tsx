@@ -10,6 +10,8 @@ export type ChatToolOption = {
 };
 
 export function ChatInput({
+  value,
+  onValueChange,
   onSubmit,
   onCouncilModeChange,
   councilModeEnabled,
@@ -27,6 +29,8 @@ export function ChatInput({
   pinnedArtifacts,
   onRemovePinnedArtifact,
 }: {
+  value: string;
+  onValueChange: (value: string) => void;
   onSubmit: (payload: PromptInputSubmitPayload) => void | Promise<boolean | void>;
   onCouncilModeChange?: (enabled: boolean) => void;
   councilModeEnabled?: boolean;
@@ -46,6 +50,8 @@ export function ChatInput({
 }) {
   return (
     <PromptInput
+      value={value}
+      onValueChange={onValueChange}
       onSubmit={onSubmit}
       onCouncilModeChange={onCouncilModeChange}
       councilModeEnabled={councilModeEnabled}

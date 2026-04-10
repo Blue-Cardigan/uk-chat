@@ -47,6 +47,7 @@ type CouncilScope = { kind: "postcode"; postcode: string } | { kind: "area"; are
 const AUTO_CHAT_TITLE_DEFAULT_REGEX = /^(new chat(?:\s+\d+)?|untitled)$/i;
 const UK_POSTCODE_REGEX = /\b([A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2})\b/i;
 const OPTIMISTIC_CHAT_ID_PREFIX = "optimistic-chat-";
+const NEW_CONVERSATION_DRAFT_KEY = "__new-conversation__";
 
 async function safeJson<T>(response: Response): Promise<T | null> {
   const text = await response.text();
@@ -161,6 +162,7 @@ export function ChatView({
   const [selectedTools, setSelectedTools] = useState<ChatToolOption[]>([]);
   const [usageBanner, setUsageBanner] = useState<string | null>(null);
   const [councilModeEnabled, setCouncilModeEnabled] = useState(false);
+  const [draftsByConversation, setDraftsByConversation] = useState<Record<string, string>>({});
   const [councilPending, setCouncilPending] = useState(false);
   const [pendingConversationId, setPendingConversationId] = useState<string | null>(null);
   const [preparingConversation, setPreparingConversation] = useState(false);
@@ -895,6 +897,24 @@ export function ChatView({
   }
 
   const titleInputWidthCh = Math.min(48, Math.max(12, draftTitle.trim().length + 2));
+  const composerDraftKey = conversationId ?? NEW_CONVERSATION_DRAFT_KEY;
+  const composerDraft = draftsByConversation[composerDraftKey] ?? "";
+
+  const handleComposerDraftChange = useCallback(
+    (nextDraft: string) => {
+      setDraftsByConversation((current) => {
+        const existing = current[composerDraftKey] ?? "";
+        if (nextDraft === existing) return current;
+        if (!nextDraft) {
+          if (!(composerDraftKey in current)) return current;
+          const { [composerDraftKey]: _removed, ...rest } = current;
+          return rest;
+        }
+        return { ...current, [composerDraftKey]: nextDraft };
+      });
+    },
+    [composerDraftKey],
+  );
 
   let lastUserMessageIndex = -1;
   for (let index = messages.length - 1; index >= 0; index -= 1) {
@@ -1038,6 +1058,8 @@ export function ChatView({
             </p>
           ) : null}
           <ChatInput
+            value={composerDraft}
+            onValueChange={handleComposerDraftChange}
             onSubmit={(payload) => void submitPrompt(payload)}
             onCouncilModeChange={setCouncilModeEnabled}
             councilModeEnabled={councilModeEnabled}

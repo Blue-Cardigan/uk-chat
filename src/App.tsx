@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { AppShell } from "@/components/layout/AppShell";
 import { LoginPage } from "@/components/auth/LoginPage";
@@ -12,8 +12,6 @@ const PrivacyNoticePage = lazy(() => import("@/components/legal/PrivacyNoticePag
 const SharedChatView = lazy(() => import("@/components/chat/SharedChatView").then((m) => ({ default: m.SharedChatView })));
 const AdminPanel = lazy(() => import("@/components/auth/AdminPanel").then((m) => ({ default: m.AdminPanel })));
 const SettingsPanel = lazy(() => import("@/components/settings/SettingsPanel").then((m) => ({ default: m.SettingsPanel })));
-const OPTIMISTIC_CHAT_ID_PREFIX = "optimistic-chat-";
-
 async function safeJson<T>(response: Response): Promise<T | null> {
   const text = await response.text();
   if (!text) return null;
@@ -138,52 +136,18 @@ function ProtectedApp() {
     };
   }, [loadConversations, session?.access_token, setActiveConversationId, setConversations]);
 
-  const titleForNewConversation = useMemo(() => `New chat ${conversations.length + 1}`, [conversations.length]);
-
   const createConversation = useCallback(async () => {
-    const optimisticConversationId = `${OPTIMISTIC_CHAT_ID_PREFIX}${crypto.randomUUID()}`;
-    const nowIso = new Date().toISOString();
-    const optimisticConversation: ChatConversation = {
-      id: optimisticConversationId,
-      title: titleForNewConversation,
-      starred: false,
-      is_public: false,
-      share_token: null,
-      share_expires_at: null,
-      created_at: nowIso,
-      updated_at: nowIso,
-    };
     const currentConversations = useAppStore.getState().conversations;
-    setConversations([optimisticConversation, ...currentConversations]);
-    setActiveConversationId(optimisticConversationId);
-    syncConversationIdToUrl(optimisticConversationId);
+    const titleForNewConversation = `New chat ${currentConversations.length + 1}`;
 
     const response = await fetch("/api/conversations", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token ?? ""}` },
       body: JSON.stringify({ title: titleForNewConversation }),
     });
-    if (!response.ok) {
-      const nextConversations = useAppStore.getState().conversations.filter((conversation) => conversation.id !== optimisticConversationId);
-      setConversations(nextConversations);
-      if (useAppStore.getState().activeConversationId === optimisticConversationId) {
-        const fallbackConversationId = nextConversations[0]?.id ?? null;
-        setActiveConversationId(fallbackConversationId);
-        syncConversationIdToUrl(fallbackConversationId);
-      }
-      return null;
-    }
+    if (!response.ok) return null;
     const created = await safeJson<ChatConversation>(response);
-    if (!created) {
-      const nextConversations = useAppStore.getState().conversations.filter((conversation) => conversation.id !== optimisticConversationId);
-      setConversations(nextConversations);
-      if (useAppStore.getState().activeConversationId === optimisticConversationId) {
-        const fallbackConversationId = nextConversations[0]?.id ?? null;
-        setActiveConversationId(fallbackConversationId);
-        syncConversationIdToUrl(fallbackConversationId);
-      }
-      return null;
-    }
+    if (!created) return null;
     const normalizedCreated = {
       ...created,
       starred: created.starred ?? false,
@@ -192,17 +156,16 @@ function ProtectedApp() {
       share_expires_at: created.share_expires_at ?? null,
     };
     const conversationsAfterCreate = useAppStore.getState().conversations;
-    setConversations(
-      conversationsAfterCreate.map((conversation) =>
-        conversation.id === optimisticConversationId ? normalizedCreated : conversation,
-      ),
-    );
-    if (useAppStore.getState().activeConversationId === optimisticConversationId) {
-      setActiveConversationId(normalizedCreated.id);
-      syncConversationIdToUrl(normalizedCreated.id);
-    }
+    setConversations([normalizedCreated, ...conversationsAfterCreate.filter((conversation) => conversation.id !== normalizedCreated.id)]);
+    setActiveConversationId(normalizedCreated.id);
+    syncConversationIdToUrl(normalizedCreated.id);
     return normalizedCreated.id;
-  }, [session?.access_token, setActiveConversationId, setConversations, titleForNewConversation]);
+  }, [session?.access_token, setActiveConversationId, setConversations]);
+
+  const startNewConversation = useCallback(() => {
+    setActiveConversationId(null);
+    syncConversationIdToUrl(null);
+  }, [setActiveConversationId]);
 
   const deleteConversation = useCallback(async (id: string) => {
     const response = await fetch(`/api/conversations/${id}`, {
@@ -378,7 +341,8 @@ function ProtectedApp() {
       activeConversationId={activeConversationId}
       mcpToken={mcpToken}
       authToken={session?.access_token ?? null}
-      onCreateConversation={createConversation}
+      onStartNewConversation={startNewConversation}
+      onEnsureConversation={createConversation}
       onSelectConversation={handleSelectConversation}
       onDeleteConversation={deleteConversation}
       onRenameConversation={renameConversation}
