@@ -18,7 +18,15 @@ function hasChartLikeShape(value: unknown): boolean {
   return false;
 }
 
-const MAP_TOOL_ALLOWLIST = new Set(["ons_fetchObservations", "nomis_fetchTable", "police_fetchCrimes", "ea_flood", "postcodes_lookup"]);
+export const ARTIFACT_TOOL_ALLOWLIST = new Set([
+  "ons_fetchObservations",
+  "nomis_fetchTable",
+  "police_fetchCrimes",
+  "ea_flood",
+  "postcodes_lookup",
+  "council_deliberation",
+  "create_chart",
+]);
 
 export function isChartArtifactCandidate(toolName: string, data: unknown): boolean {
   if (normalizeVizToolName(toolName) === "create_chart" && isChartSpec(data)) return true;
@@ -28,7 +36,6 @@ export function isChartArtifactCandidate(toolName: string, data: unknown): boole
 
 export function isVizArtifactCandidate(toolName: string, data: unknown): boolean {
   const normalizedName = normalizeVizToolName(toolName);
-  if (normalizedName === "council_deliberation") return true;
-  if (MAP_TOOL_ALLOWLIST.has(normalizedName)) return true;
+  if (ARTIFACT_TOOL_ALLOWLIST.has(normalizedName)) return true;
   return isChartArtifactCandidate(toolName, data);
 }

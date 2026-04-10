@@ -37,6 +37,20 @@ export type VizPayload = {
   data: unknown;
   title?: string;
   chartSpec?: ChartSpec;
+  conversationId?: string;
+  messageId?: string;
+  createdAt?: string;
+};
+
+export type ArtifactLibraryConversation = {
+  id: string;
+  title: string;
+  updated_at: string;
+  artifacts: VizPayload[];
+};
+
+export type ArtifactLibrary = {
+  conversations: ArtifactLibraryConversation[];
 };
 
 export type UserProfile = {

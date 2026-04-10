@@ -250,13 +250,109 @@ type IncomingChatDocument = {
   pageCount?: unknown;
   sheetNames?: unknown;
 };
+type IncomingArtifactContextItem = {
+  id?: unknown;
+  conversationId?: unknown;
+  messageId?: unknown;
+  toolName?: unknown;
+  title?: unknown;
+  data?: unknown;
+  chartSpec?: unknown;
+};
+type ArtifactContextItem = {
+  id: string;
+  conversationId?: string;
+  messageId?: string;
+  toolName: string;
+  title: string;
+  data: unknown;
+  chartSpec?: unknown;
+};
 
 const MAX_CHAT_DOCUMENT_COUNT = 8;
 const MAX_CHAT_DOCUMENT_TEXT_CHARS = 30_000;
 const MAX_CHAT_DOCUMENT_CONTEXT_CHARS = 90_000;
+const MAX_ARTIFACT_CONTEXT_ITEMS = 5;
+const MAX_ARTIFACT_CONTEXT_CHARS = 16_000;
+const ARTIFACT_TOOL_ALLOWLIST = new Set([
+  "ons_fetchobservations",
+  "nomis_fetchtable",
+  "police_fetchcrimes",
+  "ea_flood",
+  "postcodes_lookup",
+  "council_deliberation",
+  "create_chart",
+]);
 
 function coerceString(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+
+function normalizeArtifactToolName(value: string): string {
+  return value
+    .trim()
+    .replace(/[^a-zA-Z0-9_]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function hasChartLikeShape(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  if (Array.isArray(value.series) || Array.isArray(value.datasets) || Array.isArray(value.points)) return true;
+  if (isRecord(value.chart) || isRecord(value.plot) || isRecord(value.echarts) || isRecord(value.vega)) return true;
+  return false;
+}
+
+function isArtifactCandidate(toolName: string, data: unknown): boolean {
+  const normalized = normalizeArtifactToolName(toolName).toLowerCase();
+  if (ARTIFACT_TOOL_ALLOWLIST.has(normalized)) return true;
+  return hasChartLikeShape(data);
+}
+
+function sanitizeArtifactContext(input: unknown): ArtifactContextItem[] {
+  if (!Array.isArray(input)) return [];
+  const items: ArtifactContextItem[] = [];
+  for (const raw of input.slice(0, MAX_ARTIFACT_CONTEXT_ITEMS)) {
+    if (!isRecord(raw)) continue;
+    const candidate = raw as IncomingArtifactContextItem;
+    const toolName = coerceString(candidate.toolName).trim();
+    if (!toolName) continue;
+    const title = coerceString(candidate.title).trim() || `Artifact: ${toolName}`;
+    const id = coerceString(candidate.id).trim() || `${normalizeArtifactToolName(toolName)}:${items.length}`;
+    const conversationId = coerceString(candidate.conversationId).trim() || undefined;
+    const messageId = coerceString(candidate.messageId).trim() || undefined;
+    const chartSpec = isRecord(candidate.chartSpec) ? candidate.chartSpec : undefined;
+    items.push({
+      id,
+      conversationId,
+      messageId,
+      toolName,
+      title: title.slice(0, 180),
+      data: compactToolOutputForModel(candidate.data),
+      chartSpec: chartSpec ? compactToolOutputForModel(chartSpec) : undefined,
+    });
+  }
+  return items;
+}
+
+function summarizeArtifactContext(items: ArtifactContextItem[]): string {
+  if (items.length === 0) return "";
+  const lines: string[] = [
+    "ARTIFACT CONTEXT",
+    "The user pinned artifacts from prior chats. Treat this as supplemental evidence, and reconcile with fresh tool outputs when they differ.",
+    "",
+  ];
+  for (const [index, artifact] of items.entries()) {
+    lines.push(`Artifact ${index + 1}: ${artifact.title}`);
+    lines.push(`Tool: ${artifact.toolName}`);
+    if (artifact.conversationId) lines.push(`Source conversation: ${artifact.conversationId}`);
+    if (artifact.messageId) lines.push(`Source message: ${artifact.messageId}`);
+    if (artifact.chartSpec) {
+      lines.push(`Chart spec: ${JSON.stringify(compactToolOutputForModel(artifact.chartSpec)).slice(0, 1200)}`);
+    }
+    lines.push(`Data summary: ${JSON.stringify(compactToolOutputForModel(artifact.data)).slice(0, 2400)}`);
+    lines.push("");
+  }
+  return lines.join("\n").slice(0, MAX_ARTIFACT_CONTEXT_CHARS);
 }
 
 function sanitizeIncomingDocuments(input: unknown): PersistedDocumentPart[] {
@@ -1742,6 +1838,7 @@ async function handleChat(request: Request) {
     conversationId?: string | null;
     modelId?: string | null;
     documents?: unknown;
+    artifactContext?: unknown;
   };
   const supabase = getSupabaseAdmin();
   if (!body.conversationId) return json({ error: "Missing conversationId" }, 400);
@@ -1754,6 +1851,7 @@ async function handleChat(request: Request) {
   if (!conversation) return json({ error: "Conversation not found" }, 404);
   const selectedModel = getChatModelConfig(body.modelId);
   const incomingDocuments = sanitizeIncomingDocuments(body.documents);
+  const artifactContext = summarizeArtifactContext(sanitizeArtifactContext(body.artifactContext));
   const usageReservation = await reserveModelUsageSlot({
     supabase,
     userId: user.id,
@@ -2010,7 +2108,7 @@ async function handleChat(request: Request) {
   if (quantContinuationContext) {
     withPlanContext = `${withPlanContext}\n\n${quantContinuationContext}`;
   }
-  const systemPrompt = documentContext ? `${withPlanContext}\n\n${documentContext}` : withPlanContext;
+  const systemPrompt = [withPlanContext, documentContext, artifactContext].filter(Boolean).join("\n\n");
   const modelMessages = await convertToModelMessages(compactedMessages as never);
   if (Array.isArray(body.messages) && compactedMessages.length !== body.messages.length) {
     logWarn("[api/chat] Compacted message history for model context", {
@@ -2268,6 +2366,9 @@ async function runResumableChatSlice(params: {
   const latestMessages = normalizeJobMessages(job.latest_messages);
   const latestUserQuery = extractLatestUserText(latestMessages);
   const requireDataToolCall = Boolean(job.require_data_tool_call);
+  const artifactContextItems = isRecord(job.quant_telemetry)
+    ? sanitizeArtifactContext((job.quant_telemetry as Record<string, unknown>).artifactContext)
+    : [];
 
   const toolLoad = await loadAuthorizedMcpTools({
     supabase,
@@ -2299,8 +2400,9 @@ async function runResumableChatSlice(params: {
     supabase,
     conversationId: job.conversation_id,
   });
+  const artifactContext = summarizeArtifactContext(artifactContextItems);
   const systemPromptBase = getSystemPrompt(new Date(), selectedModel.id);
-  const systemPrompt = documentContext ? `${systemPromptBase}\n\n${documentContext}` : systemPromptBase;
+  const systemPrompt = [systemPromptBase, documentContext, artifactContext].filter(Boolean).join("\n\n");
   const compactedMessages = compactUiMessagesForModel(latestMessages as never);
   const modelMessages = await convertToModelMessages(compactedMessages as never);
 
@@ -2486,6 +2588,7 @@ async function handleChatJobCreate(request: Request) {
   }
 
   const incomingDocuments = sanitizeIncomingDocuments(body.documents);
+  const artifactContext = sanitizeArtifactContext(body.artifactContext);
   const latestUserMessage = [...body.messages].reverse().find((message) => message.role === "user");
   if (!latestUserMessage) return json({ error: "No user message found in payload" }, 400);
   const userParts = Array.isArray(latestUserMessage.parts) ? [...latestUserMessage.parts] : [];
@@ -2528,6 +2631,7 @@ async function handleChatJobCreate(request: Request) {
       quant_telemetry: {
         resumable: true,
         createdAt: new Date().toISOString(),
+        artifactContext,
       },
     })
     .select(
@@ -3123,21 +3227,114 @@ async function handleConversationShare(request: Request) {
   return json({ conversation: data, shareUrl });
 }
 
-function extractSharedArtifacts(messages: Array<{ id: string; parts: unknown[] }>) {
-  const artifacts: Array<{ id: string; toolName: string; title: string; data: unknown }> = [];
+function extractArtifactsFromMessages(
+  messages: Array<{ id: string; conversation_id?: string; parts: unknown[]; created_at?: string }>,
+  conversationId?: string,
+) {
+  const artifacts: Array<{
+    id: string;
+    toolName: string;
+    title: string;
+    data: unknown;
+    chartSpec?: unknown;
+    conversationId?: string;
+    messageId?: string;
+    createdAt?: string;
+  }> = [];
   for (const message of messages) {
     for (const part of message.parts ?? []) {
       if (!isRecord(part) || typeof part.type !== "string" || !part.type.startsWith("tool-")) continue;
+      if (part.state !== "output-available" || !("output" in part) || part.output == null) continue;
       const toolName = part.type.replace("tool-", "");
+      if (!isArtifactCandidate(toolName, part.output)) continue;
+      const normalizedToolName = normalizeArtifactToolName(toolName);
+      const toolCallId = typeof part.toolCallId === "string" ? part.toolCallId : `part-${artifacts.length}`;
+      const chartSpec = normalizedToolName === "create_chart" && isRecord(part.output) ? part.output : undefined;
       artifacts.push({
-        id: `${message.id}:${part.type}`,
-        toolName,
-        title: `Tool: ${toolName}`,
-        data: part,
+        id: `${message.id}:${normalizedToolName}:${toolCallId}`,
+        toolName: normalizedToolName,
+        title: `Chart: ${normalizedToolName}`,
+        data: compactToolOutputForModel(part.output),
+        chartSpec: chartSpec ? compactToolOutputForModel(chartSpec) : undefined,
+        conversationId: conversationId ?? message.conversation_id,
+        messageId: message.id,
+        createdAt: message.created_at,
       });
     }
   }
   return artifacts;
+}
+
+async function handleArtifactsIndex(request: Request) {
+  const user = await getUserFromRequest(request);
+  if (!user) return json({ error: "Unauthorized" }, 401);
+
+  const url = new URL(request.url);
+  const currentConversationId = url.searchParams.get("currentConversationId")?.trim() || null;
+  const supabase = getSupabaseAdmin();
+  const { data: conversations, error: conversationsError } = await supabase
+    .from("uk_chat_conversations")
+    .select("id,title,updated_at")
+    .eq("user_id", user.id)
+    .order("updated_at", { ascending: false })
+    .limit(16);
+  if (conversationsError) return json({ error: conversationsError.message }, 500);
+  if (!conversations || conversations.length === 0) return json({ conversations: [] });
+
+  const conversationIds = conversations.map((conversation) => conversation.id);
+  const { data: messages, error: messagesError } = await supabase
+    .from("uk_chat_messages")
+    .select("id,conversation_id,parts,created_at")
+    .in("conversation_id", conversationIds)
+    .eq("role", "assistant")
+    .order("created_at", { ascending: false });
+  if (messagesError) return json({ error: messagesError.message }, 500);
+
+  const messageByConversation = new Map<string, Array<{ id: string; conversation_id: string; parts: unknown[]; created_at: string }>>();
+  for (const message of messages ?? []) {
+    const normalized = {
+      id: message.id,
+      conversation_id: message.conversation_id,
+      parts: Array.isArray(message.parts) ? message.parts : [],
+      created_at: message.created_at,
+    };
+    const existing = messageByConversation.get(message.conversation_id) ?? [];
+    existing.push(normalized);
+    messageByConversation.set(message.conversation_id, existing);
+  }
+
+  const anchorUpdatedAt =
+    currentConversationId && conversations.some((conversation) => conversation.id === currentConversationId)
+      ? new Date(conversations.find((conversation) => conversation.id === currentConversationId)!.updated_at).getTime()
+      : null;
+
+  const withArtifacts = conversations
+    .map((conversation) => {
+      const conversationMessages = messageByConversation.get(conversation.id) ?? [];
+      const artifacts = extractArtifactsFromMessages(conversationMessages, conversation.id).slice(0, 24);
+      return {
+        id: conversation.id,
+        title: conversation.title,
+        updated_at: conversation.updated_at,
+        artifacts,
+      };
+    })
+    .filter((conversation) => conversation.artifacts.length > 0);
+
+  withArtifacts.sort((a, b) => {
+    if (currentConversationId) {
+      if (a.id === currentConversationId && b.id !== currentConversationId) return -1;
+      if (b.id === currentConversationId && a.id !== currentConversationId) return 1;
+    }
+    if (anchorUpdatedAt != null) {
+      const deltaA = Math.abs(new Date(a.updated_at).getTime() - anchorUpdatedAt);
+      const deltaB = Math.abs(new Date(b.updated_at).getTime() - anchorUpdatedAt);
+      if (deltaA !== deltaB) return deltaA - deltaB;
+    }
+    return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+  });
+
+  return json({ conversations: withArtifacts.slice(0, 10) });
 }
 
 async function handleSharedConversation(request: Request) {
@@ -3178,7 +3375,7 @@ async function handleSharedConversation(request: Request) {
       updated_at: conversation.updated_at,
     },
     messages: normalizedMessages,
-    artifacts: extractSharedArtifacts(normalizedMessages),
+    artifacts: extractArtifactsFromMessages(normalizedMessages, conversation.id),
   });
 }
 
@@ -3743,6 +3940,11 @@ async function routeRequest(request: Request) {
       return handleConversationShare(request);
     }
     if (parts.length === 2) return handleConversationById(request);
+    return json({ error: "Not found" }, 404);
+  }
+
+  if (parts[0] === "artifacts") {
+    if (parts.length === 1 && request.method === "GET") return handleArtifactsIndex(request);
     return json({ error: "Not found" }, 404);
   }
 

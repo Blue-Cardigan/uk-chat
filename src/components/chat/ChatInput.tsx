@@ -1,4 +1,5 @@
 import { PromptInput, type PromptInputSubmitPayload } from "@/components/ai-elements/prompt-input";
+import type { VizPayload } from "@/lib/types";
 import { CHAT_MODEL_CONFIGS, type ChatModelId } from "@/shared/chat-models";
 
 export type ChatToolOption = {
@@ -23,6 +24,8 @@ export function ChatInput({
   onToggleToolSelection,
   onToolsQueryChange,
   onLoadMoreTools,
+  pinnedArtifacts,
+  onRemovePinnedArtifact,
 }: {
   onSubmit: (payload: PromptInputSubmitPayload) => void | Promise<boolean | void>;
   onCouncilModeChange?: (enabled: boolean) => void;
@@ -38,6 +41,8 @@ export function ChatInput({
   onToggleToolSelection: (tool: ChatToolOption) => void;
   onToolsQueryChange: (query: string | null) => void;
   onLoadMoreTools: () => void;
+  pinnedArtifacts: VizPayload[];
+  onRemovePinnedArtifact: (id: string) => void;
 }) {
   return (
     <PromptInput
@@ -58,6 +63,8 @@ export function ChatInput({
       onToggleToolSelection={onToggleToolSelection}
       onToolsQueryChange={onToolsQueryChange}
       onLoadMoreTools={onLoadMoreTools}
+      pinnedArtifacts={pinnedArtifacts}
+      onRemovePinnedArtifact={onRemovePinnedArtifact}
     />
   );
 }

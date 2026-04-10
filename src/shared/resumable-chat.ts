@@ -5,6 +5,15 @@ export type ResumableChatCreateRequest = {
   mcpToken?: string | null;
   modelId?: string | null;
   documents?: unknown;
+  artifactContext?: Array<{
+    id?: string;
+    conversationId?: string;
+    messageId?: string;
+    toolName?: string;
+    title?: string;
+    data?: unknown;
+    chartSpec?: unknown;
+  }>;
   messages?: Array<{ role?: string; parts?: unknown[] }>;
   idempotencyKey?: string | null;
 };

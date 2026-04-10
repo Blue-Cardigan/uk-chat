@@ -140,7 +140,9 @@ export function ChatView({
   onUnshareConversation: (conversation: ChatConversation) => void;
 }) {
   const pushVizPayload = useAppStore((state) => state.pushVizPayload);
-  const clearVizPayloads = useAppStore((state) => state.clearVizPayloads);
+  const pinnedArtifacts = useAppStore((state) => state.pinnedArtifacts);
+  const clearPinnedArtifacts = useAppStore((state) => state.clearPinnedArtifacts);
+  const unpinArtifact = useAppStore((state) => state.unpinArtifact);
   const setConversations = useAppStore((state) => state.setConversations);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [conversationLoadError, setConversationLoadError] = useState<string | null>(null);
@@ -607,6 +609,15 @@ export function ChatView({
             mcpToken,
             modelId: selectedModel.id,
             documents: parsedDocuments,
+            artifactContext: pinnedArtifacts.map((artifact) => ({
+              id: artifact.id,
+              conversationId: artifact.conversationId,
+              messageId: artifact.messageId,
+              toolName: artifact.toolName,
+              title: artifact.title,
+              data: artifact.data,
+              chartSpec: artifact.chartSpec,
+            })),
             messages: optimisticMessages.map((message) => ({ role: message.role, parts: message.parts })),
             idempotencyKey: crypto.randomUUID(),
           }),
@@ -646,6 +657,7 @@ export function ChatView({
       } finally {
         await loadConversationMessages(ensuredConversationId);
         if (finalStatus === "failed" && finalError) setSubmitError(finalError);
+        if (finalStatus === "completed") clearPinnedArtifacts();
         setResumablePending(false);
         setSelectedTools([]);
         window.setTimeout(() => {
@@ -744,7 +756,6 @@ export function ChatView({
   useEffect(() => {
     pushedArtifactKeysRef.current.clear();
     artifactSignaturesRef.current.clear();
-    clearVizPayloads();
     setConversationLoadError(null);
     const activeConversationId = conversationId ?? pendingConversationId;
     if (!authToken) {
@@ -798,7 +809,7 @@ export function ChatView({
     return () => {
       abortController.abort();
     };
-  }, [authToken, clearVizPayloads, conversationId, pendingConversationId, setMessages]);
+  }, [authToken, conversationId, pendingConversationId, setMessages]);
 
   useEffect(() => {
     for (const message of messages) {
@@ -843,10 +854,12 @@ export function ChatView({
           data: output,
           title: `Chart: ${normalizedToolName}`,
           chartSpec: chartSpec ?? undefined,
+          conversationId: conversationId ?? undefined,
+          messageId: message.id,
         });
       });
     }
-  }, [messages, pushVizPayload]);
+  }, [conversationId, messages, pushVizPayload]);
 
   function submitTitleRename() {
     if (!conversation) return;
@@ -1011,6 +1024,8 @@ export function ChatView({
             onToggleToolSelection={toggleToolSelection}
             onToolsQueryChange={handleToolsQueryChange}
             onLoadMoreTools={handleLoadMoreTools}
+            pinnedArtifacts={pinnedArtifacts}
+            onRemovePinnedArtifact={unpinArtifact}
           />
           {councilModeEnabled ? (
             <p className="mt-2 text-xs text-(--color-muted-foreground)">

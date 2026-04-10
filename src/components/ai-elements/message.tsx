@@ -1,8 +1,15 @@
+import { lazy, Suspense, useMemo, useRef } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Card } from "@/components/ui/primitives";
+import { ArtifactToolbar } from "@/components/viz/ArtifactToolbar";
+import { buildChartSpecFromVizHint, isChartSpec } from "@/lib/viz-data-parser";
+import { isVizArtifactCandidate } from "@/lib/viz-helpers";
+import type { VizPayload } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { stripToolContextEchoes } from "@/shared/text-sanitize";
+
+const VizRouter = lazy(() => import("@/components/viz/VizRouter").then((m) => ({ default: m.VizRouter })));
 
 /* ── Streaming format (AI SDK v6 UIMessage) ─────────────────────────── */
 type ToolInvocationPart = {
@@ -133,11 +140,25 @@ function normaliseToolPart(part: UiPart, index: number): NormalisedTool | null {
 function ToolPartView({ tool, index }: { tool: NormalisedTool; index: number }) {
   const hasInput = tool.input != null;
   const hasOutput = tool.output != null;
-  const isCreateChartTool = normalizeToolName(tool.toolName) === "create_chart";
+  const normalizedToolName = normalizeToolName(tool.toolName);
+  const isCreateChartTool = normalizedToolName === "create_chart";
   const isCouncilTool = normalizeToolName(tool.toolName) === "council_deliberation";
 
   if (isCouncilTool && hasOutput) {
     return <CouncilDeliberationToolView key={`${tool.toolName}-${tool.toolCallId ?? index}`} output={tool.output} />;
+  }
+
+  if (hasOutput && isVizArtifactCandidate(tool.toolName, tool.output)) {
+    const chartSpec =
+      normalizedToolName === "create_chart" && isChartSpec(tool.output) ? tool.output : buildChartSpecFromVizHint(tool.output);
+    const payload: VizPayload = {
+      id: `inline:${tool.toolCallId ?? `${tool.toolName}:${index}`}`,
+      toolName: tool.toolName,
+      data: tool.output,
+      title: `Chart: ${tool.toolName}`,
+      chartSpec: chartSpec ?? undefined,
+    };
+    return <InlineArtifact key={`${tool.toolName}-${tool.toolCallId ?? index}`} payload={payload} tool={tool} />;
   }
 
   return (
@@ -182,6 +203,35 @@ function ToolPartView({ tool, index }: { tool: NormalisedTool; index: number }) 
         ) : null}
       </div>
     </details>
+  );
+}
+
+function InlineArtifact({ payload, tool }: { payload: VizPayload; tool: NormalisedTool }) {
+  const vizRef = useRef<HTMLDivElement | null>(null);
+  const hasInput = tool.input != null;
+  const inputJson = useMemo(() => (hasInput ? JSON.stringify(tool.input, null, 2) : ""), [hasInput, tool.input]);
+
+  return (
+    <div className="rounded-md border border-(--color-border) bg-(--color-card)/60 p-2 text-xs">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <p className="font-medium text-(--color-foreground)">{payload.title ?? payload.toolName}</p>
+        <span className="rounded-full border border-(--color-border) px-2 py-0.5 text-[10px] uppercase tracking-wide text-(--color-muted-foreground)">
+          {tool.stateLabel}
+        </span>
+      </div>
+      <ArtifactToolbar payload={payload} targetRef={vizRef} className="mb-2 flex flex-wrap gap-1" />
+      <div ref={vizRef} className="rounded-md border border-(--color-border) bg-(--color-background) p-2">
+        <Suspense fallback={<div className="p-4 text-center text-xs text-(--color-muted-foreground)">Loading...</div>}>
+          <VizRouter payload={payload} />
+        </Suspense>
+      </div>
+      {hasInput ? (
+        <details className="mt-2">
+          <summary className="cursor-pointer text-[11px] text-(--color-muted-foreground)">Input</summary>
+          <pre className="mt-1 overflow-x-auto whitespace-pre-wrap rounded bg-(--color-background) p-2 text-[11px]">{inputJson}</pre>
+        </details>
+      ) : null}
+    </div>
   );
 }
 

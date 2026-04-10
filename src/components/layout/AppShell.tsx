@@ -257,7 +257,7 @@ export function AppShell({
               rightSidebarOpen ? "md:translate-x-0 md:opacity-100" : "md:pointer-events-none md:translate-x-3 md:opacity-0",
             )}
           >
-            <RightSidebar />
+            <RightSidebar authToken={authToken} />
           </div>
         </div>
         {settingsOpen ? (

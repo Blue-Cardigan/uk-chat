@@ -1,8 +1,9 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { ArrowUp, Check, ChevronDown, Landmark, Plus, Wrench, X } from "lucide-react";
+import { ArrowUp, BarChart3, Check, ChevronDown, Landmark, Plus, Wrench, X } from "lucide-react";
 import { Button, Textarea } from "@/components/ui/primitives";
 import type { ChatModelConfig, ChatModelId } from "@/shared/chat-models";
 import type { ChatToolOption } from "@/components/chat/ChatInput";
+import type { VizPayload } from "@/lib/types";
 
 const ACCEPTED_DOCUMENT_EXTENSIONS = new Set(["pdf", "txt", "md", "markdown", "csv", "json", "docx", "xlsx"]);
 const ACCEPTED_DOCUMENT_MIME_TYPES = new Set([
@@ -92,6 +93,8 @@ export function PromptInput({
   onToggleToolSelection,
   onToolsQueryChange,
   onLoadMoreTools,
+  pinnedArtifacts,
+  onRemovePinnedArtifact,
 }: {
   onSubmit: (payload: PromptInputSubmitPayload) => void | Promise<boolean | void>;
   onCouncilModeChange?: (enabled: boolean) => void;
@@ -110,6 +113,8 @@ export function PromptInput({
   onToggleToolSelection: (tool: ChatToolOption) => void;
   onToolsQueryChange: (query: string | null) => void;
   onLoadMoreTools: () => void;
+  pinnedArtifacts: VizPayload[];
+  onRemovePinnedArtifact: (id: string) => void;
 }) {
   const MENU_HEIGHT = 256;
   const HEADER_HEIGHT = 28;
@@ -359,6 +364,26 @@ export function PromptInput({
               <X className="h-3 w-3" />
             </button>
           ))}
+        </div>
+      ) : null}
+      {pinnedArtifacts.length > 0 ? (
+        <div className="mb-2 space-y-1.5">
+          <p className="text-[11px] text-(--color-muted-foreground)">Using {pinnedArtifacts.length} artifact(s) as context</p>
+          <div className="flex flex-wrap gap-1.5">
+            {pinnedArtifacts.map((artifact) => (
+              <button
+                key={`artifact-context-${artifact.id}`}
+                type="button"
+                aria-label={`Remove ${artifact.title ?? artifact.toolName} from context`}
+                className="inline-flex max-w-full items-center gap-1 rounded-full border border-(--color-border) bg-(--color-card) px-2 py-1 text-xs"
+                onClick={() => onRemovePinnedArtifact(artifact.id)}
+              >
+                <BarChart3 className="h-3 w-3 shrink-0 text-(--color-muted-foreground)" />
+                <span className="max-w-[200px] truncate">{artifact.title ?? artifact.toolName}</span>
+                <X className="h-3 w-3 shrink-0" />
+              </button>
+            ))}
+          </div>
         </div>
       ) : null}
       {selectedDocuments.length > 0 ? (
