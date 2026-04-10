@@ -47,15 +47,16 @@ function compactPart(part: unknown): Record<string, unknown> | null {
     const state = typeof part.state === "string" ? part.state : "unknown";
     const argsSummary = part.args !== undefined ? compactToolPayload(part.args) : undefined;
     const resultSummary = part.result !== undefined ? compactToolPayload(part.result) : undefined;
+    const inner = [
+      `state=${state}`,
+      argsSummary ? `args=${argsSummary}` : null,
+      resultSummary ? `result=${resultSummary}` : null,
+    ]
+      .filter(Boolean)
+      .join(" | ");
     return {
       type: "text",
-      text: [
-        `[Tool ${toolName}] state=${state}`,
-        argsSummary ? `args=${argsSummary}` : null,
-        resultSummary ? `result=${resultSummary}` : null,
-      ]
-        .filter(Boolean)
-        .join(" | "),
+      text: `<prior_tool name="${toolName}">${inner}</prior_tool>`,
     };
   }
 
@@ -63,15 +64,15 @@ function compactPart(part: unknown): Record<string, unknown> | null {
     const toolName = part.type.slice("tool-".length) || "tool";
     const outputSummary = part.output !== undefined ? compactToolPayload(part.output) : undefined;
     const inputSummary = part.input !== undefined ? compactToolPayload(part.input) : undefined;
+    const inner = [
+      inputSummary ? `input=${inputSummary}` : null,
+      outputSummary ? `output=${outputSummary}` : null,
+    ]
+      .filter(Boolean)
+      .join(" | ");
     return {
       type: "text",
-      text: [
-        `[ToolResult ${toolName}]`,
-        inputSummary ? `input=${inputSummary}` : null,
-        outputSummary ? `output=${outputSummary}` : null,
-      ]
-        .filter(Boolean)
-        .join(" | "),
+      text: `<prior_tool name="${toolName}">${inner}</prior_tool>`,
     };
   }
 

@@ -18,6 +18,7 @@ import { getSystemPrompt } from "./_lib/system-prompt.js";
 import { continueCouncilDeliberation, createCouncilDeliberation } from "./_lib/council/handler.js";
 import { parseCouncilCreateRequest, parseCouncilFollowUpRequest, parseCouncilInferScopeRequest } from "./_lib/council/schemas.js";
 import { compactMessagesForModel as compactUiMessagesForModel } from "./_lib/context.js";
+import { stripToolContextEchoes } from "../src/shared/text-sanitize.js";
 import { buildExecutionPlanContext, buildQuantContinuationContext, generateExecutionPlan } from "./_lib/chat-handler.js";
 import { buildMcpCandidates as buildMcpCandidatesFromLib, loadMcpToolsWithFallback as loadMcpToolsWithFallbackFromLib } from "./_lib/mcp.js";
 import {
@@ -948,7 +949,10 @@ function extractPartsFromResponseMessage(
     if (!isRecord(segment) || typeof segment.type !== "string") continue;
 
     if (segment.type === "text" && typeof segment.text === "string") {
-      parts.push({ type: "text", text: segment.text });
+      const cleaned = stripToolContextEchoes(segment.text);
+      if (cleaned) {
+        parts.push({ type: "text", text: cleaned });
+      }
       continue;
     }
 

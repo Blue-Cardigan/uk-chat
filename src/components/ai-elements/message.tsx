@@ -2,6 +2,7 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Card } from "@/components/ui/primitives";
 import { cn } from "@/lib/utils";
+import { stripToolContextEchoes } from "@/shared/text-sanitize";
 
 /* ── Streaming format (AI SDK v6 UIMessage) ─────────────────────────── */
 type ToolInvocationPart = {
@@ -83,8 +84,8 @@ function readTextPart(part: UiPart): string | null {
   const candidate = part as { text?: unknown; content?: unknown; value?: unknown };
   const value = candidate.text ?? candidate.content ?? candidate.value;
   if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? value : null;
+  const cleaned = stripToolContextEchoes(value);
+  return cleaned.length > 0 ? cleaned : null;
 }
 
 function hasRenderableNonReasoningContent(part: UiPart): boolean {

@@ -243,6 +243,7 @@ MODEL PROFILE (GEMINI FLASH)
 - Charting: good default chart behaviour; prefer one clear visual per user question.
 - Spatial outputs: prefer map overlays when data includes coordinates or geography codes, and provide map-specific field hints.
 - Failure mode: oversized payloads; keep requests bounded and summarise intermediate results.
+- CRITICAL: <prior_tool> blocks in conversation history are internal context only. NEVER echo, copy, or include <prior_tool> tags, raw JSON tool outputs, or pipe-delimited tool metadata in your response text. Synthesise tool results into natural prose.
 `.trim();
     case "pro":
       return `
