@@ -97,6 +97,7 @@ export function PromptInput({
   onLoadMoreTools,
   pinnedArtifacts,
   onRemovePinnedArtifact,
+  focusRequestKey,
 }: {
   value: string;
   onValueChange: (value: string) => void;
@@ -119,6 +120,7 @@ export function PromptInput({
   onLoadMoreTools: () => void;
   pinnedArtifacts: VizPayload[];
   onRemovePinnedArtifact: (id: string) => void;
+  focusRequestKey?: number;
 }) {
   const MENU_HEIGHT = 256;
   const HEADER_HEIGHT = 28;
@@ -139,6 +141,7 @@ export function PromptInput({
   const modelMenuTriggerRef = useRef<HTMLButtonElement | null>(null);
   const modelOptionRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const modelListboxId = useId();
   const toolsListboxId = useId();
   const canSubmit = value.trim().length > 0 && !isLoading;
@@ -306,6 +309,17 @@ export function PromptInput({
   useEffect(() => {
     setValue(initialValue);
   }, [initialValue]);
+
+  useEffect(() => {
+    if (focusRequestKey == null) return;
+    window.requestAnimationFrame(() => {
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+      textarea.focus();
+      const cursor = textarea.value.length;
+      textarea.setSelectionRange(cursor, cursor);
+    });
+  }, [focusRequestKey]);
 
   useEffect(() => {
     onToolsQueryChange(showSlashMenu ? slashQuery?.trim() ?? "" : null);
@@ -505,6 +519,7 @@ export function PromptInput({
         </div>
       ) : null}
       <Textarea
+        ref={textareaRef}
         placeholder={
           councilModeEnabled
             ? councilPlaceholder ?? "Ask your council question..."

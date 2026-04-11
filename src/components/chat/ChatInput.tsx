@@ -28,6 +28,7 @@ export function ChatInput({
   onLoadMoreTools,
   pinnedArtifacts,
   onRemovePinnedArtifact,
+  focusRequestKey,
 }: {
   value: string;
   onValueChange: (value: string) => void;
@@ -47,6 +48,7 @@ export function ChatInput({
   onLoadMoreTools: () => void;
   pinnedArtifacts: VizPayload[];
   onRemovePinnedArtifact: (id: string) => void;
+  focusRequestKey?: number;
 }) {
   return (
     <PromptInput
@@ -71,6 +73,7 @@ export function ChatInput({
       onLoadMoreTools={onLoadMoreTools}
       pinnedArtifacts={pinnedArtifacts}
       onRemovePinnedArtifact={onRemovePinnedArtifact}
+      focusRequestKey={focusRequestKey}
     />
   );
 }
