@@ -12,6 +12,7 @@ export function AppShell({
   conversations,
   activeConversationId,
   mcpToken,
+  mcpTokenUnauthorized,
   authToken,
   onStartNewConversation,
   onEnsureConversation,
@@ -22,12 +23,14 @@ export function AppShell({
   onShareConversation,
   onUnshareConversation,
   onConversationMissing,
+  onMcpTokenUnauthorized,
   settingsContent,
   onClearActiveConversation,
 }: {
   conversations: ChatConversation[];
   activeConversationId: string | null;
   mcpToken: string | null;
+  mcpTokenUnauthorized: boolean;
   authToken: string | null;
   onStartNewConversation: () => void;
   onEnsureConversation: () => Promise<string | null>;
@@ -38,6 +41,7 @@ export function AppShell({
   onShareConversation: (id: string, enabled?: boolean) => Promise<string | null>;
   onUnshareConversation: (id: string) => Promise<void>;
   onConversationMissing: (id: string) => Promise<void> | void;
+  onMcpTokenUnauthorized: () => void;
   settingsContent: React.ReactNode;
   onClearActiveConversation: () => void;
 }) {
@@ -231,6 +235,7 @@ export function AppShell({
             conversation={activeConversation}
             conversationId={activeConversationId}
             mcpToken={mcpToken}
+            mcpTokenUnauthorized={mcpTokenUnauthorized}
             authToken={authToken}
             onEnsureConversation={onEnsureConversation}
             onRenameConversation={onRenameConversation}
@@ -239,6 +244,7 @@ export function AppShell({
             onToggleStarConversation={onStarConversation}
             onShareConversation={handleShareFromMenu}
             onUnshareConversation={handleUnshareFromMenu}
+            onMcpTokenUnauthorized={onMcpTokenUnauthorized}
           />
         </main>
 

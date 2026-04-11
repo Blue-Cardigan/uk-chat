@@ -48,6 +48,7 @@ function ProtectedApp() {
   const theme = useAppStore((state) => state.themePreference);
   const setTheme = useAppStore((state) => state.setThemePreference);
   const [mcpToken, setMcpToken] = useState<string | null>(null);
+  const [mcpTokenUnauthorized, setMcpTokenUnauthorized] = useState(false);
   const isAdmin = (session?.user.email ?? "").toLowerCase() === (import.meta.env.VITE_ADMIN_EMAIL ?? "").toLowerCase();
 
   const loadConversations = useCallback(async (signal?: AbortSignal) => {
@@ -85,6 +86,38 @@ function ProtectedApp() {
     return data;
   }, [session?.access_token, setActiveConversationId, setConversations]);
 
+  const refreshMcpToken = useCallback(
+    async (signal?: AbortSignal) => {
+      if (!session?.access_token) {
+        setMcpToken(null);
+        setMcpTokenUnauthorized(false);
+        return null;
+      }
+      try {
+        const response = await fetch("/api/account/profile", {
+          headers: { Authorization: `Bearer ${session.access_token}` },
+          signal,
+        });
+        if (signal?.aborted) return null;
+        if (!response.ok) {
+          setMcpToken(null);
+          return null;
+        }
+        const payload = (await safeJson<{ mcpToken?: string | null }>(response)) ?? {};
+        if (signal?.aborted) return null;
+        const nextToken = payload.mcpToken ?? null;
+        setMcpToken(nextToken);
+        if (nextToken) setMcpTokenUnauthorized(false);
+        return nextToken;
+      } catch {
+        if (signal?.aborted) return null;
+        setMcpToken(null);
+        return null;
+      }
+    },
+    [session?.access_token],
+  );
+
   useEffect(() => {
     const root = document.documentElement;
     const resolved = theme === "system" ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light") : theme;
@@ -111,30 +144,22 @@ function ProtectedApp() {
       setActiveConversationId(null);
       syncConversationIdToUrl(null);
     });
-    void (async () => {
-      try {
-        const response = await fetch("/api/account/profile", {
-          headers: { Authorization: `Bearer ${session.access_token}` },
-          signal,
-        });
-        if (signal.aborted) return;
-        if (!response.ok) {
-          setMcpToken(null);
-          return;
-        }
-        const payload = (await safeJson<{ mcpToken?: string | null }>(response)) ?? {};
-        if (signal.aborted) return;
-        setMcpToken(payload.mcpToken ?? null);
-      } catch {
-        if (signal.aborted) return;
-        setMcpToken(null);
-      }
-    })();
+    void refreshMcpToken(signal);
 
     return () => {
       controller.abort();
     };
-  }, [loadConversations, session?.access_token, setActiveConversationId, setConversations]);
+  }, [loadConversations, refreshMcpToken, session?.access_token, setActiveConversationId, setConversations]);
+
+  const handleMcpTokenUnauthorized = useCallback(() => {
+    setMcpToken(null);
+    void (async () => {
+      const refreshedToken = await refreshMcpToken();
+      if (!refreshedToken) {
+        setMcpTokenUnauthorized(true);
+      }
+    })();
+  }, [refreshMcpToken]);
 
   const createConversation = useCallback(async () => {
     const currentConversations = useAppStore.getState().conversations;
@@ -340,6 +365,7 @@ function ProtectedApp() {
       conversations={conversations}
       activeConversationId={activeConversationId}
       mcpToken={mcpToken}
+      mcpTokenUnauthorized={mcpTokenUnauthorized}
       authToken={session?.access_token ?? null}
       onStartNewConversation={startNewConversation}
       onEnsureConversation={createConversation}
@@ -350,6 +376,7 @@ function ProtectedApp() {
       onShareConversation={shareConversation}
       onUnshareConversation={unshareConversation}
       onConversationMissing={handleConversationMissing}
+      onMcpTokenUnauthorized={handleMcpTokenUnauthorized}
       settingsContent={settingsContent}
       onClearActiveConversation={handleClearActiveConversation}
     />

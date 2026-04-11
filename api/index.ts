@@ -17,6 +17,7 @@ import { logError, logWarn } from "./_lib/logger.js";
 import { getSystemPrompt } from "./_lib/system-prompt.js";
 import { continueCouncilDeliberation, createCouncilDeliberation } from "./_lib/council/handler.js";
 import { parseCouncilCreateRequest, parseCouncilFollowUpRequest, parseCouncilInferScopeRequest } from "./_lib/council/schemas.js";
+import { shouldClearPendingMcpToken } from "./_lib/mcp-token-recovery.js";
 import { compactMessagesForModel as compactUiMessagesForModel } from "./_lib/context.js";
 import { stripToolContextEchoes } from "../src/shared/text-sanitize.js";
 import { buildExecutionPlanContext, buildQuantContinuationContext, generateExecutionPlan } from "./_lib/chat-handler.js";
@@ -1603,10 +1604,11 @@ async function loadAuthorizedMcpTools({
   }
   if (!token) return { response: json({ error: "Missing MCP token" }, 400) };
 
+  const normalizedEmail = user.email?.trim().toLowerCase();
+  const attemptedTokens = new Set<string>([token]);
   const configuredMcpUrl = env("MCP_SERVER_URL") ?? "https://mcp.explorethekingdom.co.uk/sse";
   let mcpLoad = await loadMcpToolsWithFallback(configuredMcpUrl, token);
   if (!mcpLoad.tools && isMcpUnauthorized(mcpLoad.attempts)) {
-    const normalizedEmail = user.email?.trim().toLowerCase();
     if (normalizedEmail) {
       const { data: gate } = await supabase
         .from("uk_chat_email_gate")
@@ -1616,6 +1618,7 @@ async function loadAuthorizedMcpTools({
       const pendingToken = gate?.pending_mcp_token as string | null | undefined;
 
       if (pendingToken && pendingToken !== token) {
+        attemptedTokens.add(pendingToken);
         const retryLoad = await loadMcpToolsWithFallback(configuredMcpUrl, pendingToken);
         if (retryLoad.tools) {
           token = pendingToken;
@@ -1645,6 +1648,17 @@ async function loadAuthorizedMcpTools({
     const details = mcpLoad.attempts.map((attempt) => `${attempt.type}:${attempt.url} -> ${attempt.error}`).join(" | ");
     if (isMcpUnauthorized(mcpLoad.attempts)) {
       await supabase.from("uk_chat_profiles").update({ mcp_token: null, mcp_token_encrypted: null }).eq("id", user.id);
+      if (normalizedEmail) {
+        const { data: gate } = await supabase
+          .from("uk_chat_email_gate")
+          .select("pending_mcp_token")
+          .eq("email", normalizedEmail)
+          .maybeSingle();
+        const gateToken = typeof gate?.pending_mcp_token === "string" ? gate.pending_mcp_token : null;
+        if (shouldClearPendingMcpToken({ pendingToken: gateToken, attemptedTokens })) {
+          await supabase.from("uk_chat_email_gate").update({ pending_mcp_token: null }).eq("email", normalizedEmail);
+        }
+      }
       logError("[api/chat] MCP token unauthorized after recovery attempts", {
         userId: user.id,
         conversationId: conversationId ?? null,
