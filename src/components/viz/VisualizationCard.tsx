@@ -1,4 +1,7 @@
+import { createContext, useContext } from "react";
 import { Card } from "@/components/ui/primitives";
+
+export const VizCompactContext = createContext(false);
 
 export function VisualizationCard({
   title,
@@ -11,6 +14,12 @@ export function VisualizationCard({
   actions?: React.ReactNode;
   children: React.ReactNode;
 }) {
+  const compact = useContext(VizCompactContext);
+
+  if (compact) {
+    return <Card className="animate-[slideUp_250ms_ease-out_both]">{children}</Card>;
+  }
+
   return (
     <Card className="animate-[slideUp_250ms_ease-out_both] space-y-3">
       <header className="flex items-start justify-between gap-2">

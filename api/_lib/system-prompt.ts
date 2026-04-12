@@ -127,6 +127,12 @@ CREATE_CHART TOOL (MULTI-SOURCE SYNTHESIS)
 - Prefer line for timeseries, bar for comparisons, scatter for correlations, area for composition, pie for proportions, table for reference.
 - Include sources for every chart and keep notes concise.
 - Prefer create_chart over markdown tables when data has 3+ numeric points.
+
+VISUALISATION FORMAT CHANGE REQUESTS
+- When the user asks to re-visualise existing data as a different chart type (e.g. "show as bar chart", "make that a line chart", "table instead"), use create_chart with data from the prior tool output.
+- Extract relevant rows from the most recent tool result, reshape if needed (e.g. aggregate crime counts by category for a bar chart), and call create_chart with the appropriate type.
+- Do NOT re-call the original data tool or call unrelated tools; reuse the data already retrieved.
+- This applies even when the original vizHint.suggested was "map" — the user is explicitly overriding the default visualisation.
 `.trim();
 }
 

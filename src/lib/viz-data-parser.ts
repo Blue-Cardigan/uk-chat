@@ -42,7 +42,7 @@ export type MapOverlayData =
   | { kind: "focus"; point: FocusPoint };
 
 function isRecord(value: unknown): value is JsonRecord {
-  return typeof value === "object" && value !== null;
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function parseJson(value: string): unknown {
@@ -317,6 +317,9 @@ function pickFieldByAliases(row: Record<string, string>, aliases: string[], pref
 }
 
 function parseRowsFromNormalizedToolOutput(normalized: JsonRecord): Record<string, string>[] {
+  if (Array.isArray(normalized.payload)) {
+    return parseMCPPayload({ rows: normalized.payload });
+  }
   const payload = isRecord(normalized.payload) ? normalized.payload : {};
   return parseMCPPayload({
     format: typeof payload.format === "string" ? payload.format : undefined,

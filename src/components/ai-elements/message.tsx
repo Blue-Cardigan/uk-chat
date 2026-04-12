@@ -3,6 +3,7 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Card } from "@/components/ui/primitives";
 import { ArtifactToolbar } from "@/components/viz/ArtifactToolbar";
+import { VizCompactContext } from "@/components/viz/VisualizationCard";
 import { buildChartSpecFromVizHint, isChartSpec } from "@/lib/viz-data-parser";
 import { isVizArtifactCandidate } from "@/lib/viz-helpers";
 import type { VizPayload } from "@/lib/types";
@@ -212,21 +213,19 @@ function InlineArtifact({ payload, tool }: { payload: VizPayload; tool: Normalis
   const inputJson = useMemo(() => (hasInput ? JSON.stringify(tool.input, null, 2) : ""), [hasInput, tool.input]);
 
   return (
-    <div className="rounded-md border border-(--color-border) bg-(--color-card)/60 p-2 text-xs">
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <p className="font-medium text-(--color-foreground)">{payload.title ?? payload.toolName}</p>
-        <span className="rounded-full border border-(--color-border) px-2 py-0.5 text-[10px] uppercase tracking-wide text-(--color-muted-foreground)">
-          {tool.stateLabel}
-        </span>
+    <div className="group relative">
+      <div ref={vizRef}>
+        <VizCompactContext.Provider value={true}>
+          <Suspense fallback={<div className="p-4 text-center text-xs text-(--color-muted-foreground)">Loading...</div>}>
+            <VizRouter payload={payload} />
+          </Suspense>
+        </VizCompactContext.Provider>
       </div>
-      <ArtifactToolbar payload={payload} targetRef={vizRef} className="mb-2 flex flex-wrap gap-1" />
-      <div ref={vizRef} className="rounded-md border border-(--color-border) bg-(--color-background) p-2">
-        <Suspense fallback={<div className="p-4 text-center text-xs text-(--color-muted-foreground)">Loading...</div>}>
-          <VizRouter payload={payload} />
-        </Suspense>
+      <div className="pointer-events-none absolute top-2 right-2 flex gap-1 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100">
+        <ArtifactToolbar payload={payload} targetRef={vizRef} className="flex gap-1" />
       </div>
       {hasInput ? (
-        <details className="mt-2">
+        <details className="mt-1 text-xs">
           <summary className="cursor-pointer text-[11px] text-(--color-muted-foreground)">Input</summary>
           <pre className="mt-1 overflow-x-auto whitespace-pre-wrap rounded bg-(--color-background) p-2 text-[11px]">{inputJson}</pre>
         </details>
