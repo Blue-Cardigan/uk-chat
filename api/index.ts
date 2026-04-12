@@ -1230,6 +1230,55 @@ function buildAssistantPartsFromFinishEvent(
   return fallbackParts;
 }
 
+function isPersistedToolPart(part: unknown): part is PersistedMessagePart & { type: `tool-${string}` } {
+  return isRecord(part) && typeof part.type === "string" && part.type.startsWith("tool-");
+}
+
+function stringifyPersistedToolPayload(value: unknown): string {
+  if (value === undefined) return "";
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return "[unserializable]";
+  }
+}
+
+function persistedToolPartSignature(part: PersistedMessagePart, fallbackIndex: number): string {
+  const toolCallId = typeof part.toolCallId === "string" ? part.toolCallId : `idx-${fallbackIndex}`;
+  const state = typeof part.state === "string" ? part.state : "";
+  const input = stringifyPersistedToolPayload(part.input);
+  const output = stringifyPersistedToolPayload(part.output);
+  return `${part.type}:${toolCallId}:${state}:${input}:${output}`;
+}
+
+function collectToolPartsFromMessages(messages: Array<{ role?: unknown; parts?: unknown }>): PersistedMessagePart[] {
+  const collected: PersistedMessagePart[] = [];
+  for (const message of messages) {
+    if (!isRecord(message) || message.role !== "assistant" || !Array.isArray(message.parts)) continue;
+    for (const part of message.parts) {
+      if (!isPersistedToolPart(part)) continue;
+      collected.push(part);
+    }
+  }
+  return collected;
+}
+
+function mergeAssistantToolParts(
+  assistantParts: PersistedMessagePart[],
+  priorMessages: Array<{ role?: unknown; parts?: unknown }>,
+): PersistedMessagePart[] {
+  const merged = [...assistantParts];
+  const signatures = new Set<string>(merged.map((part, index) => persistedToolPartSignature(part, index)));
+  const priorToolParts = collectToolPartsFromMessages(priorMessages);
+  for (const part of priorToolParts) {
+    const signature = persistedToolPartSignature(part, merged.length);
+    if (signatures.has(signature)) continue;
+    merged.push(part);
+    signatures.add(signature);
+  }
+  return merged;
+}
+
 function logToolSequenceForRequest(params: {
   event: unknown;
   conversationId?: string | null;
@@ -2443,6 +2492,7 @@ async function runResumableChatSlice(params: {
         status: "in_progress",
         completed_slices: nextCompletedSlices,
         latest_messages: nextMessages,
+        assistant_parts: stepParts,
         prompt_tokens: (job.prompt_tokens ?? 0) + sliceUsage.promptTokens,
         completion_tokens: (job.completion_tokens ?? 0) + sliceUsage.completionTokens,
         tool_calls: (job.tool_calls ?? 0) + sliceUsage.toolCalls,
@@ -2479,7 +2529,8 @@ async function runResumableChatSlice(params: {
     temperature: selectedModel.toolTemperature,
   });
   const finalUsage = parseUsage(finalResult);
-  const assistantParts = buildAssistantPartsFromFinishEvent(finalResult, (name) => safeToOriginal.get(name) ?? name);
+  const synthesisAssistantParts = buildAssistantPartsFromFinishEvent(finalResult, (name) => safeToOriginal.get(name) ?? name);
+  const assistantParts = mergeAssistantToolParts(synthesisAssistantParts, nextMessages);
   const totalPromptTokens = (job.prompt_tokens ?? 0) + sliceUsage.promptTokens + finalUsage.promptTokens;
   const totalCompletionTokens = (job.completion_tokens ?? 0) + sliceUsage.completionTokens + finalUsage.completionTokens;
   const totalToolCalls = (job.tool_calls ?? 0) + sliceUsage.toolCalls + finalUsage.toolCalls;

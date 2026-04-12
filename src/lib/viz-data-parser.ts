@@ -189,6 +189,33 @@ function parseTextRows(body: string): Record<string, string>[] {
   return parseKeyValueLines(body);
 }
 
+function stringifyFlatValue(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (value == null) return "";
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function flattenRowInto(source: Record<string, unknown>, target: Record<string, string>, prefix = "", depth = 0): void {
+  for (const [key, value] of Object.entries(source)) {
+    const fullKey = prefix ? `${prefix}.${key}` : key;
+    if (isRecord(value) && depth < 2) {
+      flattenRowInto(value, target, fullKey, depth + 1);
+      continue;
+    }
+
+    const stringValue = stringifyFlatValue(value);
+    target[fullKey] = stringValue;
+    if (!(key in target)) {
+      target[key] = stringValue;
+    }
+  }
+}
+
 export function parseMCPPayload(payload: {
   format?: string;
   csv?: string;
@@ -203,9 +230,7 @@ export function parseMCPPayload(payload: {
       .filter((item): item is Record<string, unknown> => isRecord(item))
       .map((row) => {
         const normalized: Record<string, string> = {};
-        for (const [key, value] of Object.entries(row)) {
-          normalized[key] = typeof value === "string" ? value : String(value ?? "");
-        }
+        flattenRowInto(row, normalized);
         return normalized;
       });
   }

@@ -26,6 +26,26 @@ test("parseMCPPayload accepts records/data arrays", () => {
   assert.equal(rowsFromData[0]?.amount, "14.2");
 });
 
+test("parseMCPPayload flattens nested coordinate objects", () => {
+  const rows = parseMCPPayload({
+    data: [
+      {
+        category: "violent-crime",
+        location: {
+          latitude: "51.501",
+          longitude: "-0.141",
+        },
+      },
+    ],
+  });
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]?.["location.latitude"], "51.501");
+  assert.equal(rows[0]?.["location.longitude"], "-0.141");
+  assert.equal(rows[0]?.latitude, "51.501");
+  assert.equal(rows[0]?.longitude, "-0.141");
+});
+
 test("buildChartSpecFromVizHint parses wrapped MCP content payload", () => {
   const toolOutput = {
     content: [

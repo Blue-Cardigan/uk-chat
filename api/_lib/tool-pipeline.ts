@@ -7,6 +7,7 @@ const MAX_TOOL_OUTPUT_STRING = 8_000;
 const MAX_TOOL_OUTPUT_ARRAY_ITEMS = 180;
 const MAX_TOOL_OUTPUT_OBJECT_KEYS = 60;
 const MAX_TOOL_BUDGET_FALLBACK_STRING = 2_000;
+const TOOL_OUTPUT_TRUNCATION_WARNING = "Tool output truncated due to per-request context budget.";
 
 const CORE_GEOGRAPHY_TOOL_PATTERNS = [
   /^postcodes[_.-]/i,
@@ -113,7 +114,13 @@ function compactToolOutputForModel(value: unknown, depth = 0): unknown {
   if (Array.isArray(value)) {
     const compacted = value.slice(0, MAX_TOOL_OUTPUT_ARRAY_ITEMS).map((item) => compactToolOutputForModel(item, depth + 1));
     if (value.length > MAX_TOOL_OUTPUT_ARRAY_ITEMS) {
-      compacted.push(`[truncated: ${value.length - MAX_TOOL_OUTPUT_ARRAY_ITEMS} more items]`);
+      const omittedItems = value.length - MAX_TOOL_OUTPUT_ARRAY_ITEMS;
+      compacted.push(`[truncated: ${omittedItems} more items]`);
+      compacted.push({
+        __truncated__: true,
+        reason: "array_items",
+        omittedItems,
+      });
     }
     return compacted;
   }
@@ -125,6 +132,11 @@ function compactToolOutputForModel(value: unknown, depth = 0): unknown {
   for (const [index, [key, entry]] of entries.entries()) {
     if (index >= MAX_TOOL_OUTPUT_OBJECT_KEYS) {
       compactedObject.__truncated__ = `${entries.length - MAX_TOOL_OUTPUT_OBJECT_KEYS} more keys omitted`;
+      compactedObject.__truncation__ = {
+        truncated: true,
+        reason: "object_keys",
+        omittedKeys: entries.length - MAX_TOOL_OUTPUT_OBJECT_KEYS,
+      };
       break;
     }
     compactedObject[key] = compactToolOutputForModel(entry, depth + 1);
@@ -329,7 +341,13 @@ export function compactMcpToolsForModelContext(
         if (totalOutputChars <= budget) return compacted;
 
         return {
-          warning: "Tool output truncated due to per-request context budget.",
+          warning: TOOL_OUTPUT_TRUNCATION_WARNING,
+          truncated: true,
+          truncation: {
+            reason: "per-request-context-budget",
+            outputBudgetChars: budget,
+            observedChars: totalOutputChars,
+          },
           tool: toolName,
           preview:
             typeof compacted === "string"

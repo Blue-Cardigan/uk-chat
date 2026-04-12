@@ -158,6 +158,8 @@ ERROR RECOVERY AND FALLBACKS
 - If fine-grained geography fails (postcode/ward), broaden to local authority, then region.
 - If geography cannot be resolved confidently, ask one focused clarification question.
 - If a tool returns unexpectedly large payloads, re-run with narrower parameters; if still large, summarise key findings and note the limit.
+- Treat truncation metadata as incomplete evidence: if output includes warning text such as "Tool output truncated due to per-request context budget." (or a truncated flag), run a narrower follow-up call before finalising where possible.
+- If a narrower retry is still too large, explicitly offer a representative alternative (for example category breakdown, shorter date window, or month-by-month slices) instead of implying full coverage.
 - Surface tool failure to the user only after reasonable recovery paths are exhausted.
 `.trim();
 }
