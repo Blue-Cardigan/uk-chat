@@ -25,6 +25,8 @@ type PrivacyConsentResponse = {
 };
 type ActionStatus = { type: "success" | "error"; message: string } | null;
 
+const MCP_SERVER_URL = "https://mcp.explorethekingdom.co.uk/sse";
+
 export function SettingsPanel({
   theme,
   onThemeChange,
@@ -162,6 +164,17 @@ export function SettingsPanel({
       setActionStatus({ type: "success", message: "Developer token copied." });
     } catch {
       setActionStatus({ type: "error", message: "Could not copy token right now." });
+    }
+  }
+
+  async function handleCopyMcpServerUrl() {
+    if (typeof navigator === "undefined") return;
+    setActionStatus(null);
+    try {
+      await navigator.clipboard.writeText(MCP_SERVER_URL);
+      setActionStatus({ type: "success", message: "Server URL copied." });
+    } catch {
+      setActionStatus({ type: "error", message: "Could not copy server URL right now." });
     }
   }
 
@@ -303,23 +316,47 @@ export function SettingsPanel({
           ) : null}
         </section>
 
-        <section className="space-y-2 border-t border-(--color-border) pt-4">
-          <h4 className="text-xs font-semibold uppercase tracking-wide text-(--color-muted-foreground)">Developer Token</h4>
-          <p className="text-xs text-(--color-muted-foreground)">Use this token to connect external tools via MCP.</p>
-          <div className="flex items-center justify-between gap-2 rounded-md border border-(--color-border) bg-(--color-background) px-3 py-2">
-            <code className="truncate text-xs">{masked}</code>
-            <Button
-              type="button"
-              variant="ghost"
-              className="h-8 w-8 p-0"
-              onClick={() => {
-                void handleCopyMcpToken();
-              }}
-              aria-label="Copy MCP token"
-              disabled={!mcpToken}
-            >
-              <Copy className="h-4 w-4" />
-            </Button>
+        <section className="space-y-3 border-t border-(--color-border) pt-4">
+          <h4 className="text-xs font-semibold uppercase tracking-wide text-(--color-muted-foreground)">MCP Connection</h4>
+          <p className="text-xs text-(--color-muted-foreground)">
+            Add ChatGB as an MCP server in Claude Desktop, Cursor, or any other MCP-compatible client using the URL and token below.
+          </p>
+
+          <div className="space-y-1.5">
+            <label className="text-[11px] font-medium uppercase tracking-wide text-(--color-muted-foreground)">Server URL</label>
+            <div className="flex items-center justify-between gap-2 rounded-md border border-(--color-border) bg-(--color-background) px-3 py-2">
+              <code className="truncate text-xs">{MCP_SERVER_URL}</code>
+              <Button
+                type="button"
+                variant="ghost"
+                className="h-8 w-8 p-0"
+                onClick={() => {
+                  void handleCopyMcpServerUrl();
+                }}
+                aria-label="Copy MCP server URL"
+              >
+                <Copy className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-[11px] font-medium uppercase tracking-wide text-(--color-muted-foreground)">Developer Token</label>
+            <div className="flex items-center justify-between gap-2 rounded-md border border-(--color-border) bg-(--color-background) px-3 py-2">
+              <code className="truncate text-xs">{masked}</code>
+              <Button
+                type="button"
+                variant="ghost"
+                className="h-8 w-8 p-0"
+                onClick={() => {
+                  void handleCopyMcpToken();
+                }}
+                aria-label="Copy MCP token"
+                disabled={!mcpToken}
+              >
+                <Copy className="h-4 w-4" />
+              </Button>
+            </div>
           </div>
         </section>
 
