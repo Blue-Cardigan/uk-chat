@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { BarChart3, ChevronLeft, PanelLeftOpen, X } from "lucide-react";
+import { BarChart3, PanelLeftOpen, X } from "lucide-react";
 import { Button } from "@/components/ui/primitives";
 import { LeftSidebar } from "@/components/layout/LeftSidebar";
 import { RightSidebar } from "@/components/layout/RightSidebar";
@@ -187,7 +187,7 @@ export function AppShell({
           ) : null}
           <div
             className={cn(
-              "absolute left-0 top-0 h-full w-[280px] max-w-[88vw] md:relative md:min-h-0 md:h-full md:w-full md:max-w-none md:transition-[opacity,transform] md:duration-250 md:ease-out",
+              "absolute left-0 top-0 h-full w-full md:relative md:min-h-0 md:h-full md:w-full md:max-w-none md:transition-[opacity,transform] md:duration-250 md:ease-out",
               sidebarOpen ? "translate-x-0 opacity-100" : "-translate-x-full opacity-0",
               sidebarOpen ? "md:translate-x-0 md:opacity-100" : "md:pointer-events-none md:-translate-x-3 md:opacity-0",
             )}
@@ -217,8 +217,7 @@ export function AppShell({
               className="absolute left-3 top-3 z-30 h-8 w-8 p-0"
               onClick={() => setSidebarOpen(true)}
             >
-              <ChevronLeft className="h-4 w-4 md:hidden" />
-              <PanelLeftOpen className="hidden h-4 w-4 md:block" />
+              <PanelLeftOpen className="h-4 w-4" />
             </Button>
           ) : null}
           {!rightSidebarOpen ? (
