@@ -1052,9 +1052,7 @@ export async function readProfileMcpToken(params: {
   if (decrypted) return decrypted;
   if (!plainToken) return null;
   const encrypted = await encryptMcpToken(plainToken);
-  if (encrypted) {
-    await supabase.from("uk_chat_profiles").update({ mcp_token_encrypted: encrypted, mcp_token: null }).eq("id", userId);
-  }
+  await supabase.from("uk_chat_profiles").update({ mcp_token_encrypted: encrypted, mcp_token: null }).eq("id", userId);
   return plainToken;
 }
 
@@ -1075,9 +1073,7 @@ export async function claimPendingMcpToken(params: {
   if (!pendingToken) return null;
 
   const encrypted = await encryptMcpToken(pendingToken);
-  const profilePatch: { mcp_token: string | null; mcp_token_encrypted: string | null } = encrypted
-    ? { mcp_token: null, mcp_token_encrypted: encrypted }
-    : { mcp_token: pendingToken, mcp_token_encrypted: null };
+  const profilePatch = { mcp_token: null, mcp_token_encrypted: encrypted };
 
   await supabase.from("uk_chat_profiles").update(profilePatch).eq("id", userId);
   await supabase.from("uk_chat_email_gate").update({ claimed_at: new Date().toISOString() }).eq("email", normalizedEmail);
@@ -1648,7 +1644,7 @@ export async function loadAuthorizedMcpTools({
           const encrypted = await encryptMcpToken(pendingToken);
           await supabase
             .from("uk_chat_profiles")
-            .update(encrypted ? { mcp_token: null, mcp_token_encrypted: encrypted } : { mcp_token: pendingToken })
+            .update({ mcp_token: null, mcp_token_encrypted: encrypted })
             .eq("id", user.id);
           logWarn("[api/chat] Recovered from unauthorized MCP token using pending token", {
             userId: user.id,

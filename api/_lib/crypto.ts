@@ -39,9 +39,11 @@ function asArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return new Uint8Array(bytes).buffer;
 }
 
-async function getKey(): Promise<CryptoKey | null> {
+async function getKey(): Promise<CryptoKey> {
   const encodedKey = env("MCP_TOKEN_ENCRYPTION_KEY")?.trim();
-  if (!encodedKey) return null;
+  if (!encodedKey) {
+    throw new Error("MCP_TOKEN_ENCRYPTION_KEY is required — refusing to read/write MCP tokens without encryption");
+  }
   const keyBytes = fromBase64(encodedKey);
   if (keyBytes.byteLength !== 32) {
     throw new Error("MCP_TOKEN_ENCRYPTION_KEY must be base64-encoded 32-byte key");
@@ -49,10 +51,20 @@ async function getKey(): Promise<CryptoKey | null> {
   return getCryptoApi().subtle.importKey("raw", asArrayBuffer(keyBytes), { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
 }
 
-export async function encryptMcpToken(plaintext: string): Promise<string | null> {
-  if (!plaintext) return null;
+export function assertMcpEncryptionConfigured(): void {
+  const encodedKey = env("MCP_TOKEN_ENCRYPTION_KEY")?.trim();
+  if (!encodedKey) {
+    throw new Error("MCP_TOKEN_ENCRYPTION_KEY is required");
+  }
+  const keyBytes = fromBase64(encodedKey);
+  if (keyBytes.byteLength !== 32) {
+    throw new Error("MCP_TOKEN_ENCRYPTION_KEY must be base64-encoded 32-byte key");
+  }
+}
+
+export async function encryptMcpToken(plaintext: string): Promise<string> {
+  if (!plaintext) throw new Error("Cannot encrypt empty MCP token");
   const key = await getKey();
-  if (!key) return null;
   const iv = new Uint8Array(getCryptoApi().getRandomValues(new Uint8Array(12)));
   const plainBytes = new TextEncoder().encode(plaintext);
   const cipherBuffer = await getCryptoApi().subtle.encrypt({ name: "AES-GCM", iv: new Uint8Array(iv) }, key, asArrayBuffer(plainBytes));
@@ -64,7 +76,6 @@ export async function decryptMcpToken(payload: string | null | undefined): Promi
   if (!payload) return null;
   if (!payload.startsWith(TOKEN_PREFIX)) return payload;
   const key = await getKey();
-  if (!key) return null;
   const encoded = payload.slice(TOKEN_PREFIX.length);
   const [ivB64, cipherB64] = encoded.split(":");
   if (!ivB64 || !cipherB64) return null;

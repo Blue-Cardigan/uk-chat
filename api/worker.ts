@@ -10,8 +10,19 @@ import { adminRoutes } from "./routes/admin.js";
 import { privacyRoutes } from "./routes/privacy.js";
 import { accountRoutes } from "./routes/account.js";
 import { cronRoutes, runDataRetention } from "./routes/cron.js";
+import { assertMcpEncryptionConfigured } from "./_lib/crypto.js";
 
 const app = new Hono<{ Bindings: Env }>();
+
+app.get("/api/health", (c) => {
+  try {
+    assertMcpEncryptionConfigured();
+    return c.json({ ok: true });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "health check failed";
+    return c.json({ ok: false, error: message }, 500);
+  }
+});
 
 app.route("/api/chat", chatRoutes);
 app.route("/api/council", councilRoutes);

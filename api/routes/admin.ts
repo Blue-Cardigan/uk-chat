@@ -87,7 +87,7 @@ adminRoutes.post("/tokens", async (c) => {
       const encrypted = await encryptMcpToken(result.token);
       await supabase
         .from("uk_chat_profiles")
-        .upsert(encrypted ? { id: targetUserId, mcp_token: null, mcp_token_encrypted: encrypted } : { id: targetUserId, mcp_token: result.token }, { onConflict: "id" });
+        .upsert({ id: targetUserId, mcp_token: null, mcp_token_encrypted: encrypted }, { onConflict: "id" });
     }
     await writeAdminAuditLog(c.env, {
       actorUserId: admin.user.id,
