@@ -30,17 +30,66 @@ export async function runDataRetention(env: Env) {
   return { deletedCount: staleIds.length, retentionDays, cutoff };
 }
 
-function authenticateCron(c: { env: Env; req: { raw: Request } }): Response | null {
+const MAX_TIMESTAMP_SKEW_MS = 5 * 60 * 1000;
+
+function hexToBytes(hex: string): Uint8Array | null {
+  if (hex.length % 2 !== 0) return null;
+  const out = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < out.length; i += 1) {
+    const byte = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+    if (!Number.isFinite(byte)) return null;
+    out[i] = byte;
+  }
+  return out;
+}
+
+function constantTimeEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.byteLength !== b.byteLength) return false;
+  let diff = 0;
+  for (let i = 0; i < a.byteLength; i += 1) diff |= a[i] ^ b[i];
+  return diff === 0;
+}
+
+async function computeSignature(secret: string, message: string): Promise<Uint8Array> {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(message));
+  return new Uint8Array(sig);
+}
+
+async function authenticateCron(c: { env: Env; req: { raw: Request } }): Promise<Response | null> {
   const cronSecret = c.env.CRON_SECRET;
   if (!cronSecret) return json({ error: "CRON_SECRET is required" }, 500);
+
   const authHeader = c.req.raw.headers.get("authorization") ?? "";
-  const token = authHeader.replace(/^Bearer\s+/i, "").trim();
-  if (!token || token !== cronSecret) return json({ error: "Unauthorized" }, 401);
+  const provided = authHeader.replace(/^Bearer\s+/i, "").trim();
+  const timestampHeader = c.req.raw.headers.get("x-signature-timestamp");
+  if (!provided || !timestampHeader) return json({ error: "Unauthorized" }, 401);
+
+  const timestamp = Number.parseInt(timestampHeader, 10);
+  if (!Number.isFinite(timestamp)) return json({ error: "Unauthorized" }, 401);
+  const timestampMs = timestamp > 10_000_000_000 ? timestamp : timestamp * 1000;
+  if (Math.abs(Date.now() - timestampMs) > MAX_TIMESTAMP_SKEW_MS) {
+    return json({ error: "Unauthorized" }, 401);
+  }
+
+  const url = new URL(c.req.raw.url);
+  const message = `${c.req.raw.method.toUpperCase()}\n${url.pathname}\n${timestampHeader}`;
+  const expected = await computeSignature(cronSecret, message);
+  const providedBytes = hexToBytes(provided.toLowerCase());
+  if (!providedBytes || !constantTimeEqual(expected, providedBytes)) {
+    return json({ error: "Unauthorized" }, 401);
+  }
   return null;
 }
 
 cronRoutes.get("/data-retention", async (c) => {
-  const authError = authenticateCron(c);
+  const authError = await authenticateCron(c);
   if (authError) return authError;
 
   const result = await runDataRetention(c.env);
@@ -51,7 +100,7 @@ cronRoutes.get("/data-retention", async (c) => {
 });
 
 cronRoutes.post("/data-retention", async (c) => {
-  const authError = authenticateCron(c);
+  const authError = await authenticateCron(c);
   if (authError) return authError;
 
   const result = await runDataRetention(c.env);
