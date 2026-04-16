@@ -2,11 +2,12 @@ import { compactMessagesForModel as compactUiMessagesForModel } from "./context.
 import { isRecord } from "./internals.js";
 import type { CompactModelMessage, PersistedMessagePart } from "./internals.js";
 import { stripToolContextEchoes } from "../../src/shared/text-sanitize.js";
-
-const MAX_TOOL_OUTPUT_DEPTH = 5;
-const MAX_TOOL_OUTPUT_STRING = 8_000;
-const MAX_TOOL_OUTPUT_ARRAY_ITEMS = 180;
-const MAX_TOOL_OUTPUT_OBJECT_KEYS = 60;
+import {
+  MAX_TOOL_OUTPUT_ARRAY_ITEMS,
+  MAX_TOOL_OUTPUT_DEPTH,
+  MAX_TOOL_OUTPUT_OBJECT_KEYS,
+  MAX_TOOL_OUTPUT_STRING,
+} from "./tool-output-limits.js";
 
 export function compactToolOutputForModel(value: unknown, depth = 0): unknown {
   if (depth > MAX_TOOL_OUTPUT_DEPTH) return "[truncated: depth]";

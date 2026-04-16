@@ -1,4 +1,4 @@
-type PromptModelId = "flash" | "opus" | "gpt" | "sonnet" | "pro";
+import type { ChatModelId } from "./chat-models.js";
 
 function formatUtcDateForPrompt(date: Date): string {
   const parts = new Intl.DateTimeFormat("en-GB", {
@@ -200,7 +200,7 @@ Repeat to yourself before finalising each response:
 `.trim();
 }
 
-function getModelSpecificProfileBlock(modelId: PromptModelId | undefined): string {
+function getModelSpecificProfileBlock(modelId: ChatModelId | undefined): string {
   if (!modelId) return "";
 
   switch (modelId) {
@@ -269,7 +269,7 @@ MODEL PROFILE (GEMINI PRO)
   }
 }
 
-export function getSystemPrompt(now: Date = new Date(), modelId?: PromptModelId): string {
+export function getSystemPrompt(now: Date = new Date(), modelId?: ChatModelId): string {
   const today = formatUtcDateForPrompt(now);
   const blocks = [
     buildIdentityAndToneBlock(today),

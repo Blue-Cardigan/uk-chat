@@ -1,12 +1,14 @@
 import { jsonSchema } from "ai";
 import { isRecord } from "./internals.js";
+import {
+  MAX_TOOL_OUTPUT_ARRAY_ITEMS,
+  MAX_TOOL_OUTPUT_DEPTH,
+  MAX_TOOL_OUTPUT_OBJECT_KEYS,
+  MAX_TOOL_OUTPUT_STRING,
+} from "./tool-output-limits.js";
 
 export const CREATE_CHART_TOOL_NAME = "create_chart";
 
-const MAX_TOOL_OUTPUT_DEPTH = 5;
-const MAX_TOOL_OUTPUT_STRING = 8_000;
-const MAX_TOOL_OUTPUT_ARRAY_ITEMS = 180;
-const MAX_TOOL_OUTPUT_OBJECT_KEYS = 60;
 const MAX_TOOL_BUDGET_FALLBACK_STRING = 2_000;
 const TOOL_OUTPUT_TRUNCATION_WARNING = "Tool output truncated due to per-request context budget.";
 
