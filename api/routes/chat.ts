@@ -7,6 +7,7 @@ import type { Env } from "../env.js";
 import { getSupabaseAdmin, getUserFromRequest, json } from "../_lib/server.js";
 import { userRateLimit } from "../_lib/rate-limit.js";
 import { logError, logWarn } from "../_lib/logger.js";
+import { runChatWithFallback } from "../_lib/chat-fallback.js";
 import { getSystemPrompt } from "../_lib/system-prompt.js";
 import { buildExecutionPlanContext, buildQuantContinuationContext, generateExecutionPlan } from "../_lib/chat-handler.js";
 import {
@@ -641,117 +642,25 @@ chatRoutes.post("/", async (c) => {
       onFinish: onAssistantFinish,
     });
 
-  let result: ReturnType<typeof streamText>;
-  try {
-    result = tryStream({
+  const result = runChatWithFallback({
+    tryStream,
+    primary: {
       includeFallbackModels: true,
       includeTools: true,
       requireToolCall: requireDataToolCall,
       toolsOverride: forceReducedMainTools
         ? (quantitativeReducedSafeTools as Parameters<typeof streamText>[0]["tools"])
         : undefined,
-    });
-  } catch (error) {
-    // --- Timeout fallback ---
-    if (isProviderTimeoutError(error)) {
-      if (requireDataToolCall) {
-        logWarn("[api/chat] Provider timed out, retrying with reduced quantitative tools", {
-          modelId: selectedModel.id,
-          providerModel: selectedModel.providerModel,
-          error: error instanceof Error ? error.message : String(error),
-        });
-        try {
-          quantTelemetry.fallbackPath = "timeout_reduced_tools";
-          result = tryStream({
-            includeFallbackModels: false,
-            includeTools: true,
-            requireToolCall: true,
-            toolsOverride: quantitativeReducedSafeTools as Parameters<typeof streamText>[0]["tools"],
-            stepLimitOverride: Math.max(2, Math.min(4, quantMainStepLimit)),
-            systemOverride: `${systemPrompt}\n\nTimeout recovery: run one lookup, one concrete data retrieval, then synthesize.`,
-          });
-        } catch (timeoutRetryError) {
-          if (!isProviderTimeoutError(timeoutRetryError) && !isProviderInvalidRequestError(timeoutRetryError)) {
-            throw timeoutRetryError;
-          }
-          quantTelemetry.fallbackPath = "timeout_bounded_synthesis";
-          result = tryStream({ includeFallbackModels: false, includeTools: false, requireToolCall: false });
-        }
-      } else {
-        quantTelemetry.fallbackPath = "timeout_no_tools_non_quant";
-        result = tryStream({ includeFallbackModels: false, includeTools: false, requireToolCall: false });
-      }
-      return result.toUIMessageStreamResponse({
-        originalMessages: (body.messages ?? []) as never,
-      });
-    }
-
-    // --- Invalid request fallback chain ---
-    if (!isProviderInvalidRequestError(error)) throw error;
-
-    logWarn("[api/chat] Provider rejected request, retrying without fallback model chain", {
-      modelId: selectedModel.id,
-      providerModel: selectedModel.providerModel,
-      requireDataToolCall,
-      error: error instanceof Error ? error.message : String(error),
-    });
-
-    try {
-      quantTelemetry.fallbackPath = "no_fallback_models";
-      result = tryStream({
-        includeFallbackModels: false,
-        includeTools: true,
-        requireToolCall: requireDataToolCall,
-      });
-    } catch (retryError) {
-      if (!isProviderInvalidRequestError(retryError)) throw retryError;
-
-      if (requireDataToolCall) {
-        logWarn("[api/chat] Provider rejected required tool choice, retrying with auto tool choice", {
-          modelId: selectedModel.id,
-          providerModel: selectedModel.providerModel,
-          error: retryError instanceof Error ? retryError.message : String(retryError),
-        });
-        try {
-          quantTelemetry.fallbackPath = "auto_tool_choice";
-          result = tryStream({
-            includeFallbackModels: false,
-            includeTools: true,
-            requireToolCall: false,
-          });
-        } catch (autoToolChoiceError) {
-          if (!isProviderInvalidRequestError(autoToolChoiceError)) throw autoToolChoiceError;
-
-          logWarn("[api/chat] Provider still rejected request, retrying with reduced tool set", {
-            modelId: selectedModel.id,
-            providerModel: selectedModel.providerModel,
-            error: autoToolChoiceError instanceof Error ? autoToolChoiceError.message : String(autoToolChoiceError),
-          });
-          try {
-            quantTelemetry.fallbackPath = "reduced_tools";
-            result = tryStream({
-              includeFallbackModels: false,
-              includeTools: true,
-              requireToolCall: true,
-              toolsOverride: quantitativeSafeTools as Parameters<typeof streamText>[0]["tools"],
-            });
-          } catch (reducedToolError) {
-            if (!isProviderInvalidRequestError(reducedToolError)) throw reducedToolError;
-            quantTelemetry.fallbackPath = "no_tools";
-            result = tryStream({ includeFallbackModels: false, includeTools: false, requireToolCall: false });
-          }
-        }
-      } else {
-        logWarn("[api/chat] Provider still rejected request, retrying without tools", {
-          modelId: selectedModel.id,
-          providerModel: selectedModel.providerModel,
-          error: retryError instanceof Error ? retryError.message : String(retryError),
-        });
-        quantTelemetry.fallbackPath = "no_tools_non_quant";
-        result = tryStream({ includeFallbackModels: false, includeTools: false, requireToolCall: false });
-      }
-    }
-  }
+    },
+    requireDataToolCall,
+    quantitativeSafeTools: quantitativeSafeTools as Parameters<typeof streamText>[0]["tools"],
+    quantitativeReducedSafeTools: quantitativeReducedSafeTools as Parameters<typeof streamText>[0]["tools"],
+    systemPrompt,
+    quantMainStepLimit,
+    modelId: selectedModel.id,
+    providerModel: selectedModel.providerModel,
+    telemetry: quantTelemetry,
+  });
 
   return result.toUIMessageStreamResponse({
     originalMessages: (body.messages ?? []) as never,
