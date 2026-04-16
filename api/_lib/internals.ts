@@ -5,6 +5,7 @@ import { decryptMcpToken, encryptMcpToken } from "./crypto.js";
 import { logError, logWarn } from "./logger.js";
 import { shouldClearPendingMcpToken } from "./mcp-token-recovery.js";
 import { compactMessagesForModel as compactUiMessagesForModel } from "./context.js";
+import { compactToolOutputForModel, sanitizeToolName } from "./message-utils.js";
 import { stripToolContextEchoes } from "../../src/shared/text-sanitize.js";
 import { loadMcpToolsWithFallback as loadMcpToolsWithFallbackFromLib } from "./mcp.js";
 import type { McpAttempt } from "./mcp.js";
@@ -93,82 +94,41 @@ export const ARTIFACT_TOOL_ALLOWLIST = new Set([
   "create_chart",
 ]);
 
-export const CREATE_CHART_INPUT_SCHEMA: Record<string, unknown> = {
-  type: "object",
-  additionalProperties: false,
-  required: ["type", "title", "xField", "yFields", "data"],
-  properties: {
-    type: { type: "string", enum: ["line", "bar", "scatter", "area", "pie", "table"] },
-    title: { type: "string" },
-    xField: { type: "string" },
-    yFields: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 6 },
-    labelField: { type: "string" },
-    groupField: { type: "string" },
-    data: {
-      type: "array",
-      maxItems: 160,
-      items: {
-        type: "object",
-        additionalProperties: true,
-      },
-    },
-    sources: { type: "array", items: { type: "string" } },
-    note: { type: "string" },
-  },
-};
-
-// compactToolOutput constants
-const MAX_TOOL_OUTPUT_DEPTH = 5;
-const MAX_TOOL_OUTPUT_STRING = 8_000;
-const MAX_TOOL_OUTPUT_ARRAY_ITEMS = 180;
-const MAX_TOOL_OUTPUT_OBJECT_KEYS = 60;
+export {
+  CREATE_CHART_INPUT_SCHEMA,
+  MODELS_NEEDING_SCHEMA_PROJECTION,
+  PROVIDER_TOOL_NAME_MAX_LENGTH,
+  PROVIDER_TOOL_NAME_PATTERN,
+  WEAK_MODEL_TOOL_SCHEMA_PROJECTION_RULES,
+  buildProviderSafeTools,
+  inferArrayItemsFromPath,
+  inferTupleItemsSchema,
+  isSchemaWrapper,
+  normalizeToolSchemaInPlace,
+  normalizeToolSchemas,
+  projectToolSchemaForRule,
+  projectToolSchemasForModel,
+  toProviderSafeToolName,
+} from "./tool-normalization.js";
+export type { ToolSchemaProjectionRule } from "./tool-normalization.js";
 
 // compactCreateChart constants
 const MAX_CREATE_CHART_ROWS = 120;
 const MAX_CREATE_CHART_COLUMNS = 14;
 const MAX_CREATE_CHART_STRING_LENGTH = 220;
 
-// provider tool name constants
-export const PROVIDER_TOOL_NAME_MAX_LENGTH = 128;
-export const PROVIDER_TOOL_NAME_PATTERN = /^[a-zA-Z0-9_-]{1,128}$/;
-
-// compactMessagesForModel constants (used internally but not re-exported)
-const MAX_MODEL_CONTEXT_MESSAGES = 12;
-const MAX_MODEL_MESSAGE_PARTS = 10;
-const MAX_MODEL_TEXT_PART_CHARS = 4_000;
-
-// tool schema projection
-type ToolSchemaProjectionRule = {
-  toolNames: string[];
-  removeProperties: string[];
-  removeKindEnumValues?: string[];
-};
-
-export const WEAK_MODEL_TOOL_SCHEMA_PROJECTION_RULES: ToolSchemaProjectionRule[] = [
-  {
-    toolNames: ["parliament_fetchHansard"],
-    removeProperties: ["baseUrl"],
-  },
-  {
-    toolNames: ["osm_assets"],
-    removeProperties: ["endpoint"],
-  },
-  {
-    toolNames: ["desnz_fetchCo2"],
-    removeProperties: ["url"],
-    removeKindEnumValues: ["custom_csv"],
-  },
-  {
-    toolNames: ["finance_laRevenue"],
-    removeProperties: ["url"],
-    removeKindEnumValues: ["custom_csv"],
-  },
-];
-
-export const MODELS_NEEDING_SCHEMA_PROJECTION = new Set<string>([
-  // Sonnet 4.6 does NOT need projection — strong tool-calling model.
-  // Add "sonnet" here only if the slot is reassigned to a weaker model.
-]);
+export {
+  buildAssistantPartsFromFinishEvent,
+  collectToolPartsFromMessages,
+  compactMessagesForModel,
+  compactToolOutputForModel,
+  extractPartsFromResponseMessage,
+  isPersistedToolPart,
+  mergeToolCallsAndResultsIntoParts,
+  persistedToolPartSignature,
+  sanitizeToolName,
+  stringifyPersistedToolPayload,
+} from "./message-utils.js";
 
 // ---------------------------------------------------------------------------
 // Pure utility functions (no env needed)
@@ -312,36 +272,6 @@ export function getOpenRouterFallbackModels(modelId: string): string[] {
   }
 }
 
-export function compactToolOutputForModel(value: unknown, depth = 0): unknown {
-  if (depth > MAX_TOOL_OUTPUT_DEPTH) return "[truncated: depth]";
-
-  if (typeof value === "string") {
-    if (value.length <= MAX_TOOL_OUTPUT_STRING) return value;
-    return `${value.slice(0, MAX_TOOL_OUTPUT_STRING)}\n\n[truncated for model context]`;
-  }
-  if (typeof value === "number" || typeof value === "boolean" || value == null) return value;
-
-  if (Array.isArray(value)) {
-    const compacted = value.slice(0, MAX_TOOL_OUTPUT_ARRAY_ITEMS).map((item) => compactToolOutputForModel(item, depth + 1));
-    if (value.length > MAX_TOOL_OUTPUT_ARRAY_ITEMS) {
-      compacted.push(`[truncated: ${value.length - MAX_TOOL_OUTPUT_ARRAY_ITEMS} more items]`);
-    }
-    return compacted;
-  }
-
-  if (!isRecord(value)) return value;
-
-  const entries = Object.entries(value);
-  const compactedObject: Record<string, unknown> = {};
-  for (const [index, [key, entry]] of entries.entries()) {
-    if (index >= MAX_TOOL_OUTPUT_OBJECT_KEYS) {
-      compactedObject.__truncated__ = `${entries.length - MAX_TOOL_OUTPUT_OBJECT_KEYS} more keys omitted`;
-      break;
-    }
-    compactedObject[key] = compactToolOutputForModel(entry, depth + 1);
-  }
-  return compactedObject;
-}
 
 export function isMcpUnauthorized(attempts: McpAttempt[]): boolean {
   return attempts.some((attempt) => {
@@ -350,347 +280,11 @@ export function isMcpUnauthorized(attempts: McpAttempt[]): boolean {
   });
 }
 
-// ---------------------------------------------------------------------------
-// Tool schema normalization
-// ---------------------------------------------------------------------------
-
-export function isSchemaWrapper(value: unknown): boolean {
-  if (!isRecord(value)) return false;
-  return "validate" in value || "jsonSchema" in value || "~standard" in value;
-}
-
-export function inferArrayItemsFromPath(path: string[]): Record<string, unknown> {
-  const key = path[path.length - 1]?.toLowerCase() ?? "";
-  if (key === "bbox") return { type: "number" };
-  if (key.includes("record")) return { type: "object", additionalProperties: true };
-  return { type: "string" };
-}
-
-export function inferTupleItemsSchema(items: unknown[]): Record<string, unknown> {
-  const schemaTypes = items
-    .filter((item): item is Record<string, unknown> => isRecord(item))
-    .map((item) => item.type)
-    .filter((value): value is string => typeof value === "string");
-  if (schemaTypes.length === 0) return { type: "string" };
-  if (schemaTypes.every((kind) => kind === "integer" || kind === "number")) return { type: "number" };
-  if (schemaTypes.every((kind) => kind === "string")) return { type: "string" };
-  return { type: "string" };
-}
-
-export function normalizeToolSchemaInPlace(node: unknown, path: string[] = []): boolean {
-  let changed = false;
-
-  if (Array.isArray(node)) {
-    for (const item of node) {
-      if (normalizeToolSchemaInPlace(item, path)) changed = true;
-    }
-    return changed;
-  }
-  if (!isRecord(node)) return false;
-
-  for (const unionKey of ["anyOf", "oneOf", "allOf"] as const) {
-    const unionValue = node[unionKey];
-    if (!Array.isArray(unionValue) || unionValue.length === 0) continue;
-    const preferred = unionValue.find((entry) => isRecord(entry)) ?? unionValue[0];
-    if (isRecord(preferred)) {
-      for (const [key, value] of Object.entries(preferred)) {
-        if (node[key] === undefined) node[key] = value;
-      }
-    }
-    delete node[unionKey];
-    changed = true;
-  }
-
-  if (Array.isArray(node.prefixItems)) {
-    if (node.items === undefined) {
-      node.items = inferTupleItemsSchema(node.prefixItems);
-    }
-    delete node.prefixItems;
-    changed = true;
-  }
-
-  if (Array.isArray(node.items)) {
-    node.items = inferTupleItemsSchema(node.items);
-    changed = true;
-  }
-  if (node.type === "array" && !isRecord(node.items)) {
-    node.items = inferArrayItemsFromPath(path);
-    changed = true;
-  }
-
-  for (const [key, value] of Object.entries(node)) {
-    if (normalizeToolSchemaInPlace(value, [...path, key])) changed = true;
-  }
-
-  return changed;
-}
-
-export function normalizeToolSchemas<T extends Record<string, unknown>>(tools: T): {
-  normalizedTools: T;
-  normalizedToolNames: string[];
-} {
-  const entries: Array<[string, unknown]> = [];
-  const normalizedToolNames: string[] = [];
-
-  for (const [toolName, toolDefinition] of Object.entries(tools)) {
-    if (!isRecord(toolDefinition)) {
-      entries.push([toolName, toolDefinition]);
-      continue;
-    }
-    const schemaKey = isRecord(toolDefinition.parameters)
-      ? "parameters"
-      : isRecord(toolDefinition.inputSchema)
-        ? "inputSchema"
-        : null;
-    if (!schemaKey) {
-      entries.push([toolName, toolDefinition]);
-      continue;
-    }
-
-    const schemaValue = toolDefinition[schemaKey];
-    const isInputSchemaWrapper = schemaKey === "inputSchema" && isSchemaWrapper(schemaValue);
-    const toolCopy: Record<string, unknown> = { ...toolDefinition };
-
-    if (isInputSchemaWrapper) {
-      const wrapper = schemaValue as Record<string, unknown>;
-      let rawSchema: unknown = wrapper.jsonSchema;
-      try {
-        rawSchema = structuredClone(rawSchema);
-      } catch {
-        // Keep original schema object if clone fails.
-      }
-      const changed = normalizeToolSchemaInPlace(rawSchema, [toolName, schemaKey, "jsonSchema"]);
-      if (changed) {
-        const validate = typeof wrapper.validate === "function" ? (wrapper.validate as (value: unknown) => unknown) : undefined;
-        toolCopy[schemaKey] = jsonSchema(
-          rawSchema as Record<string, unknown>,
-          validate ? { validate: validate as never } : undefined,
-        );
-        normalizedToolNames.push(toolName);
-      } else {
-        toolCopy[schemaKey] = schemaValue;
-      }
-      entries.push([toolName, toolCopy]);
-      continue;
-    }
-
-    let schemaCopy: unknown = schemaValue;
-    try {
-      schemaCopy = structuredClone(schemaValue);
-    } catch {
-      // Keep original schema object if clone fails.
-    }
-    const changed = normalizeToolSchemaInPlace(schemaCopy, [toolName, schemaKey]);
-    toolCopy[schemaKey] = schemaCopy;
-    if (changed) normalizedToolNames.push(toolName);
-    entries.push([toolName, toolCopy]);
-  }
-
-  return { normalizedTools: Object.fromEntries(entries) as T, normalizedToolNames };
-}
-
-// ---------------------------------------------------------------------------
-// Tool schema projection
-// ---------------------------------------------------------------------------
-
-export function projectToolSchemaForRule(schema: unknown, rule: ToolSchemaProjectionRule): boolean {
-  if (!isRecord(schema)) return false;
-
-  let changed = false;
-  const schemaProperties = isRecord(schema.properties) ? (schema.properties as Record<string, unknown>) : null;
-
-  if (schemaProperties) {
-    for (const propertyName of rule.removeProperties) {
-      if (propertyName in schemaProperties) {
-        delete schemaProperties[propertyName];
-        changed = true;
-      }
-    }
-  }
-
-  const required = Array.isArray(schema.required) ? schema.required : null;
-  if (required) {
-    const filteredRequired = required.filter(
-      (entry): entry is string => typeof entry === "string" && !rule.removeProperties.includes(entry),
-    );
-    if (filteredRequired.length !== required.length) {
-      schema.required = filteredRequired;
-      changed = true;
-    }
-  }
-
-  if (rule.removeKindEnumValues && schemaProperties && isRecord(schemaProperties.kind)) {
-    const removeKindEnumValues = rule.removeKindEnumValues;
-    const kindSchema = schemaProperties.kind as Record<string, unknown>;
-    const enumValues = Array.isArray(kindSchema.enum) ? kindSchema.enum : null;
-    if (enumValues) {
-      const filteredEnumValues = enumValues.filter(
-        (entry): entry is string => typeof entry === "string" && !removeKindEnumValues.includes(entry),
-      );
-      if (filteredEnumValues.length !== enumValues.length) {
-        kindSchema.enum = filteredEnumValues;
-        changed = true;
-      }
-      if (typeof kindSchema.default === "string" && removeKindEnumValues.includes(kindSchema.default)) {
-        const fallbackDefault = filteredEnumValues.find((entry) => typeof entry === "string");
-        if (fallbackDefault !== undefined) {
-          kindSchema.default = fallbackDefault;
-        } else {
-          delete kindSchema.default;
-        }
-        changed = true;
-      }
-    }
-  }
-
-  return changed;
-}
-
-export function projectToolSchemasForModel<T extends Record<string, unknown>>(
-  tools: T,
-  modelId: string,
-): { projectedTools: T; projectedToolNames: string[] } {
-  if (!MODELS_NEEDING_SCHEMA_PROJECTION.has(modelId)) {
-    return { projectedTools: tools, projectedToolNames: [] };
-  }
-
-  const rulesByToolName = new Map<string, ToolSchemaProjectionRule>();
-  for (const rule of WEAK_MODEL_TOOL_SCHEMA_PROJECTION_RULES) {
-    for (const toolName of rule.toolNames) rulesByToolName.set(toolName, rule);
-  }
-
-  const entries: Array<[string, unknown]> = [];
-  const projectedToolNames: string[] = [];
-
-  for (const [toolName, toolDefinition] of Object.entries(tools)) {
-    const rule = rulesByToolName.get(toolName);
-    if (!rule || !isRecord(toolDefinition)) {
-      entries.push([toolName, toolDefinition]);
-      continue;
-    }
-
-    const schemaKey = isRecord(toolDefinition.parameters)
-      ? "parameters"
-      : isRecord(toolDefinition.inputSchema)
-        ? "inputSchema"
-        : null;
-    if (!schemaKey) {
-      entries.push([toolName, toolDefinition]);
-      continue;
-    }
-
-    const schemaValue = toolDefinition[schemaKey];
-    const toolCopy: Record<string, unknown> = { ...toolDefinition };
-    const isInputSchemaWrap = schemaKey === "inputSchema" && isSchemaWrapper(schemaValue);
-
-    if (isInputSchemaWrap && isRecord(schemaValue)) {
-      const wrapper = schemaValue as Record<string, unknown>;
-      let rawSchema: unknown = wrapper.jsonSchema;
-      try {
-        rawSchema = structuredClone(rawSchema);
-      } catch {
-        // Keep original schema object if clone fails.
-      }
-      const changed = projectToolSchemaForRule(rawSchema, rule);
-      if (changed) {
-        const validate = typeof wrapper.validate === "function" ? (wrapper.validate as (value: unknown) => unknown) : undefined;
-        toolCopy[schemaKey] = jsonSchema(
-          rawSchema as Record<string, unknown>,
-          validate ? { validate: validate as never } : undefined,
-        );
-        projectedToolNames.push(toolName);
-      } else {
-        toolCopy[schemaKey] = schemaValue;
-      }
-      entries.push([toolName, toolCopy]);
-      continue;
-    }
-
-    let schemaCopy: unknown = schemaValue;
-    try {
-      schemaCopy = structuredClone(schemaValue);
-    } catch {
-      // Keep original schema object if clone fails.
-    }
-    const changed = projectToolSchemaForRule(schemaCopy, rule);
-    if (changed) {
-      projectedToolNames.push(toolName);
-    }
-    toolCopy[schemaKey] = schemaCopy;
-    entries.push([toolName, toolCopy]);
-  }
-
-  return { projectedTools: Object.fromEntries(entries) as T, projectedToolNames };
-}
-
-// ---------------------------------------------------------------------------
-// Provider-safe tool names
-// ---------------------------------------------------------------------------
-
-export function toProviderSafeToolName(name: string): string {
-  const normalized = name.trim().replace(/[^a-zA-Z0-9_-]/g, "_").replace(/_+/g, "_");
-  const fallback = normalized || "tool";
-  return fallback.slice(0, PROVIDER_TOOL_NAME_MAX_LENGTH);
-}
-
-export function buildProviderSafeTools<T extends Record<string, unknown>>(tools: T): {
-  safeTools: T;
-  safeToOriginal: Map<string, string>;
-  renamedPairs: Array<{ original: string; safe: string }>;
-} {
-  const safeToOriginal = new Map<string, string>();
-  const renamedPairs: Array<{ original: string; safe: string }> = [];
-  const entries: Array<[string, unknown]> = [];
-  const usedNames = new Set<string>();
-
-  for (const [originalName, definition] of Object.entries(tools)) {
-    let safeName = PROVIDER_TOOL_NAME_PATTERN.test(originalName) ? originalName : toProviderSafeToolName(originalName);
-    let suffix = 2;
-    while (usedNames.has(safeName) || !PROVIDER_TOOL_NAME_PATTERN.test(safeName)) {
-      const suffixText = `_${suffix}`;
-      const baseLength = Math.max(1, PROVIDER_TOOL_NAME_MAX_LENGTH - suffixText.length);
-      safeName = `${toProviderSafeToolName(originalName).slice(0, baseLength)}${suffixText}`;
-      suffix += 1;
-    }
-    usedNames.add(safeName);
-    safeToOriginal.set(safeName, originalName);
-    if (safeName !== originalName) renamedPairs.push({ original: originalName, safe: safeName });
-    entries.push([safeName, definition]);
-  }
-
-  return {
-    safeTools: Object.fromEntries(entries) as T,
-    safeToOriginal,
-    renamedPairs,
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Message compaction
-// ---------------------------------------------------------------------------
-
-export function compactMessagesForModel(messages: unknown): CompactModelMessage[] {
-  const compacted = compactUiMessagesForModel(messages);
-  return compacted.map((message) => {
-    const content = message.parts
-      .map((part) => (typeof part.text === "string" ? part.text : ""))
-      .filter(Boolean)
-      .join("\n\n")
-      .trim();
-    return { role: message.role, content };
-  });
-}
 
 // ---------------------------------------------------------------------------
 // Tool name / share helpers
 // ---------------------------------------------------------------------------
 
-export function sanitizeToolName(name: unknown): string | null {
-  if (typeof name !== "string") return null;
-  const normalized = name.trim();
-  if (!normalized) return null;
-  return normalized.replace(/[^a-zA-Z0-9_.-]/g, "-");
-}
 
 export function createShareToken() {
   return `share_${crypto.randomUUID().replace(/-/g, "")}`;
@@ -701,251 +295,6 @@ export function buildShareExpiryIso(days = DEFAULT_SHARE_EXPIRY_DAYS): string {
   return new Date(Date.now() + millis).toISOString();
 }
 
-// ---------------------------------------------------------------------------
-// Part extraction / merging
-// ---------------------------------------------------------------------------
-
-export function extractPartsFromResponseMessage(
-  message: unknown,
-  resolveToolName?: (name: string) => string,
-): PersistedMessagePart[] {
-  if (!isRecord(message)) return [];
-
-  const directParts = message.parts;
-  if (Array.isArray(directParts)) {
-    return directParts.filter((part): part is PersistedMessagePart => isRecord(part) && typeof part.type === "string");
-  }
-
-  const content = message.content;
-  if (!Array.isArray(content)) return [];
-
-  const toolIndex = new Map<string, PersistedMessagePart>();
-  const parts: PersistedMessagePart[] = [];
-
-  for (const segment of content) {
-    if (!isRecord(segment) || typeof segment.type !== "string") continue;
-
-    if (segment.type === "text" && typeof segment.text === "string") {
-      const cleaned = stripToolContextEchoes(segment.text);
-      if (cleaned) {
-        parts.push({ type: "text", text: cleaned });
-      }
-      continue;
-    }
-
-    if (segment.type === "reasoning" && typeof segment.text === "string") {
-      parts.push({ type: "reasoning", text: segment.text });
-      continue;
-    }
-
-    if (segment.type === "tool-call") {
-      const resolvedName = typeof segment.toolName === "string" ? resolveToolName?.(segment.toolName) ?? segment.toolName : segment.toolName;
-      const toolName = sanitizeToolName(resolvedName);
-      if (!toolName) continue;
-      const callId = (segment.toolCallId as string) ?? null;
-      const part: PersistedMessagePart = {
-        type: `tool-${toolName}`,
-        state: "input-available",
-        input: segment.input ?? null,
-        toolCallId: callId,
-      };
-      parts.push(part);
-      if (callId) toolIndex.set(callId, part);
-      continue;
-    }
-
-    if (segment.type === "tool-result") {
-      const resolvedName = typeof segment.toolName === "string" ? resolveToolName?.(segment.toolName) ?? segment.toolName : segment.toolName;
-      const toolName = sanitizeToolName(resolvedName);
-      if (!toolName) continue;
-      const callId = (segment.toolCallId as string) ?? null;
-      const existing = callId ? toolIndex.get(callId) : undefined;
-      if (existing) {
-        existing.state = "output-available";
-        existing.output = segment.output ?? null;
-      } else {
-        parts.push({
-          type: `tool-${toolName}`,
-          state: "output-available",
-          output: segment.output ?? null,
-          toolCallId: callId,
-        });
-      }
-      continue;
-    }
-
-    parts.push(segment as PersistedMessagePart);
-  }
-  return parts;
-}
-
-export function mergeToolCallsAndResultsIntoParts(
-  parts: PersistedMessagePart[],
-  event: unknown,
-  resolveToolName?: (name: string) => string,
-): PersistedMessagePart[] {
-  if (!isRecord(event)) return parts;
-
-  const merged = [...parts];
-  const toolIndex = new Map<string, PersistedMessagePart>();
-  const existingSignatures = new Set<string>();
-
-  for (const [index, part] of merged.entries()) {
-    if (!isRecord(part) || typeof part.type !== "string" || !part.type.startsWith("tool-")) continue;
-    const callId = typeof part.toolCallId === "string" ? part.toolCallId : null;
-    if (callId) toolIndex.set(callId, part);
-    existingSignatures.add(`${part.type}:${callId ?? `idx-${index}`}`);
-  }
-
-  const toolCalls = Array.isArray(event.toolCalls) ? event.toolCalls : [];
-  for (const call of toolCalls) {
-    if (!isRecord(call)) continue;
-    const resolvedName = typeof call.toolName === "string" ? resolveToolName?.(call.toolName) ?? call.toolName : call.toolName;
-    const toolName = sanitizeToolName(resolvedName);
-    if (!toolName) continue;
-    const callId = (call.toolCallId as string) ?? null;
-    const signature = `tool-${toolName}:${callId ?? "no-call-id"}`;
-    if (existingSignatures.has(signature)) continue;
-    const part: PersistedMessagePart = {
-      type: `tool-${toolName}`,
-      state: "input-available",
-      input: call.input ?? null,
-      toolCallId: callId,
-    };
-    merged.push(part);
-    if (callId) toolIndex.set(callId, part);
-    existingSignatures.add(signature);
-  }
-
-  const toolResults = Array.isArray(event.toolResults) ? event.toolResults : [];
-  for (const result of toolResults) {
-    if (!isRecord(result)) continue;
-    const resolvedName = typeof result.toolName === "string" ? resolveToolName?.(result.toolName) ?? result.toolName : result.toolName;
-    const toolName = sanitizeToolName(resolvedName);
-    if (!toolName) continue;
-    const callId = (result.toolCallId as string) ?? null;
-    const existing = callId ? toolIndex.get(callId) : undefined;
-    if (existing) {
-      existing.state = "output-available";
-      existing.output = result.output ?? null;
-      continue;
-    }
-
-    const signature = `tool-${toolName}:${callId ?? "no-call-id"}`;
-    if (existingSignatures.has(signature)) continue;
-    merged.push({
-      type: `tool-${toolName}`,
-      state: "output-available",
-      output: result.output ?? null,
-      toolCallId: callId,
-    });
-    existingSignatures.add(signature);
-  }
-
-  return merged;
-}
-
-export function buildAssistantPartsFromFinishEvent(
-  event: unknown,
-  resolveToolName?: (name: string) => string,
-): PersistedMessagePart[] {
-  if (!isRecord(event)) return [{ type: "text", text: "" }];
-
-  const response = event.response;
-  if (isRecord(response) && Array.isArray(response.messages)) {
-    const assistantResponseMessage = [...response.messages]
-      .reverse()
-      .find((message) => isRecord(message) && message.role === "assistant");
-    const responseParts = extractPartsFromResponseMessage(assistantResponseMessage, resolveToolName);
-    if (responseParts.length > 0) {
-      return mergeToolCallsAndResultsIntoParts(responseParts, event, resolveToolName);
-    }
-  }
-
-  const text = typeof event.text === "string" ? event.text : "";
-  const fallbackParts: PersistedMessagePart[] = [{ type: "text", text }];
-  if (typeof event.reasoning === "string" && event.reasoning.trim()) {
-    fallbackParts.push({ type: "reasoning", text: event.reasoning });
-  }
-
-  const fallbackToolIndex = new Map<string, PersistedMessagePart>();
-  const toolCalls = Array.isArray(event.toolCalls) ? event.toolCalls : [];
-  for (const call of toolCalls) {
-    if (!isRecord(call)) continue;
-    const resolvedName = typeof call.toolName === "string" ? resolveToolName?.(call.toolName) ?? call.toolName : call.toolName;
-    const toolName = sanitizeToolName(resolvedName);
-    if (!toolName) continue;
-    const callId = (call.toolCallId as string) ?? null;
-    const part: PersistedMessagePart = {
-      type: `tool-${toolName}`,
-      state: "input-available",
-      input: call.input ?? null,
-      toolCallId: callId,
-    };
-    fallbackParts.push(part);
-    if (callId) fallbackToolIndex.set(callId, part);
-  }
-
-  const toolResults = Array.isArray(event.toolResults) ? event.toolResults : [];
-  for (const result of toolResults) {
-    if (!isRecord(result)) continue;
-    const resolvedName = typeof result.toolName === "string" ? resolveToolName?.(result.toolName) ?? result.toolName : result.toolName;
-    const toolName = sanitizeToolName(resolvedName);
-    if (!toolName) continue;
-    const callId = (result.toolCallId as string) ?? null;
-    const existing = callId ? fallbackToolIndex.get(callId) : undefined;
-    if (existing) {
-      existing.state = "output-available";
-      existing.output = result.output ?? null;
-    } else {
-      fallbackParts.push({
-        type: `tool-${toolName}`,
-        state: "output-available",
-        output: result.output ?? null,
-        toolCallId: callId,
-      });
-    }
-  }
-
-  return fallbackParts;
-}
-
-// ---------------------------------------------------------------------------
-// Persisted tool part helpers
-// ---------------------------------------------------------------------------
-
-export function isPersistedToolPart(part: unknown): part is PersistedMessagePart & { type: `tool-${string}` } {
-  return isRecord(part) && typeof part.type === "string" && part.type.startsWith("tool-");
-}
-
-export function stringifyPersistedToolPayload(value: unknown): string {
-  if (value === undefined) return "";
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return "[unserializable]";
-  }
-}
-
-export function persistedToolPartSignature(part: PersistedMessagePart, fallbackIndex: number): string {
-  const toolCallId = typeof part.toolCallId === "string" ? part.toolCallId : `idx-${fallbackIndex}`;
-  const state = typeof part.state === "string" ? part.state : "";
-  const input = stringifyPersistedToolPayload(part.input);
-  const output = stringifyPersistedToolPayload(part.output);
-  return `${part.type}:${toolCallId}:${state}:${input}:${output}`;
-}
-
-export function collectToolPartsFromMessages(messages: Array<{ role?: unknown; parts?: unknown }>): PersistedMessagePart[] {
-  const collected: PersistedMessagePart[] = [];
-  for (const message of messages) {
-    if (!isRecord(message) || message.role !== "assistant" || !Array.isArray(message.parts)) continue;
-    for (const part of message.parts) {
-      if (!isPersistedToolPart(part)) continue;
-      collected.push(part);
-    }
-  }
-  return collected;
-}
 
 // ---------------------------------------------------------------------------
 // Tool logging
@@ -1081,97 +430,15 @@ export async function claimPendingMcpToken(params: {
 }
 
 // ---------------------------------------------------------------------------
-// Usage tracking
+// Usage tracking — extracted to ./usage.ts, re-exported below
 // ---------------------------------------------------------------------------
 
-export function utcDateStamp() {
-  return new Date().toISOString().slice(0, 10);
-}
-
-export function approachingThreshold(dailyLimit: number) {
-  return Math.max(2, Math.ceil(dailyLimit * 0.15));
-}
-
-export async function reserveModelUsageSlot({
-  supabase,
-  userId,
-  modelId,
-  dailyLimit,
-}: {
-  supabase: ReturnType<typeof getSupabaseAdmin>;
-  userId: string;
-  modelId: string;
-  dailyLimit: number;
-}) {
-  const usageDate = utcDateStamp();
-  const { data: existing, error: existingError } = await supabase
-    .from("uk_chat_model_usage")
-    .select("id,request_count")
-    .eq("user_id", userId)
-    .eq("model_id", modelId)
-    .eq("usage_date", usageDate)
-    .maybeSingle();
-
-  if (existingError) return { ok: false as const, error: existingError.message, remaining: 0 };
-  if ((existing?.request_count ?? 0) >= dailyLimit) return { ok: false as const, error: null, remaining: 0 };
-
-  const nextCount = (existing?.request_count ?? 0) + 1;
-  if (existing) {
-    const { error: updateError } = await supabase
-      .from("uk_chat_model_usage")
-      .update({ request_count: nextCount, updated_at: new Date().toISOString() })
-      .eq("id", existing.id);
-    if (updateError) return { ok: false as const, error: updateError.message, remaining: 0 };
-    return { ok: true as const, error: null, remaining: Math.max(0, dailyLimit - nextCount) };
-  }
-
-  const { error: insertError } = await supabase.from("uk_chat_model_usage").insert({
-    user_id: userId,
-    model_id: modelId,
-    usage_date: usageDate,
-    request_count: 1,
-  });
-  if (insertError) return { ok: false as const, error: insertError.message, remaining: 0 };
-  return { ok: true as const, error: null, remaining: Math.max(0, dailyLimit - 1) };
-}
-
-export async function getModelUsageStatus({
-  supabase,
-  userId,
-  modelId,
-  dailyLimit,
-}: {
-  supabase: ReturnType<typeof getSupabaseAdmin>;
-  userId: string;
-  modelId: string;
-  dailyLimit: number;
-}) {
-  const usageDate = utcDateStamp();
-  const { data, error } = await supabase
-    .from("uk_chat_model_usage")
-    .select("request_count,total_prompt_tokens,total_completion_tokens,total_tool_calls")
-    .eq("user_id", userId)
-    .eq("model_id", modelId)
-    .eq("usage_date", usageDate)
-    .maybeSingle();
-  if (error) return { ok: false as const, error: error.message, used: 0, remaining: 0, approaching: false, reached: false, tokens: { prompt: 0, completion: 0, total: 0 }, toolCalls: 0 };
-  const used = data?.request_count ?? 0;
-  const remaining = Math.max(0, dailyLimit - used);
-  const reached = remaining <= 0;
-  const approaching = !reached && remaining <= approachingThreshold(dailyLimit);
-  const promptTokens = data?.total_prompt_tokens ?? 0;
-  const completionTokens = data?.total_completion_tokens ?? 0;
-  return {
-    ok: true as const,
-    error: null,
-    used,
-    remaining,
-    approaching,
-    reached,
-    tokens: { prompt: promptTokens, completion: completionTokens, total: promptTokens + completionTokens },
-    toolCalls: data?.total_tool_calls ?? 0,
-  };
-}
+export {
+  approachingThreshold,
+  getModelUsageStatus,
+  reserveModelUsageSlot,
+  utcDateStamp,
+} from "./usage.js";
 
 // ---------------------------------------------------------------------------
 // Tool catalog
