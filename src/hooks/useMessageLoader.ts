@@ -57,7 +57,6 @@ export function useMessageLoader(params: {
 }): {
   loadConversationMessages: (id: string) => Promise<void>;
   conversationLoadError: string | null;
-  clearConversationLoadError: () => void;
 } {
   const {
     authToken,
@@ -144,6 +143,5 @@ export function useMessageLoader(params: {
   return {
     loadConversationMessages,
     conversationLoadError,
-    clearConversationLoadError: () => setConversationLoadError(null),
   };
 }

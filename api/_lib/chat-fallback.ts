@@ -57,6 +57,8 @@ export function runChatWithFallback(params: FallbackRunParams): StreamTextResult
     telemetry,
   } = params;
 
+  if (telemetry.fallbackPath === undefined) telemetry.fallbackPath = "none";
+
   try {
     return tryStream(primary);
   } catch (error) {

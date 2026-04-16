@@ -41,6 +41,8 @@ export function useArtifactExtractor(params: {
   const { messages, conversationId, onArtifact } = params;
   const pushedArtifactKeysRef = useRef<Set<string>>(new Set());
   const artifactSignaturesRef = useRef<Map<string, string>>(new Map());
+  const onArtifactRef = useRef(onArtifact);
+  onArtifactRef.current = onArtifact;
 
   useEffect(() => {
     for (const message of messages) {
@@ -79,7 +81,7 @@ export function useArtifactExtractor(params: {
         if (pushedArtifactKeysRef.current.has(artifactKey) && artifactSignaturesRef.current.get(artifactKey) === signature) return;
         pushedArtifactKeysRef.current.add(artifactKey);
         artifactSignaturesRef.current.set(artifactKey, signature);
-        onArtifact({
+        onArtifactRef.current({
           id: artifactKey,
           toolName: normalizedToolName,
           data: output,
@@ -90,7 +92,7 @@ export function useArtifactExtractor(params: {
         });
       });
     }
-  }, [conversationId, messages, onArtifact]);
+  }, [conversationId, messages]);
 
   return {
     resetArtifactTracking: () => {
