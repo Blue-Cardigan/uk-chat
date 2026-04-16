@@ -1,2 +1,27 @@
 #!/usr/bin/env sh
+
+staged=$(git diff --cached --name-only --diff-filter=ACMR)
+
+# Block any .env* file except .env.example from being committed.
+blocked_env=$(printf '%s\n' "$staged" | grep -E '(^|/)\.env(\..+)?$' | grep -v '^\.env\.example$' || true)
+if [ -n "$blocked_env" ]; then
+  echo "pre-commit: refusing to commit dotenv file(s):" >&2
+  printf '  %s\n' $blocked_env >&2
+  echo "Add to .gitignore or use .env.example with placeholders." >&2
+  exit 1
+fi
+
+# Scan staged diffs for high-signal secret patterns. CI gitleaks is the
+# authoritative scan; this is a local fast-fail.
+if [ -n "$staged" ]; then
+  patterns='sk-or-[A-Za-z0-9-]{20,}|sk_live_[A-Za-z0-9]{20,}|phc_[A-Za-z0-9]{30,}|re_[A-Za-z0-9]{20,}|eyJhbGciOi[A-Za-z0-9_.-]{40,}|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{30,}'
+  hit=$(git diff --cached --no-color -U0 | grep -E '^[+]' | grep -v '^[+][+][+]' | grep -E "$patterns" || true)
+  if [ -n "$hit" ]; then
+    echo "pre-commit: possible secret in staged diff:" >&2
+    printf '%s\n' "$hit" | head -5 >&2
+    echo "If a false positive, bypass with: git commit --no-verify (strongly discouraged)." >&2
+    exit 1
+  fi
+fi
+
 npx --no-install tsc -b --noEmit
