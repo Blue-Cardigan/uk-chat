@@ -5,6 +5,10 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+export function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
 export function formatNumber(value: number | null | undefined): string {
   if (value == null || Number.isNaN(value)) return "n/a";
   return new Intl.NumberFormat("en-GB").format(value);

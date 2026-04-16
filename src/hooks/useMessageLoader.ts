@@ -2,16 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { MutableRefObject } from "react";
 import type { UIMessage } from "ai";
 import { safeJson } from "@/lib/http";
-
-type Part = { type: string; [key: string]: unknown };
-type PersistedMessage = {
-  id: string;
-  role: "user" | "assistant";
-  parts: Part[];
-  created_at: string;
-};
-
-const OPTIMISTIC_CHAT_ID_PREFIX = "optimistic-chat-";
+import type { PersistedMessage } from "@/lib/types";
+import { OPTIMISTIC_CHAT_ID_PREFIX } from "@/shared/chat-constants";
 
 function isOptimisticConversationId(value: string | null | undefined): boolean {
   return typeof value === "string" && value.startsWith(OPTIMISTIC_CHAT_ID_PREFIX);

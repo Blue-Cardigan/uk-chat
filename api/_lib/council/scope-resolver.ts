@@ -1,10 +1,7 @@
 import type { CouncilResolvedGeography, CouncilScope } from "./types.js";
+import { isRecord } from "../internals.js";
 
 type ToolMap = Record<string, unknown>;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
 
 function readText(obj: Record<string, unknown>, keys: string[]): string | null {
   for (const key of keys) {

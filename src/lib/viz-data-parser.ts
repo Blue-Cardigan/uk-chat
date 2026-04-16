@@ -41,7 +41,7 @@ export type MapOverlayData =
   | { kind: "points"; items: OverlayPoint[] }
   | { kind: "focus"; point: FocusPoint };
 
-function isRecord(value: unknown): value is JsonRecord {
+function isNonArrayRecord(value: unknown): value is JsonRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
@@ -54,10 +54,10 @@ function parseJson(value: string): unknown {
 }
 
 function asRecord(value: unknown): JsonRecord | null {
-  if (isRecord(value)) return value;
+  if (isNonArrayRecord(value)) return value;
   if (typeof value !== "string") return null;
   const parsed = parseJson(value);
-  return isRecord(parsed) ? parsed : null;
+  return isNonArrayRecord(parsed) ? parsed : null;
 }
 
 function unwrapToolOutput(input: unknown): JsonRecord | null {
@@ -68,7 +68,7 @@ function unwrapToolOutput(input: unknown): JsonRecord | null {
   const content = direct.content;
   if (!Array.isArray(content)) return direct;
   for (const entry of content) {
-    if (!isRecord(entry)) continue;
+    if (!isNonArrayRecord(entry)) continue;
     if (typeof entry.text !== "string") continue;
     const parsed = asRecord(entry.text);
     if (parsed) return parsed;
@@ -203,7 +203,7 @@ function stringifyFlatValue(value: unknown): string {
 function flattenRowInto(source: Record<string, unknown>, target: Record<string, string>, prefix = "", depth = 0): void {
   for (const [key, value] of Object.entries(source)) {
     const fullKey = prefix ? `${prefix}.${key}` : key;
-    if (isRecord(value) && depth < 2) {
+    if (isNonArrayRecord(value) && depth < 2) {
       flattenRowInto(value, target, fullKey, depth + 1);
       continue;
     }
@@ -227,7 +227,7 @@ export function parseMCPPayload(payload: {
   const arrayLike = payload.rows ?? payload.records ?? payload.data;
   if (Array.isArray(arrayLike)) {
     return arrayLike
-      .filter((item): item is Record<string, unknown> => isRecord(item))
+      .filter((item): item is Record<string, unknown> => isNonArrayRecord(item))
       .map((row) => {
         const normalized: Record<string, string> = {};
         flattenRowInto(row, normalized);
@@ -320,7 +320,7 @@ function parseRowsFromNormalizedToolOutput(normalized: JsonRecord): Record<strin
   if (Array.isArray(normalized.payload)) {
     return parseMCPPayload({ rows: normalized.payload });
   }
-  const payload = isRecord(normalized.payload) ? normalized.payload : {};
+  const payload = isNonArrayRecord(normalized.payload) ? normalized.payload : {};
   return parseMCPPayload({
     format: typeof payload.format === "string" ? payload.format : undefined,
     csv: typeof payload.csv === "string" ? payload.csv : undefined,
@@ -332,7 +332,7 @@ function parseRowsFromNormalizedToolOutput(normalized: JsonRecord): Record<strin
 }
 
 function toVizHint(value: unknown): VizHint {
-  return isRecord(value) ? (value as VizHint) : {};
+  return isNonArrayRecord(value) ? (value as VizHint) : {};
 }
 
 function pickNumericField(rows: Record<string, string>[], skipFields: Set<string>, preferred?: string): string | null {
@@ -469,7 +469,7 @@ export function buildChartSpecFromVizHint(toolOutput: unknown): ChartSpec | null
   if (!normalized) return null;
 
   const vizHintRaw = normalized.vizHint;
-  if (!isRecord(vizHintRaw)) return null;
+  if (!isNonArrayRecord(vizHintRaw)) return null;
   const vizHint = vizHintRaw as VizHint;
   if (typeof vizHint.suggested === "string" && vizHint.suggested.toLowerCase() === "none") return null;
   if (typeof vizHint.suggested === "string" && vizHint.suggested.toLowerCase() === "map") return null;
@@ -512,7 +512,7 @@ export function buildChartSpecFromVizHint(toolOutput: unknown): ChartSpec | null
 }
 
 export function isChartSpec(value: unknown): value is ChartSpec {
-  if (!isRecord(value)) return false;
+  if (!isNonArrayRecord(value)) return false;
   if (typeof value.type !== "string") return false;
   if (typeof value.title !== "string") return false;
   if (typeof value.xField !== "string") return false;

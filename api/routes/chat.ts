@@ -514,6 +514,7 @@ chatRoutes.post("/", async (c) => {
   }
 
   const systemPrompt = [withPlanContext, documentContext, artifactContext].filter(Boolean).join("\n\n");
+  // UIMessage generic is unknown at this boundary; SDK typing is intentionally narrow.
   const modelMessages = await convertToModelMessages(compactedMessages as never);
 
   if (Array.isArray(body.messages) && compactedMessages.length !== body.messages.length) {
@@ -687,6 +688,7 @@ chatRoutes.post("/", async (c) => {
   });
 
   return result.toUIMessageStreamResponse({
+    // SDK narrows to its own UIMessage generic; request payload is unknown-shaped.
     originalMessages: (body.messages ?? []) as never,
   });
 });

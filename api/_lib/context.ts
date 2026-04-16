@@ -1,3 +1,5 @@
+import { isRecord } from "./internals.js";
+
 type CompactUiMessage = {
   role: "user" | "assistant" | "system";
   parts: Array<Record<string, unknown>>;
@@ -7,10 +9,6 @@ const MAX_MODEL_CONTEXT_MESSAGES = 12;
 const MAX_MODEL_MESSAGE_PARTS = 12;
 const MAX_MODEL_TEXT_PART_CHARS = 4_000;
 const MAX_TOOL_PART_JSON_CHARS = 1_600;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
 
 function truncateText(text: string, maxChars: number): string {
   if (text.length <= maxChars) return text;

@@ -170,6 +170,8 @@ export function normalizeToolSchemas<T extends Record<string, unknown>>(tools: T
         const validate = typeof wrapper.validate === "function" ? (wrapper.validate as (value: unknown) => unknown) : undefined;
         toolCopy[schemaKey] = jsonSchema(
           rawSchema as Record<string, unknown>,
+          // jsonSchema<T> narrows validate to T; we preserve the original
+          // validator across a generic boundary we can't name.
           validate ? { validate: validate as never } : undefined,
         );
         normalizedToolNames.push(toolName);
@@ -298,6 +300,8 @@ export function projectToolSchemasForModel<T extends Record<string, unknown>>(
         const validate = typeof wrapper.validate === "function" ? (wrapper.validate as (value: unknown) => unknown) : undefined;
         toolCopy[schemaKey] = jsonSchema(
           rawSchema as Record<string, unknown>,
+          // jsonSchema<T> narrows validate to T; we preserve the original
+          // validator across a generic boundary we can't name.
           validate ? { validate: validate as never } : undefined,
         );
         projectedToolNames.push(toolName);
