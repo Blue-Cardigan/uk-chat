@@ -11,7 +11,8 @@
     "preview": "vite preview",
     "typecheck": "tsc -b",
     "test:unit": "tsx --test src/lib/viz-data-parser.test.ts api/_lib/council/*.test.ts api/_lib/mcp-token-recovery.test.ts",
-    "user:add": "tsx scripts/add-user.ts"
+    "user:add": "tsx scripts/add-user.ts",
+    "prepare": "husky || true"
   },
   "type": "module",
   "dependencies": {
@@ -56,6 +57,7 @@
     "@types/topojson-client": "^3.1.5",
     "@vitejs/plugin-react": "^6.0.1",
     "concurrently": "^9.2.1",
+    "husky": "^9.1.7",
     "postcss": "^8.5.8",
     "tailwindcss": "^4.2.2",
     "tsx": "^4.21.0",
