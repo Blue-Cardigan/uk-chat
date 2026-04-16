@@ -1,9 +1,5 @@
+import type { Env } from "../env.js";
 import { getSupabaseAdmin } from "./server.js";
-
-function env(key: string): string | undefined {
-  const maybeProcess = globalThis as { process?: { env?: Record<string, string | undefined> } };
-  return maybeProcess.process?.env?.[key];
-}
 
 type OnboardUserInput = {
   email: string;
@@ -29,9 +25,9 @@ function isLoopbackHostname(hostname: string): boolean {
   return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
 }
 
-async function issueMcpToken(email: string) {
-  const issueUrl = env("MCP_TOKEN_ISSUE_URL") ?? "https://mcp.explorethekingdom.co.uk/api/tokens";
-  const issueSecret = env("MCP_TOKEN_ISSUE_SECRET") ?? "";
+async function issueMcpToken(email: string, env: Env) {
+  const issueUrl = env.MCP_TOKEN_ISSUE_URL ?? "https://mcp.explorethekingdom.co.uk/api/tokens";
+  const issueSecret = env.MCP_TOKEN_ISSUE_SECRET ?? "";
   const response = await fetch(issueUrl, {
     method: "POST",
     headers: {
@@ -56,9 +52,9 @@ async function issueMcpToken(email: string) {
   return payload.token;
 }
 
-async function createMagicLink(email: string, appUrlOverride?: string) {
-  const supabase = getSupabaseAdmin();
-  const appUrl = (appUrlOverride ?? env("INVITE_APP_URL") ?? env("APP_URL") ?? "https://chatgb.co.uk").trim();
+async function createMagicLink(email: string, env: Env, appUrlOverride?: string) {
+  const supabase = getSupabaseAdmin(env);
+  const appUrl = (appUrlOverride ?? env.INVITE_APP_URL ?? env.APP_URL ?? "https://chatgb.co.uk").trim();
   if (!appUrl) {
     throw new Error("A valid invite app URL must be set before sending onboarding emails.");
   }
@@ -93,12 +89,12 @@ async function createMagicLink(email: string, appUrlOverride?: string) {
   return actionLink;
 }
 
-async function sendResendMagicLink(email: string, actionLink: string) {
-  const resendApiKey = env("RESEND_API_KEY");
+async function sendResendMagicLink(email: string, actionLink: string, env: Env) {
+  const resendApiKey = env.RESEND_API_KEY;
   if (!resendApiKey) {
     throw new Error("RESEND_API_KEY is required to send onboarding emails");
   }
-  const from = env("RESEND_FROM_EMAIL") ?? "UK Chat <onboarding@resend.dev>";
+  const from = env.RESEND_FROM_EMAIL ?? "UK Chat <onboarding@resend.dev>";
   const subject = "Your ChatGB sign-in link";
   const html = `
     <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;line-height:1.5;color:#111;">
@@ -131,11 +127,11 @@ async function sendResendMagicLink(email: string, actionLink: string) {
   }
 }
 
-export async function onboardUser(input: OnboardUserInput): Promise<OnboardUserResult> {
+export async function onboardUser(input: OnboardUserInput, env: Env): Promise<OnboardUserResult> {
   const email = normalizeEmail(input.email);
   const shouldSendEmail = input.sendEmail ?? true;
   const rotateToken = input.rotateToken ?? false;
-  const supabase = getSupabaseAdmin();
+  const supabase = getSupabaseAdmin(env);
 
   const { data: existing, error: existingError } = await supabase
     .from("uk_chat_email_gate")
@@ -153,7 +149,7 @@ export async function onboardUser(input: OnboardUserInput): Promise<OnboardUserR
   if (typeof input.token === "string") {
     token = input.token;
   } else if (!token || rotateToken) {
-    token = await issueMcpToken(email);
+    token = await issueMcpToken(email, env);
     tokenIssued = true;
   }
 
@@ -179,8 +175,8 @@ export async function onboardUser(input: OnboardUserInput): Promise<OnboardUserR
 
   let emailSent = false;
   if (shouldSendEmail) {
-    const actionLink = await createMagicLink(email, input.appUrl);
-    await sendResendMagicLink(email, actionLink);
+    const actionLink = await createMagicLink(email, env, input.appUrl);
+    await sendResendMagicLink(email, actionLink, env);
     emailSent = true;
   }
 

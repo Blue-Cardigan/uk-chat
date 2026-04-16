@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "concurrently -k -n WEB,API -c cyan,magenta \"npm:dev:web\" \"npm:dev:api\"",
     "dev:web": "vite",
-    "dev:api": "tsx scripts/dev-api.ts",
+    "dev:api": "wrangler pages dev dist --port 3000 --compatibility-date 2026-04-01 --compatibility-flags nodejs_compat",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "tsc -b",
@@ -20,13 +20,13 @@
     "@openrouter/ai-sdk-provider": "^2.3.3",
     "@supabase/supabase-js": "^2.100.1",
     "@types/d3-scale": "^4.0.9",
-    "@vercel/functions": "^3.4.3",
     "ai": "^6.0.141",
     "clsx": "^2.1.1",
     "d3-geo": "^3.1.1",
     "d3-scale": "^4.0.2",
     "d3-selection": "^3.0.0",
     "d3-zoom": "^3.0.0",
+    "hono": "^4.12.14",
     "html-to-image": "^1.11.13",
     "lucide-react": "^1.7.0",
     "mammoth": "^1.12.0",
@@ -43,6 +43,7 @@
     "zustand": "^5.0.12"
   },
   "devDependencies": {
+    "@hono/node-server": "^1.19.14",
     "@tailwindcss/postcss": "^4.2.2",
     "@types/d3-geo": "^3.1.0",
     "@types/d3-selection": "^3.0.11",
@@ -58,7 +59,7 @@
     "tailwindcss": "^4.2.2",
     "tsx": "^4.21.0",
     "typescript": "^6.0.2",
-    "vercel": "^50.37.3",
-    "vite": "^8.0.3"
+    "vite": "^8.0.3",
+    "wrangler": "^4.83.0"
   }
 }

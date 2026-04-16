@@ -16,7 +16,6 @@ import type { ChatConversation } from "@/lib/types";
 import type { ParsedDocument } from "@/lib/document-parser";
 import type { PromptInputSubmitPayload } from "@/components/ai-elements/prompt-input";
 import { buildChartSpecFromVizHint, isChartSpec } from "@/lib/viz-data-parser";
-import type { ResumableChatJobPayload } from "@/shared/resumable-chat";
 
 type Part = { type: string; [key: string]: unknown };
 type PersistedMessage = {
@@ -184,7 +183,6 @@ export function ChatView({
   const [councilPending, setCouncilPending] = useState(false);
   const [pendingConversationId, setPendingConversationId] = useState<string | null>(null);
   const [preparingConversation, setPreparingConversation] = useState(false);
-  const [resumablePending, setResumablePending] = useState(false);
   const toolsCacheRef = useRef<Map<string, ToolsCacheEntry>>(new Map());
   const titleMenuRef = useRef<HTMLDivElement | null>(null);
   const pushedArtifactKeysRef = useRef<Set<string>>(new Set());
@@ -360,9 +358,10 @@ export function ChatView({
     void refreshUsageBanner();
   }, [authToken, refreshUsageBanner]);
 
-  const { messages, status, setMessages } = useChat({
+  const { messages, status, setMessages, sendMessage } = useChat({
     transport: new DefaultChatTransport({
       api: "/api/chat",
+      headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
     }),
     onError: (error) => {
       if (readChatErrorCode(error.message) === "MCP_TOKEN_UNAUTHORIZED") {
@@ -616,115 +615,34 @@ export function ChatView({
     }
 
     const submittedText = `${toolPrefix}${text}`;
-    const optimisticMessageId = `optimistic-user-${crypto.randomUUID()}`;
-    const optimisticMessages = [
-      ...messages,
+
+    void sendMessage(
+      { text: submittedText },
       {
-        id: optimisticMessageId,
-        role: "user",
-        parts: [{ type: "text", text: submittedText }],
-      } as UIMessage,
-    ];
-    setMessages(optimisticMessages);
-    setResumablePending(true);
-    void (async () => {
-      let finalStatus: ResumableChatJobPayload["status"] | null = null;
-      let finalError: string | null = null;
-      try {
-        const createResponse = await fetch("/api/chat/jobs", {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${authToken}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            conversationId: ensuredConversationId,
-            mcpToken,
-            modelId: selectedModel.id,
-            documents: parsedDocuments,
-            artifactContext: pinnedArtifacts.map((artifact) => ({
-              id: artifact.id,
-              conversationId: artifact.conversationId,
-              messageId: artifact.messageId,
-              toolName: artifact.toolName,
-              title: artifact.title,
-              data: artifact.data,
-              chartSpec: artifact.chartSpec,
-            })),
-            messages: optimisticMessages.map((message) => ({ role: message.role, parts: message.parts })),
-            idempotencyKey: crypto.randomUUID(),
-          }),
-        });
-        const createPayload = await safeJson<{ job?: ResumableChatJobPayload; error?: string; code?: string }>(createResponse);
-        if (!createResponse.ok || !createPayload?.job) {
-          if (createPayload?.code === "MCP_TOKEN_UNAUTHORIZED") {
-            onMcpTokenUnauthorized();
-          }
-          throw new Error(createPayload?.error ?? `Failed to start resumable chat (${createResponse.status})`);
-        }
-        let job = createPayload.job;
-        const streamingAssistantMessageId = `streaming-assistant-${job.id}`;
-        let guard = 0;
-        while (job.status === "in_progress" && guard < 32) {
-          guard += 1;
-          const continueResponse = await fetch(`/api/chat/jobs/${job.id}/continue`, {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${authToken}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              mcpToken,
-              idempotencyKey: `${job.id}-${guard}-${Date.now()}`,
-            }),
-          });
-          const continuePayload = await safeJson<{ job?: ResumableChatJobPayload; error?: string; code?: string }>(continueResponse);
-          if (!continueResponse.ok || !continuePayload?.job) {
-            if (continuePayload?.code === "MCP_TOKEN_UNAUTHORIZED") {
-              onMcpTokenUnauthorized();
-            }
-            throw new Error(continuePayload?.error ?? `Failed to continue chat (${continueResponse.status})`);
-          }
-          job = continuePayload.job;
-          if (Array.isArray(job.assistantParts) && job.assistantParts.length > 0) {
-            setMessages([
-              ...optimisticMessages,
-              {
-                id: streamingAssistantMessageId,
-                role: "assistant",
-                parts: job.assistantParts as UIMessage["parts"],
-              } as UIMessage,
-            ]);
-          }
-        }
-        finalStatus = job.status;
-        if (Array.isArray(job.assistantParts) && job.assistantParts.length > 0) {
-          setMessages([
-            ...optimisticMessages,
-            {
-              id: streamingAssistantMessageId,
-              role: "assistant",
-              parts: job.assistantParts as UIMessage["parts"],
-            } as UIMessage,
-          ]);
-        }
-        if (job.status === "failed") {
-          finalError = job.lastError ?? "The assistant couldn't finish that response. Please try again.";
-        }
-      } catch (error) {
-        finalStatus = "failed";
-        finalError = error instanceof Error ? error.message : "Failed to send your message.";
-      } finally {
-        await loadConversationMessages(ensuredConversationId);
-        if (finalStatus === "failed" && finalError) setSubmitError(finalError);
-        if (finalStatus === "completed") clearPinnedArtifacts();
-        setResumablePending(false);
-        setSelectedTools([]);
-        window.setTimeout(() => {
-          void refreshUsageBanner();
-        }, 1200);
-      }
-    })();
+        body: {
+          conversationId: ensuredConversationId,
+          mcpToken,
+          modelId: selectedModel.id,
+          documents: parsedDocuments,
+          artifactContext: pinnedArtifacts.map((artifact) => ({
+            id: artifact.id,
+            conversationId: artifact.conversationId,
+            messageId: artifact.messageId,
+            toolName: artifact.toolName,
+            title: artifact.title,
+            data: artifact.data,
+            chartSpec: artifact.chartSpec,
+          })),
+        },
+      },
+    ).then(() => {
+      clearPinnedArtifacts();
+      setSelectedTools([]);
+      void loadConversationMessages(ensuredConversationId);
+      window.setTimeout(() => {
+        void refreshUsageBanner();
+      }, 1200);
+    });
     if (shouldRefreshAutoTitle && authToken) {
       void (async () => {
         for (let attempt = 0; attempt < 4; attempt += 1) {
@@ -963,7 +881,7 @@ export function ChatView({
   const lastAssistantMessage = [...messages.slice(lastUserMessageIndex + 1)].reverse().find((message) => message.role === "assistant");
   const hasAssistantContent =
     Array.isArray(lastAssistantMessage?.parts) && (lastAssistantMessage.parts as Part[]).some(hasRenderableAssistantPart);
-  const showThinkingIndicator = (status === "submitted" || status === "streaming" || resumablePending) && !hasAssistantContent;
+  const showThinkingIndicator = (status === "submitted" || status === "streaming") && !hasAssistantContent;
   const showCouncilThinkingIndicator = councilPending && (status !== "submitted" && status !== "streaming");
   const showPreConversationLoading = preparingConversation && messages.length === 0;
 
@@ -1108,7 +1026,7 @@ export function ChatView({
             onSubmit={(payload) => void submitPrompt(payload)}
             onCouncilModeChange={setCouncilModeEnabled}
             councilModeEnabled={councilModeEnabled}
-            isStreaming={status === "streaming" || status === "submitted" || councilPending || preparingConversation || resumablePending}
+            isStreaming={status === "streaming" || status === "submitted" || councilPending || preparingConversation}
             modelId={selectedModelId}
             onModelChange={setSelectedModelId}
             tools={tools}

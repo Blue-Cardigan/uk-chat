@@ -1,4 +1,5 @@
 import type { CouncillorRecord, CouncillorsBundleLike, CouncilResolvedGeography, LocalMpApiResponse } from "./types.js";
+import type { Env } from "../../env.js";
 import { getSupabaseAdmin } from "../server.js";
 
 type ToolMap = Record<string, unknown>;
@@ -94,43 +95,44 @@ function normalizeToken(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
 
-function readEnv(key: string): string | undefined {
+function readEnv(key: string, env?: Partial<Env>): string | undefined {
+  if (env && key in env) return (env as Record<string, string | undefined>)[key];
   const maybeProcess = globalThis as { process?: { env?: Record<string, string | undefined> } };
   return maybeProcess.process?.env?.[key];
 }
 
-function getNationalSourcePreference(): SourcePreference {
-  const raw = readEnv("COUNCIL_NATIONAL_SOURCE_PREFERENCE");
+function getNationalSourcePreference(env?: Partial<Env>): SourcePreference {
+  const raw = readEnv("COUNCIL_NATIONAL_SOURCE_PREFERENCE", env);
   return normalizeToken(raw ?? "") === "api first" || normalizeToken(raw ?? "") === "api-first" ? "api-first" : "whatgov-first";
 }
 
-function getSupabaseAdminSafe(): ReturnType<typeof getSupabaseAdmin> | null {
+function getSupabaseAdminSafe(env?: Env): ReturnType<typeof getSupabaseAdmin> | null {
+  if (!env) return null;
   try {
-    return getSupabaseAdmin();
+    return getSupabaseAdmin(env);
   } catch {
     return null;
   }
 }
 
-function getSettingOverride(key: "COUNCIL_NATIONAL_WHATGOV_MPS_TABLE" | "COUNCIL_NATIONAL_WHATGOV_DEBATES_TABLE"): string | null {
-  const raw = readEnv(key);
+function getSettingOverride(key: "COUNCIL_NATIONAL_WHATGOV_MPS_TABLE" | "COUNCIL_NATIONAL_WHATGOV_DEBATES_TABLE", env?: Partial<Env>): string | null {
+  const raw = readEnv(key, env);
   const trimmed = typeof raw === "string" ? raw.trim() : "";
   return trimmed.length > 0 ? trimmed : null;
 }
 
-async function loadCouncilSourceSettings(): Promise<CouncilSourceSettings> {
+async function loadCouncilSourceSettings(env?: Env): Promise<CouncilSourceSettings> {
   const base: CouncilSourceSettings = {
-    sourcePreference: getNationalSourcePreference(),
-    whatGovMpsTable: getSettingOverride("COUNCIL_NATIONAL_WHATGOV_MPS_TABLE") ?? DEFAULT_WHATGOV_MPS_TABLE,
-    whatGovDebatesTable: getSettingOverride("COUNCIL_NATIONAL_WHATGOV_DEBATES_TABLE") ?? DEFAULT_WHATGOV_DEBATES_TABLE,
+    sourcePreference: getNationalSourcePreference(env),
+    whatGovMpsTable: getSettingOverride("COUNCIL_NATIONAL_WHATGOV_MPS_TABLE", env) ?? DEFAULT_WHATGOV_MPS_TABLE,
+    whatGovDebatesTable: getSettingOverride("COUNCIL_NATIONAL_WHATGOV_DEBATES_TABLE", env) ?? DEFAULT_WHATGOV_DEBATES_TABLE,
   };
 
-  // Environment overrides remain highest precedence and bypass DB lookup.
-  if (getSettingOverride("COUNCIL_NATIONAL_WHATGOV_MPS_TABLE") || getSettingOverride("COUNCIL_NATIONAL_WHATGOV_DEBATES_TABLE")) {
+  if (getSettingOverride("COUNCIL_NATIONAL_WHATGOV_MPS_TABLE", env) || getSettingOverride("COUNCIL_NATIONAL_WHATGOV_DEBATES_TABLE", env)) {
     return base;
   }
 
-  const supabase = getSupabaseAdminSafe();
+  const supabase = getSupabaseAdminSafe(env);
   if (!supabase) return base;
 
   const { data, error } = await supabase
@@ -360,8 +362,9 @@ async function fetchWhatGovContributionSnippets(
   memberName: string,
   issueKeywords: string[],
   debatesTable: string,
+  env?: Env,
 ): Promise<{ snippets: string[]; score: number }> {
-  const supabase = getSupabaseAdminSafe();
+  const supabase = getSupabaseAdminSafe(env);
   if (!supabase) return { snippets: [], score: 0 };
 
   const { data, error } = await supabase
@@ -426,8 +429,8 @@ function collectSourceIds(raw: unknown): string[] {
   return [...new Set(ids)];
 }
 
-async function fetchWhatGovNationalCandidates(tools: ToolMap, nation: string | null, mpsTable: string): Promise<NationalCandidate[]> {
-  const supabase = getSupabaseAdminSafe();
+async function fetchWhatGovNationalCandidates(tools: ToolMap, nation: string | null, mpsTable: string, env?: Env): Promise<NationalCandidate[]> {
+  const supabase = getSupabaseAdminSafe(env);
   if (supabase) {
     const prefix = nationCodePrefix(nation);
     let query = supabase
@@ -569,15 +572,15 @@ export async function fetchCouncilCouncillorsBundle(tools: ToolMap, geography: C
   return null;
 }
 
-export async function fetchNationalMpRepresentativeBundle(tools: ToolMap, nation: string | null, issue: string): Promise<LocalMpApiResponse[]> {
+export async function fetchNationalMpRepresentativeBundle(tools: ToolMap, nation: string | null, issue: string, env?: Env): Promise<LocalMpApiResponse[]> {
   const targets = majorPartyTargetsForNation(nation);
   const issueKeywords = extractIssueKeywords(issue);
   const selectedBundles: LocalMpApiResponse[] = [];
   const usedNames = new Set<string>();
-  const sourceSettings = await loadCouncilSourceSettings();
+  const sourceSettings = await loadCouncilSourceSettings(env);
   const whatGovCandidates =
     sourceSettings.sourcePreference === "whatgov-first"
-      ? await fetchWhatGovNationalCandidates(tools, nation, sourceSettings.whatGovMpsTable)
+      ? await fetchWhatGovNationalCandidates(tools, nation, sourceSettings.whatGovMpsTable, env)
       : [];
 
   for (const target of targets) {
@@ -601,7 +604,7 @@ export async function fetchNationalMpRepresentativeBundle(tools: ToolMap, nation
     for (const row of prelim) {
       const dedupeKey = normalizeToken(row.candidate.name);
       if (usedNames.has(dedupeKey)) continue;
-      const fromWhatGov = await fetchWhatGovContributionSnippets(row.candidate.name, issueKeywords, sourceSettings.whatGovDebatesTable);
+      const fromWhatGov = await fetchWhatGovContributionSnippets(row.candidate.name, issueKeywords, sourceSettings.whatGovDebatesTable, env);
       const contribution = fromWhatGov.snippets.length > 0 ? fromWhatGov : await fetchContributionSnippets(tools, row.candidate.name, issueKeywords);
       const totalScore = row.score + contribution.score;
       if (!best || totalScore > best.score) {
