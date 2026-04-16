@@ -385,7 +385,15 @@ chatRoutes.post("/", async (c) => {
           });
         }
       })();
-      c.executionCtx.waitUntil(autoTitlePromise);
+      c.executionCtx.waitUntil(
+        autoTitlePromise.catch((err) => {
+          logError("[api/chat] Auto-title background task threw", {
+            conversationId: body.conversationId,
+            userId: user.id,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }),
+      );
     }
   }
 
@@ -609,9 +617,24 @@ chatRoutes.post("/", async (c) => {
       }
     })();
 
-    c.executionCtx.waitUntil(persistPromise);
-    c.executionCtx.waitUntil(tokenTrackingPromise);
-    await Promise.all([persistPromise, tokenTrackingPromise]);
+    const safePersist = persistPromise.catch((err) => {
+      logError("[api/chat] Persist background task threw", {
+        conversationId: body.conversationId,
+        userId: user.id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+    const safeTokens = tokenTrackingPromise.catch((err) => {
+      logError("[api/chat] Token tracking background task threw", {
+        conversationId: body.conversationId,
+        userId: user.id,
+        modelId: selectedModel.id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+    c.executionCtx.waitUntil(safePersist);
+    c.executionCtx.waitUntil(safeTokens);
+    await Promise.all([safePersist, safeTokens]);
   };
 
   // --- Streaming with fallback chain ---

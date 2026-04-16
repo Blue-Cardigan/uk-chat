@@ -99,6 +99,12 @@ app.get("/api", (c) => c.json({ ok: true }));
 export default {
   fetch: app.fetch,
   async scheduled(_event: unknown, env: Env, ctx: { waitUntil: (p: Promise<unknown>) => void }) {
-    ctx.waitUntil(runDataRetention(env));
+    ctx.waitUntil(
+      runDataRetention(env).catch((err) => {
+        logError("[worker/scheduled] Data retention task threw", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }),
+    );
   },
 };
