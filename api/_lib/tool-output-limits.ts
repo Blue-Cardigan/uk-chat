@@ -1,0 +1,4 @@
+export const MAX_TOOL_OUTPUT_DEPTH = 5;
+export const MAX_TOOL_OUTPUT_STRING = 8_000;
+export const MAX_TOOL_OUTPUT_ARRAY_ITEMS = 180;
+export const MAX_TOOL_OUTPUT_OBJECT_KEYS = 60;

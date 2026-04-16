@@ -1,10 +1,8 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import type { UIMessage } from "ai";
 import { isVizArtifactCandidate, normalizeVizToolName } from "@/lib/viz-helpers";
 import { buildChartSpecFromVizHint, isChartSpec } from "@/lib/viz-data-parser";
-import type { ChartSpec } from "@/lib/types";
-
-type Part = { type: string; [key: string]: unknown };
+import type { ChartSpec, MessagePart } from "@/lib/types";
 
 function stableStringify(value: unknown): string {
   if (value == null) return "";
@@ -43,12 +41,36 @@ export function useArtifactExtractor(params: {
   const artifactSignaturesRef = useRef<Map<string, string>>(new Map());
   const onArtifactRef = useRef(onArtifact);
   onArtifactRef.current = onArtifact;
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
 
-  useEffect(() => {
+  // Digest of finalized tool-result parts only. Changes when a new tool output
+  // arrives — NOT when streaming text tokens mutate the message list. Keying
+  // the scan effect on this avoids re-running the full parts scan per token.
+  const toolDigest = useMemo(() => {
+    const keys: string[] = [];
     for (const message of messages) {
       if (message.role !== "assistant" || !Array.isArray(message.parts)) continue;
+      for (const part of message.parts as MessagePart[]) {
+        if (part.type === "tool-invocation") {
+          const inv = (part as { toolInvocation?: { toolCallId?: string; state?: string } }).toolInvocation;
+          if (!inv || inv.state !== "result") continue;
+          keys.push(`${message.id}:${inv.toolCallId ?? "?"}:result`);
+        } else if (part.type.startsWith("tool-")) {
+          if (part.state !== "output-available") continue;
+          const toolCallId = typeof part.toolCallId === "string" ? part.toolCallId : "?";
+          keys.push(`${message.id}:${part.type}:${toolCallId}`);
+        }
+      }
+    }
+    return keys.join("|");
+  }, [messages]);
 
-      (message.parts as Part[]).forEach((part) => {
+  useEffect(() => {
+    for (const message of messagesRef.current) {
+      if (message.role !== "assistant" || !Array.isArray(message.parts)) continue;
+
+      (message.parts as MessagePart[]).forEach((part) => {
         let toolName: string | undefined;
         let toolCallId: string | undefined;
         let output: unknown;
@@ -92,7 +114,7 @@ export function useArtifactExtractor(params: {
         });
       });
     }
-  }, [conversationId, messages]);
+  }, [conversationId, toolDigest]);
 
   return {
     resetArtifactTracking: () => {
