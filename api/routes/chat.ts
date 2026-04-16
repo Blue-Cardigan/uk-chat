@@ -5,6 +5,7 @@ import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { CHAT_MODEL_CONFIGS, CHAT_SUPPORT_CONTACT, getChatModelConfig } from "../../src/shared/chat-models.js";
 import type { Env } from "../env.js";
 import { getSupabaseAdmin, getUserFromRequest, json } from "../_lib/server.js";
+import { userRateLimit } from "../_lib/rate-limit.js";
 import { logError, logWarn } from "../_lib/logger.js";
 import { getSystemPrompt } from "../_lib/system-prompt.js";
 import { buildExecutionPlanContext, buildQuantContinuationContext, generateExecutionPlan } from "../_lib/chat-handler.js";
@@ -66,6 +67,8 @@ const chatBodySchema = z.object({
 });
 
 const chatRoutes = new Hono<{ Bindings: Env }>();
+
+chatRoutes.use("*", userRateLimit("CHAT_LIMITER"));
 
 // ---------------------------------------------------------------------------
 // POST /tools — list available tools

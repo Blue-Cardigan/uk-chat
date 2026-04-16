@@ -6,8 +6,11 @@ import { isDevBypassEnabled, isAllowedEmailDomain, getEmailDomain, getAuthRedire
 import { onboardUser } from "../_lib/onboarding.js";
 import { logWarn, logError } from "../_lib/logger.js";
 import { parseJson, emailSchema, dbError } from "../_lib/validation.js";
+import { ipRateLimit } from "../_lib/rate-limit.js";
 
 export const authRoutes = new Hono<{ Bindings: Env }>();
+
+authRoutes.use("*", ipRateLimit("AUTH_LIMITER"));
 
 const emailBodySchema = z.object({ email: emailSchema });
 

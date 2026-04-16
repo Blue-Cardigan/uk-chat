@@ -3,5 +3,12 @@
   "name": "chatgb",
   "pages_build_output_dir": "dist",
   "compatibility_date": "2026-04-01",
-  "compatibility_flags": ["nodejs_compat"]
+  "compatibility_flags": ["nodejs_compat"],
+  "unsafe": {
+    "bindings": [
+      { "name": "CHAT_LIMITER", "type": "ratelimit", "namespace_id": "2001", "simple": { "limit": 60, "period": 60 } },
+      { "name": "AUTH_LIMITER", "type": "ratelimit", "namespace_id": "2002", "simple": { "limit": 10, "period": 60 } },
+      { "name": "SHARE_LIMITER", "type": "ratelimit", "namespace_id": "2003", "simple": { "limit": 30, "period": 60 } }
+    ]
+  }
 }

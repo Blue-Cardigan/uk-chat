@@ -3,8 +3,11 @@ import type { Env } from "../env.js";
 import { getSupabaseAdmin, json } from "../_lib/server.js";
 import { extractArtifactsFromMessages, SHARED_CONVERSATION_SELECT_FIELDS } from "../_lib/internals.js";
 import { parseParam, shareTokenSchema, dbError } from "../_lib/validation.js";
+import { ipRateLimit } from "../_lib/rate-limit.js";
 
 export const sharedRoutes = new Hono<{ Bindings: Env }>();
+
+sharedRoutes.use("*", ipRateLimit("SHARE_LIMITER"));
 
 sharedRoutes.get("/:token", async (c) => {
   const tokenResult = parseParam(c, "token", shareTokenSchema);

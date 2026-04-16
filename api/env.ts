@@ -21,4 +21,11 @@ export type Env = {
   VITE_SUPABASE_URL?: string;
   VITE_SUPABASE_ANON_KEY?: string;
   ADMIN_API_URL?: string;
+  CHAT_LIMITER?: RateLimiter;
+  AUTH_LIMITER?: RateLimiter;
+  SHARE_LIMITER?: RateLimiter;
+};
+
+export type RateLimiter = {
+  limit: (options: { key: string }) => Promise<{ success: boolean }>;
 };
