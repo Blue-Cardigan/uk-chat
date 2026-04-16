@@ -12,6 +12,29 @@ export type { McpAttempt } from "./mcp.js";
 export type { McpCandidate } from "./mcp.js";
 
 // ---------------------------------------------------------------------------
+// Fire-and-forget helpers
+// ---------------------------------------------------------------------------
+
+type WaitUntilCtx = { waitUntil: (p: Promise<unknown>) => void };
+
+export function safeWaitUntil(
+  ctx: WaitUntilCtx,
+  label: string,
+  promise: Promise<unknown>,
+  extraContext?: Record<string, unknown>,
+): void {
+  ctx.waitUntil(
+    promise.catch((error) => {
+      logError(`[background] ${label} failed`, {
+        ...extraContext,
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
+    }),
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 

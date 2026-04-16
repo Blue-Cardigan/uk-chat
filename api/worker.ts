@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { csrf } from "hono/csrf";
 import type { Env } from "./env.js";
-import { parseHttpUrl, isLoopbackHostname } from "./_lib/internals.js";
+import { parseHttpUrl, isLoopbackHostname, safeWaitUntil } from "./_lib/internals.js";
 import { logError } from "./_lib/logger.js";
 import { chatRoutes } from "./routes/chat.js";
 import { councilRoutes } from "./routes/council.js";
@@ -99,6 +99,6 @@ app.get("/api", (c) => c.json({ ok: true }));
 export default {
   fetch: app.fetch,
   async scheduled(_event: unknown, env: Env, ctx: { waitUntil: (p: Promise<unknown>) => void }) {
-    ctx.waitUntil(runDataRetention(env));
+    safeWaitUntil(ctx, "scheduled-data-retention", runDataRetention(env));
   },
 };

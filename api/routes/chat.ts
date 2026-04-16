@@ -41,6 +41,7 @@ import {
   normalizeToolSchemas,
   projectToolSchemasForModel,
   reserveModelUsageSlot,
+  safeWaitUntil,
   sanitizeArtifactContext,
   sanitizeIncomingDocuments,
   summarizeArtifactContext,
@@ -384,7 +385,10 @@ chatRoutes.post("/", async (c) => {
           });
         }
       })();
-      c.executionCtx.waitUntil(autoTitlePromise);
+      safeWaitUntil(c.executionCtx, "auto-title", autoTitlePromise, {
+        conversationId: body.conversationId,
+        userId: user.id,
+      });
     }
   }
 
@@ -608,9 +612,18 @@ chatRoutes.post("/", async (c) => {
       }
     })();
 
-    c.executionCtx.waitUntil(persistPromise);
-    c.executionCtx.waitUntil(tokenTrackingPromise);
-    await Promise.all([persistPromise, tokenTrackingPromise]);
+    safeWaitUntil(c.executionCtx, "persist-assistant-message", persistPromise, {
+      conversationId: body.conversationId,
+      userId: user.id,
+    });
+    safeWaitUntil(c.executionCtx, "token-usage", tokenTrackingPromise, {
+      conversationId: body.conversationId,
+      userId: user.id,
+      modelId: selectedModel.id,
+    });
+    await Promise.all([persistPromise, tokenTrackingPromise]).catch(() => {
+      // Already logged by safeWaitUntil; avoid double unhandled rejection.
+    });
   };
 
   // --- Streaming with fallback chain ---
