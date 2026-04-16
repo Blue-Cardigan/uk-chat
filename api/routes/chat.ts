@@ -6,7 +6,7 @@ import { CHAT_MODEL_CONFIGS, CHAT_SUPPORT_CONTACT, getChatModelConfig } from "..
 import type { Env } from "../env.js";
 import { getSupabaseAdmin, getUserFromRequest, json } from "../_lib/server.js";
 import { userRateLimit } from "../_lib/rate-limit.js";
-import { logError, logWarn } from "../_lib/logger.js";
+import { errMessage, logError, logWarn } from "../_lib/logger.js";
 import { runChatWithFallback } from "../_lib/chat-fallback.js";
 import { getSystemPrompt } from "../_lib/system-prompt.js";
 import { buildExecutionPlanContext, buildQuantContinuationContext, generateExecutionPlan } from "../_lib/chat-handler.js";
@@ -390,7 +390,7 @@ chatRoutes.post("/", async (c) => {
           logError("[api/chat] Auto-title background task threw", {
             conversationId: body.conversationId,
             userId: user.id,
-            error: err instanceof Error ? err.message : String(err),
+            error: errMessage(err),
           });
         }),
       );
@@ -634,6 +634,7 @@ chatRoutes.post("/", async (c) => {
     });
     c.executionCtx.waitUntil(safePersist);
     c.executionCtx.waitUntil(safeTokens);
+    // Errors are swallowed into logs; Promise.all never rejects here by design — response succeeds even if persist/token tracking fail.
     await Promise.all([safePersist, safeTokens]);
   };
 

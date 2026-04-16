@@ -46,3 +46,7 @@ export function logError(message: string, context?: unknown) {
   }
   console.error(message, sanitizeContext(context));
 }
+
+export function errMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}

@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { csrf } from "hono/csrf";
 import type { Env } from "./env.js";
 import { parseHttpUrl, isLoopbackHostname } from "./_lib/internals.js";
-import { logError } from "./_lib/logger.js";
+import { errMessage, logError } from "./_lib/logger.js";
 import { chatRoutes } from "./routes/chat.js";
 import { councilRoutes } from "./routes/council.js";
 import { conversationRoutes } from "./routes/conversations.js";
@@ -102,7 +102,7 @@ export default {
     ctx.waitUntil(
       runDataRetention(env).catch((err) => {
         logError("[worker/scheduled] Data retention task threw", {
-          error: err instanceof Error ? err.message : String(err),
+          error: errMessage(err),
         });
       }),
     );
