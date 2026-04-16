@@ -1,5 +1,7 @@
 import { Hono } from "hono";
+import { csrf } from "hono/csrf";
 import type { Env } from "./env.js";
+import { parseHttpUrl, isLoopbackHostname } from "./_lib/internals.js";
 import { chatRoutes } from "./routes/chat.js";
 import { councilRoutes } from "./routes/council.js";
 import { conversationRoutes } from "./routes/conversations.js";
@@ -13,6 +15,33 @@ import { cronRoutes, runDataRetention } from "./routes/cron.js";
 import { assertMcpEncryptionConfigured } from "./_lib/crypto.js";
 
 const app = new Hono<{ Bindings: Env }>();
+
+app.use("*", async (c, next) => {
+  const method = c.req.method.toUpperCase();
+  if (method === "GET" || method === "HEAD" || method === "OPTIONS") return next();
+
+  // Cron endpoints authenticate via HMAC; skip CSRF origin check.
+  const path = new URL(c.req.raw.url).pathname;
+  if (path.startsWith("/api/cron")) return next();
+
+  const allowedOrigins = new Set<string>();
+  const configured = parseHttpUrl(c.env.APP_URL?.trim());
+  if (configured) allowedOrigins.add(configured.origin);
+  const inviteConfigured = parseHttpUrl(c.env.INVITE_APP_URL?.trim());
+  if (inviteConfigured) allowedOrigins.add(inviteConfigured.origin);
+
+  const requestOrigin = parseHttpUrl(c.req.raw.url);
+  if (requestOrigin && isLoopbackHostname(requestOrigin.hostname)) {
+    // Allow any loopback origin during local development.
+    return csrf({ origin: (origin) => {
+      const parsed = parseHttpUrl(origin);
+      return Boolean(parsed && isLoopbackHostname(parsed.hostname));
+    } })(c, next);
+  }
+
+  if (allowedOrigins.size === 0 && requestOrigin) allowedOrigins.add(requestOrigin.origin);
+  return csrf({ origin: Array.from(allowedOrigins) })(c, next);
+});
 
 app.get("/api/health", (c) => {
   try {
