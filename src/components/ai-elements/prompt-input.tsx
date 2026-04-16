@@ -4,6 +4,7 @@ import { Button, Textarea } from "@/components/ui/primitives";
 import type { ChatModelConfig, ChatModelId } from "@/shared/chat-models";
 import type { ChatToolOption } from "@/components/chat/ChatInput";
 import type { VizPayload } from "@/lib/types";
+import { UK_POSTCODE_REGEX, normalizePostcode } from "@/lib/patterns";
 
 const ACCEPTED_DOCUMENT_EXTENSIONS = new Set(["pdf", "txt", "md", "markdown", "csv", "json", "docx", "xlsx"]);
 const ACCEPTED_DOCUMENT_MIME_TYPES = new Set([
@@ -19,7 +20,6 @@ const ACCEPTED_DOCUMENT_MIME_TYPES = new Set([
   "application/octet-stream",
 ]);
 const MAX_DOCUMENT_SIZE_BYTES = 10 * 1024 * 1024;
-const UK_POSTCODE_REGEX = /\b([A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2})\b/i;
 
 export type PromptInputSubmitPayload = {
   text: string;
@@ -60,8 +60,7 @@ function detectCouncilScopeHint(text: string): string {
   if (!compact) return "Detected scope: National MPs council (default)";
   const postcodeMatch = compact.match(UK_POSTCODE_REGEX);
   if (postcodeMatch?.[1]) {
-    const postcode = postcodeMatch[1].replace(/\s+/g, "").toUpperCase();
-    return `Detected scope: Local council (postcode ${postcode})`;
+    return `Detected scope: Local council (postcode ${normalizePostcode(postcodeMatch[1])})`;
   }
   const constituencyMatch = compact.match(
     /\b(?:constituency|in|for|around|near)\s+([a-z0-9][a-z0-9\s'&-]{2,60}?)(?:\b(?:for|on|about|regarding|with|where|which)\b|[,.!?;]|$)/i,

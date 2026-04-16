@@ -6,21 +6,13 @@ import { AuthCallbackPage } from "@/components/auth/AuthCallbackPage";
 import { Card } from "@/components/ui/primitives";
 import { useAuth } from "@/lib/auth";
 import { useAppStore } from "@/lib/store";
+import { safeJson } from "@/lib/http";
 import type { ChatConversation } from "@/lib/types";
 
 const PrivacyNoticePage = lazy(() => import("@/components/legal/PrivacyNoticePage").then((m) => ({ default: m.PrivacyNoticePage })));
 const SharedChatView = lazy(() => import("@/components/chat/SharedChatView").then((m) => ({ default: m.SharedChatView })));
 const AdminPanel = lazy(() => import("@/components/auth/AdminPanel").then((m) => ({ default: m.AdminPanel })));
 const SettingsPanel = lazy(() => import("@/components/settings/SettingsPanel").then((m) => ({ default: m.SettingsPanel })));
-async function safeJson<T>(response: Response): Promise<T | null> {
-  const text = await response.text();
-  if (!text) return null;
-  try {
-    return JSON.parse(text) as T;
-  } catch {
-    return null;
-  }
-}
 
 function getConversationIdFromUrl(): string | null {
   return new URLSearchParams(window.location.search).get("chat");

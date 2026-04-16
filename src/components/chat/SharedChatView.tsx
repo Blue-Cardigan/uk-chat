@@ -7,6 +7,7 @@ import { Message } from "@/components/ai-elements/message";
 import { Card } from "@/components/ui/primitives";
 import type { VizPayload } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { safeJson } from "@/lib/http";
 
 const VizRouter = lazy(() => import("@/components/viz/VizRouter").then((m) => ({ default: m.VizRouter })));
 
@@ -27,16 +28,6 @@ type SharedConversationPayload = {
   messages: SharedMessage[];
   artifacts: VizPayload[];
 };
-
-async function safeJson<T>(response: Response): Promise<T | null> {
-  const text = await response.text();
-  if (!text) return null;
-  try {
-    return JSON.parse(text) as T;
-  } catch {
-    return null;
-  }
-}
 
 export function SharedChatView() {
   const { token } = useParams<{ token: string }>();

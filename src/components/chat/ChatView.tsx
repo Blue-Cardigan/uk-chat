@@ -11,6 +11,8 @@ import { SuggestedMessages } from "@/components/chat/SuggestedMessages";
 import { DEFAULT_CHAT_MODEL_ID, getChatModelConfig, type ChatModelId } from "@/shared/chat-models";
 import { useAppStore } from "@/lib/store";
 import { isVizArtifactCandidate, normalizeVizToolName } from "@/lib/viz-helpers";
+import { safeJson, readApiError } from "@/lib/http";
+import { UK_POSTCODE_REGEX, normalizePostcode } from "@/lib/patterns";
 import { Button, Input } from "@/components/ui/primitives";
 import type { ChatConversation } from "@/lib/types";
 import type { ParsedDocument } from "@/lib/document-parser";
@@ -44,19 +46,8 @@ type ModelUsageResponse = {
 };
 type CouncilScope = { kind: "postcode"; postcode: string } | { kind: "area"; area: string } | { kind: "national" };
 const AUTO_CHAT_TITLE_DEFAULT_REGEX = /^(new chat(?:\s+\d+)?|untitled)$/i;
-const UK_POSTCODE_REGEX = /\b([A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2})\b/i;
 const OPTIMISTIC_CHAT_ID_PREFIX = "optimistic-chat-";
 const NEW_CONVERSATION_DRAFT_KEY = "__new-conversation__";
-
-async function safeJson<T>(response: Response): Promise<T | null> {
-  const text = await response.text();
-  if (!text) return null;
-  try {
-    return JSON.parse(text) as T;
-  } catch {
-    return null;
-  }
-}
 
 function formatDocumentFailures(failures: Array<{ name: string; error: string }>): string {
   if (failures.length === 0) return "";
@@ -421,7 +412,7 @@ export function ChatView({
   function inferCouncilScopeDeterministic(text: string): CouncilScope {
     const postcodeMatch = text.match(UK_POSTCODE_REGEX);
     if (postcodeMatch?.[1]) {
-      return { kind: "postcode", postcode: postcodeMatch[1].replace(/\s+/g, "").toUpperCase() };
+      return { kind: "postcode", postcode: normalizePostcode(postcodeMatch[1]) };
     }
     const area = extractAreaCandidate(text);
     if (area) {
@@ -530,11 +521,11 @@ export function ChatView({
               }),
             });
             if (!followupResponse.ok) {
-              const errorPayload = await safeJson<{ error?: string; code?: string }>(followupResponse);
-              if (errorPayload?.code === "MCP_TOKEN_UNAUTHORIZED") {
+              const errorPayload = await readApiError(followupResponse);
+              if (errorPayload.code === "MCP_TOKEN_UNAUTHORIZED") {
                 onMcpTokenUnauthorized();
               }
-              setSubmitError(errorPayload?.error ?? `Failed to update council (${followupResponse.status})`);
+              setSubmitError(errorPayload.error ?? `Failed to update council (${followupResponse.status})`);
               setMessages((current) => current.filter((message) => message.id !== optimisticMessageId));
               setCouncilPending(false);
               return;
@@ -571,11 +562,11 @@ export function ChatView({
             }),
           });
           if (!createResponse.ok) {
-            const errorPayload = await safeJson<{ error?: string; code?: string }>(createResponse);
-            if (errorPayload?.code === "MCP_TOKEN_UNAUTHORIZED") {
+            const errorPayload = await readApiError(createResponse);
+            if (errorPayload.code === "MCP_TOKEN_UNAUTHORIZED") {
               onMcpTokenUnauthorized();
             }
-            setSubmitError(errorPayload?.error ?? `Failed to create council (${createResponse.status})`);
+            setSubmitError(errorPayload.error ?? `Failed to create council (${createResponse.status})`);
             setMessages((current) => current.filter((message) => message.id !== optimisticMessageId));
             setCouncilPending(false);
             return;
