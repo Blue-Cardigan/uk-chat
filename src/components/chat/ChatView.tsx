@@ -16,6 +16,10 @@ import type { ChatConversation } from "@/lib/types";
 import type { ParsedDocument } from "@/lib/document-parser";
 import type { PromptInputSubmitPayload } from "@/components/ai-elements/prompt-input";
 import { buildChartSpecFromVizHint, isChartSpec } from "@/lib/viz-data-parser";
+import { useArtifactExtractor } from "@/hooks/useArtifactExtractor";
+import { useMessageLoader } from "@/hooks/useMessageLoader";
+import { useTitleManager } from "@/hooks/useTitleManager";
+import { useCouncilMode, type CouncilScope as CouncilScopeType } from "@/hooks/useCouncilMode";
 
 type Part = { type: string; [key: string]: unknown };
 type PersistedMessage = {
@@ -162,7 +166,6 @@ export function ChatView({
   const unpinArtifact = useAppStore((state) => state.unpinArtifact);
   const setConversations = useAppStore((state) => state.setConversations);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const [conversationLoadError, setConversationLoadError] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState(false);
   const [draftTitle, setDraftTitle] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
@@ -180,16 +183,11 @@ export function ChatView({
   const [councilModeEnabled, setCouncilModeEnabled] = useState(false);
   const [draftsByConversation, setDraftsByConversation] = useState<Record<string, string>>({});
   const [composerFocusRequestKey, setComposerFocusRequestKey] = useState(0);
-  const [councilPending, setCouncilPending] = useState(false);
   const [pendingConversationId, setPendingConversationId] = useState<string | null>(null);
   const [preparingConversation, setPreparingConversation] = useState(false);
   const toolsCacheRef = useRef<Map<string, ToolsCacheEntry>>(new Map());
   const titleMenuRef = useRef<HTMLDivElement | null>(null);
-  const pushedArtifactKeysRef = useRef<Set<string>>(new Set());
-  const artifactSignaturesRef = useRef<Map<string, string>>(new Map());
   const liveSessionConversationIdRef = useRef<string | null>(null);
-  const onMissingRef = useRef(onConversationMissing);
-  onMissingRef.current = onConversationMissing;
 
   const fetchToolsPage = useCallback(
     async ({
@@ -384,23 +382,47 @@ export function ChatView({
     }
   }, [conversationId, pendingConversationId]);
 
-  const loadConversationMessages = useCallback(
-    async (targetConversationId: string) => {
-      if (!authToken) return;
-      const response = await fetch(`/api/conversations/${targetConversationId}`, {
-        headers: { Authorization: `Bearer ${authToken}` },
-      });
-      if (!response.ok) return;
-      const payload = (await safeJson<{ messages?: PersistedMessage[] }>(response)) ?? { messages: [] };
-      const mapped: UIMessage[] = (payload.messages ?? []).map((message) => ({
-        id: message.id,
-        role: message.role === "assistant" ? "assistant" : "user",
-        parts: (message.parts ?? []) as UIMessage["parts"],
-      }));
-      setMessages(mapped);
-    },
-    [authToken, setMessages],
+  const { resetArtifactTracking } = useArtifactExtractor({
+    messages,
+    conversationId,
+    onArtifact: pushVizPayload,
+  });
+
+  const { loadConversationMessages, conversationLoadError } = useMessageLoader({
+    authToken,
+    conversationId,
+    pendingConversationId,
+    setMessages,
+    setPendingConversationId,
+    liveSessionConversationIdRef,
+    onConversationMissing,
+    onReset: resetArtifactTracking,
+  });
+
+  const { pollForAutoTitle } = useTitleManager({ authToken, setConversations });
+
+  const inferCouncilScopeCallback = useCallback(
+    (text: string) => inferCouncilScopeFromText(text) as Promise<CouncilScopeType>,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [authToken, selectedModelId],
   );
+
+  const { councilPending, runCouncil } = useCouncilMode({
+    authToken,
+    mcpToken,
+    selectedModelId,
+    messages,
+    setMessages,
+    loadConversationMessages,
+    inferCouncilScope: inferCouncilScopeCallback,
+    onMcpTokenUnauthorized,
+    onSubmitError: setSubmitError,
+    onPostComplete: () => {
+      window.setTimeout(() => {
+        void refreshUsageBanner();
+      }, 1200);
+    },
+  });
 
   function extractAreaCandidate(text: string): string | null {
     const compact = text.replace(/\s+/g, " ").trim();
@@ -458,20 +480,6 @@ export function ChatView({
     }
   }
 
-  function extractLatestCouncilIdFromMessages(inputMessages: UIMessage[]): string | null {
-    const latestAssistant = [...inputMessages].reverse().find((message) => message.role === "assistant" && Array.isArray(message.parts));
-    if (!latestAssistant || !Array.isArray(latestAssistant.parts)) return null;
-    for (const part of latestAssistant.parts as Part[]) {
-      if (!part.type?.startsWith("tool-") || !("output" in part)) continue;
-      if (part.type.replace("tool-", "") !== "council_deliberation") continue;
-      const output = part.output;
-      if (!output || typeof output !== "object") continue;
-      const id = (output as { councilId?: unknown }).councilId;
-      if (typeof id === "string" && id.trim()) return id;
-    }
-    return null;
-  }
-
   async function submitPrompt(payload: PromptInputSubmitPayload): Promise<boolean> {
     const text = payload.text;
     const needsConversationCreation = !conversationId;
@@ -502,96 +510,7 @@ export function ChatView({
     liveSessionConversationIdRef.current = ensuredConversationId;
     const shouldRefreshAutoTitle = messages.length === 0 && isAutoGeneratedTitle(conversation?.title);
     if (payload.mode === "council") {
-      const optimisticMessageId = `optimistic-council-${crypto.randomUUID()}`;
-      setMessages((current) => [
-        ...current,
-        {
-          id: optimisticMessageId,
-          role: "user",
-          parts: [{ type: "text", text }],
-        } as UIMessage,
-      ]);
-      setCouncilPending(true);
-      const latestCouncilId = extractLatestCouncilIdFromMessages(messages as UIMessage[]);
-      if (latestCouncilId) {
-        void (async () => {
-          try {
-            const followupResponse = await fetch("/api/council/followup", {
-              method: "POST",
-              headers: {
-                Authorization: `Bearer ${authToken}`,
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({
-                councilId: latestCouncilId,
-                followUp: text,
-                modelId: selectedModelId,
-                mcpToken,
-              }),
-            });
-            if (!followupResponse.ok) {
-              const errorPayload = await safeJson<{ error?: string; code?: string }>(followupResponse);
-              if (errorPayload?.code === "MCP_TOKEN_UNAUTHORIZED") {
-                onMcpTokenUnauthorized();
-              }
-              setSubmitError(errorPayload?.error ?? `Failed to update council (${followupResponse.status})`);
-              setMessages((current) => current.filter((message) => message.id !== optimisticMessageId));
-              setCouncilPending(false);
-              return;
-            }
-            await loadConversationMessages(ensuredConversationId);
-            setCouncilPending(false);
-            window.setTimeout(() => {
-              void refreshUsageBanner();
-            }, 1200);
-          } catch (error) {
-            setSubmitError(error instanceof Error ? error.message : "Failed to update council.");
-            setMessages((current) => current.filter((message) => message.id !== optimisticMessageId));
-            setCouncilPending(false);
-          }
-        })();
-        return true;
-      }
-
-      void (async () => {
-        try {
-          const scope = await inferCouncilScopeFromText(text);
-          const createResponse = await fetch("/api/council", {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${authToken}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              conversationId: ensuredConversationId,
-              issue: text,
-              scope,
-              modelId: selectedModelId,
-              mcpToken,
-            }),
-          });
-          if (!createResponse.ok) {
-            const errorPayload = await safeJson<{ error?: string; code?: string }>(createResponse);
-            if (errorPayload?.code === "MCP_TOKEN_UNAUTHORIZED") {
-              onMcpTokenUnauthorized();
-            }
-            setSubmitError(errorPayload?.error ?? `Failed to create council (${createResponse.status})`);
-            setMessages((current) => current.filter((message) => message.id !== optimisticMessageId));
-            setCouncilPending(false);
-            return;
-          }
-          await loadConversationMessages(ensuredConversationId);
-          setCouncilPending(false);
-          window.setTimeout(() => {
-            void refreshUsageBanner();
-          }, 1200);
-        } catch (error) {
-          setSubmitError(error instanceof Error ? error.message : "Failed to create council.");
-          setMessages((current) => current.filter((message) => message.id !== optimisticMessageId));
-          setCouncilPending(false);
-        }
-      })();
-      return true;
+      return runCouncil({ text, ensuredConversationId });
     }
 
     const toolPrefix =
@@ -643,29 +562,8 @@ export function ChatView({
         void refreshUsageBanner();
       }, 1200);
     });
-    if (shouldRefreshAutoTitle && authToken) {
-      void (async () => {
-        for (let attempt = 0; attempt < 4; attempt += 1) {
-          await new Promise((resolve) => window.setTimeout(resolve, 900 * (attempt + 1)));
-          const response = await fetch(`/api/conversations/${ensuredConversationId}`, {
-            headers: { Authorization: `Bearer ${authToken}` },
-          });
-          if (!response.ok) continue;
-          const payload = await safeJson<{ conversation?: ChatConversation }>(response);
-          const serverConversation = payload?.conversation;
-          if (!serverConversation || isAutoGeneratedTitle(serverConversation.title)) continue;
-          const currentConversations = useAppStore.getState().conversations;
-          const nextConversations = currentConversations.map((item) =>
-            item.id === ensuredConversationId ? { ...item, title: serverConversation.title, updated_at: serverConversation.updated_at } : item,
-          );
-          nextConversations.sort((a, b) => {
-            if (a.starred !== b.starred) return a.starred ? -1 : 1;
-            return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
-          });
-          setConversations(nextConversations);
-          break;
-        }
-      })();
+    if (shouldRefreshAutoTitle) {
+      pollForAutoTitle(ensuredConversationId);
     }
     return true;
   }
@@ -731,113 +629,6 @@ export function ChatView({
     setPreparingConversation(false);
   }, [conversationId]);
 
-  useEffect(() => {
-    pushedArtifactKeysRef.current.clear();
-    artifactSignaturesRef.current.clear();
-    setConversationLoadError(null);
-    const activeConversationId = conversationId ?? pendingConversationId;
-    if (!authToken) {
-      setMessages([]);
-      return;
-    }
-    if (!activeConversationId) {
-      setPendingConversationId(null);
-      setMessages([]);
-      return;
-    }
-    if (!conversationId && pendingConversationId) {
-      // Keep optimistic/prefetched messages while parent conversation state catches up.
-      return;
-    }
-    if (!conversationId) {
-      setMessages([]);
-      return;
-    }
-    const requestedConversationId = activeConversationId;
-    if (isOptimisticConversationId(requestedConversationId)) {
-      return;
-    }
-    if (liveSessionConversationIdRef.current === requestedConversationId) {
-      return;
-    }
-    const abortController = new AbortController();
-    fetch(`/api/conversations/${requestedConversationId}`, { headers: { Authorization: `Bearer ${authToken}` }, signal: abortController.signal })
-      .then(async (response) => {
-        if (response.status === 404) {
-          await onMissingRef.current(requestedConversationId);
-          return null;
-        }
-        if (!response.ok) throw new Error(`Failed to load conversation (${response.status})`);
-        return (await safeJson<{ messages?: PersistedMessage[] }>(response)) ?? { messages: [] };
-      })
-      .then((payload) => {
-        if (abortController.signal.aborted || !payload) return;
-        const mapped: UIMessage[] = (payload.messages ?? []).map((message) => ({
-          id: message.id,
-          role: message.role === "assistant" ? "assistant" : "user",
-          parts: (message.parts ?? []) as UIMessage["parts"],
-        }));
-        setMessages(mapped);
-      })
-      .catch((error) => {
-        if (abortController.signal.aborted || error instanceof DOMException) return;
-        setConversationLoadError("Couldn't load this conversation. Try again or start a new chat.");
-        setMessages([]);
-      });
-    return () => {
-      abortController.abort();
-    };
-  }, [authToken, conversationId, pendingConversationId, setMessages]);
-
-  useEffect(() => {
-    for (const message of messages) {
-      if (message.role !== "assistant" || !Array.isArray(message.parts)) continue;
-
-      (message.parts as Part[]).forEach((part, index) => {
-        let toolName: string | undefined;
-        let toolCallId: string | undefined;
-        let output: unknown;
-
-        if (part.type === "tool-invocation") {
-          const inv = (part as { toolInvocation?: { toolName: string; toolCallId: string; state: string; result?: unknown } }).toolInvocation;
-          if (!inv || inv.state !== "result" || inv.result == null) return;
-          toolName = inv.toolName;
-          toolCallId = inv.toolCallId;
-          output = inv.result;
-        } else if (part.type.startsWith("tool-")) {
-          if (part.state !== "output-available" || !("output" in part) || part.output == null) return;
-          toolName = part.type.replace("tool-", "");
-          toolCallId = typeof part.toolCallId === "string" ? part.toolCallId : undefined;
-          output = part.output;
-        } else {
-          return;
-        }
-
-        if (!toolName || !isVizArtifactCandidate(toolName, output)) return;
-        const normalizedToolName = normalizeVizToolName(toolName);
-        const chartSpec =
-          normalizedToolName === "create_chart" && isChartSpec(output)
-            ? output
-            : buildChartSpecFromVizHint(output);
-        const fallbackId = `sig-${hashString(`${normalizedToolName}:${stableStringify(output).slice(0, 1200)}`)}`;
-        const id = toolCallId ?? fallbackId;
-        const artifactKey = `${message.id}:${normalizedToolName}:${id}`;
-        const signature = `${stableStringify(output).slice(0, 12000)}|${stableStringify(chartSpec).slice(0, 12000)}`;
-        if (pushedArtifactKeysRef.current.has(artifactKey) && artifactSignaturesRef.current.get(artifactKey) === signature) return;
-        pushedArtifactKeysRef.current.add(artifactKey);
-        artifactSignaturesRef.current.set(artifactKey, signature);
-        pushVizPayload({
-          id: artifactKey,
-          toolName: normalizedToolName,
-          data: output,
-          title: `Chart: ${normalizedToolName}`,
-          chartSpec: chartSpec ?? undefined,
-          conversationId: conversationId ?? undefined,
-          messageId: message.id,
-        });
-      });
-    }
-  }, [conversationId, messages, pushVizPayload]);
 
   function submitTitleRename() {
     if (!conversation) return;
