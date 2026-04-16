@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Button, Card, Input } from "@/components/ui/primitives";
 import { useAuth } from "@/lib/auth";
+import { apiFetchJson } from "@/lib/api";
 
 type AdminUser = { email: string; status: string; hasToken: boolean };
 
@@ -16,11 +17,8 @@ export function AdminPanel() {
     if (!session?.access_token) return;
     setUsersLoading(true);
     setUsersError(null);
-    fetch("/api/admin/users", {
-      headers: { Authorization: `Bearer ${session.access_token}` },
-    })
-      .then((response) => response.json())
-      .then((data: AdminUser[]) => setUsers(Array.isArray(data) ? data : []))
+    apiFetchJson<AdminUser[]>("/api/admin/users", { skipToast: true })
+      .then((data) => setUsers(Array.isArray(data) ? data : []))
       .catch(() => {
         setUsers([]);
         setUsersError("Could not load invited users right now.");
@@ -31,17 +29,19 @@ export function AdminPanel() {
   async function inviteUser(event: React.FormEvent) {
     event.preventDefault();
     if (!session?.access_token) return;
-    const response = await fetch("/api/admin/users", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
-      body: JSON.stringify({ email }),
-    });
-    const payload = (await response.json()) as { message?: string; user?: AdminUser };
-    if (payload.user) {
-      setUsers((previous) => [payload.user as AdminUser, ...previous]);
+    try {
+      const payload = await apiFetchJson<{ message?: string; user?: AdminUser }>("/api/admin/users", {
+        method: "POST",
+        body: JSON.stringify({ email }),
+      });
+      if (payload.user) {
+        setUsers((previous) => [payload.user as AdminUser, ...previous]);
+      }
+      setMessage(payload.message ?? "Invite sent");
+      setEmail("");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Invite failed");
     }
-    setMessage(payload.message ?? "Invite sent");
-    setEmail("");
   }
 
   return (

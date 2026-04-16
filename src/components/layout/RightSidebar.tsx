@@ -3,6 +3,7 @@ import { BarChart3, ChevronDown, Pin, PinOff, X } from "lucide-react";
 import { Button } from "@/components/ui/primitives";
 import { ArtifactToolbar } from "@/components/viz/ArtifactToolbar";
 import { useAppStore } from "@/lib/store";
+import { apiFetchJson } from "@/lib/api";
 import type { ArtifactLibrary, VizPayload } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -94,13 +95,11 @@ export function RightSidebar({ authToken }: Props) {
     const abortController = new AbortController();
     const params = new URLSearchParams();
     if (activeConversationId) params.set("currentConversationId", activeConversationId);
-    fetch(`/api/artifacts?${params.toString()}`, {
-      headers: { Authorization: `Bearer ${authToken}` },
+    apiFetchJson<ArtifactLibrary>(`/api/artifacts?${params.toString()}`, {
       signal: abortController.signal,
+      skipToast: true,
     })
-      .then(async (response) => {
-        if (!response.ok) return;
-        const payload = (await response.json().catch(() => null)) as ArtifactLibrary | null;
+      .then((payload) => {
         setArtifactLibrary(payload && Array.isArray(payload.conversations) ? payload : { conversations: [] });
       })
       .catch(() => {

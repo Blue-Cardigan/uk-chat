@@ -11,7 +11,7 @@ import { SuggestedMessages } from "@/components/chat/SuggestedMessages";
 import { DEFAULT_CHAT_MODEL_ID, getChatModelConfig, type ChatModelId } from "@/shared/chat-models";
 import { useAppStore } from "@/lib/store";
 import { isVizArtifactCandidate, normalizeVizToolName } from "@/lib/viz-helpers";
-import { safeJson } from "@/lib/http";
+import { apiFetchJson } from "@/lib/api";
 import { UK_POSTCODE_REGEX, normalizePostcode } from "@/lib/patterns";
 import { Button, Input } from "@/components/ui/primitives";
 import type { ChatConversation, MessagePart, PersistedMessage } from "@/lib/types";
@@ -188,17 +188,12 @@ export function ChatView({
       if (!authToken || !mcpToken) {
         throw new Error("Missing auth or MCP token.");
       }
-      const response = await fetch("/api/chat/tools", {
+      const payload = await apiFetchJson<ToolsCatalogResponse>("/api/chat/tools", {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${authToken}`,
-          "Content-Type": "application/json",
-        },
         body: JSON.stringify({ mcpToken, query, offset, limit: 50 }),
         signal,
+        skipToast: true,
       });
-      if (!response.ok) throw new Error(`Failed to load tools (${response.status})`);
-      const payload = (await safeJson<ToolsCatalogResponse>(response)) ?? {};
       const items = payload.items ?? payload.tools ?? [];
       const totalCount = payload.totalCount ?? items.length;
       const nextOffset = payload.nextOffset ?? null;
@@ -321,11 +316,10 @@ export function ChatView({
       return;
     }
     try {
-      const response = await fetch(`/api/chat/usage?modelId=${encodeURIComponent(selectedModel.id)}`, {
-        headers: { Authorization: `Bearer ${authToken}` },
-      });
-      if (!response.ok) return;
-      const payload = await safeJson<ModelUsageResponse>(response);
+      const payload = await apiFetchJson<ModelUsageResponse>(
+        `/api/chat/usage?modelId=${encodeURIComponent(selectedModel.id)}`,
+        { skipToast: true },
+      );
       setUsageBanner(payload?.banner ?? null);
     } catch {
       // Optional banner only; ignore transient failures.
@@ -446,19 +440,14 @@ export function ChatView({
     if (deterministic.kind === "postcode") return deterministic;
     if (!authToken) return deterministic;
     try {
-      const response = await fetch("/api/council/infer-scope", {
+      const payload = await apiFetchJson<{ scope?: CouncilScope }>("/api/council/infer-scope", {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${authToken}`,
-          "Content-Type": "application/json",
-        },
         body: JSON.stringify({
           text,
           modelId: selectedModelId,
         }),
+        skipToast: true,
       });
-      if (!response.ok) return deterministic;
-      const payload = await safeJson<{ scope?: CouncilScope }>(response);
       if (!payload?.scope || typeof payload.scope.kind !== "string") return deterministic;
       if (payload.scope.kind === "postcode" && typeof payload.scope.postcode === "string") return payload.scope;
       if (payload.scope.kind === "area" && typeof payload.scope.area === "string") return payload.scope;

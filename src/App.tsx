@@ -6,7 +6,7 @@ import { AuthCallbackPage } from "@/components/auth/AuthCallbackPage";
 import { Card } from "@/components/ui/primitives";
 import { useAuth } from "@/lib/auth";
 import { useAppStore } from "@/lib/store";
-import { safeJson } from "@/lib/http";
+import { apiFetch, apiFetchJson, SessionExpiredError } from "@/lib/api";
 import type { ChatConversation } from "@/lib/types";
 
 const PrivacyNoticePage = lazy(() => import("@/components/legal/PrivacyNoticePage").then((m) => ({ default: m.PrivacyNoticePage })));
@@ -51,13 +51,7 @@ function ProtectedApp() {
       return [] as ChatConversation[];
     }
 
-    const response = await fetch("/api/conversations", {
-      headers: { Authorization: `Bearer ${session.access_token}` },
-      signal,
-    });
-    if (!response.ok) throw new Error(`Failed to load conversations (${response.status})`);
-
-    const raw = (await safeJson<ChatConversation[]>(response)) ?? [];
+    const raw = await apiFetchJson<ChatConversation[]>("/api/conversations", { signal });
     const data = raw.map((conversation) => ({
       ...conversation,
       starred: conversation.starred ?? false,
@@ -86,16 +80,10 @@ function ProtectedApp() {
         return null;
       }
       try {
-        const response = await fetch("/api/account/profile", {
-          headers: { Authorization: `Bearer ${session.access_token}` },
+        const payload = await apiFetchJson<{ mcpToken?: string | null }>("/api/account/profile", {
           signal,
+          skipToast: true,
         });
-        if (signal?.aborted) return null;
-        if (!response.ok) {
-          setMcpToken(null);
-          return null;
-        }
-        const payload = (await safeJson<{ mcpToken?: string | null }>(response)) ?? {};
         if (signal?.aborted) return null;
         const nextToken = payload.mcpToken ?? null;
         setMcpToken(nextToken);
@@ -157,13 +145,15 @@ function ProtectedApp() {
     const currentConversations = useAppStore.getState().conversations;
     const titleForNewConversation = `New chat ${currentConversations.length + 1}`;
 
-    const response = await fetch("/api/conversations", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token ?? ""}` },
-      body: JSON.stringify({ title: titleForNewConversation }),
-    });
-    if (!response.ok) return null;
-    const created = await safeJson<ChatConversation>(response);
+    let created: ChatConversation | null;
+    try {
+      created = await apiFetchJson<ChatConversation>("/api/conversations", {
+        method: "POST",
+        body: JSON.stringify({ title: titleForNewConversation }),
+      });
+    } catch {
+      return null;
+    }
     if (!created) return null;
     const normalizedCreated = {
       ...created,
@@ -185,11 +175,11 @@ function ProtectedApp() {
   }, [setActiveConversationId]);
 
   const deleteConversation = useCallback(async (id: string) => {
-    const response = await fetch(`/api/conversations/${id}`, {
-      method: "DELETE",
-      headers: { Authorization: `Bearer ${session?.access_token ?? ""}` },
-    });
-    if (!response.ok) return;
+    try {
+      await apiFetch(`/api/conversations/${id}`, { method: "DELETE" });
+    } catch {
+      return;
+    }
 
     const next = useAppStore.getState().conversations.filter((conversation) => conversation.id !== id);
     setConversations(next);
@@ -201,24 +191,28 @@ function ProtectedApp() {
   }, [session?.access_token, setActiveConversationId, setConversations]);
 
   const renameConversation = useCallback(async (id: string, title: string) => {
-    const response = await fetch(`/api/conversations/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token ?? ""}` },
-      body: JSON.stringify({ title }),
-    });
-    if (!response.ok) return;
+    try {
+      await apiFetch(`/api/conversations/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ title }),
+      });
+    } catch {
+      return;
+    }
 
     const currentConversations = useAppStore.getState().conversations;
     setConversations(currentConversations.map((conversation) => (conversation.id === id ? { ...conversation, title } : conversation)));
   }, [session?.access_token, setConversations]);
 
   const starConversation = useCallback(async (id: string, starred: boolean) => {
-    const response = await fetch(`/api/conversations/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token ?? ""}` },
-      body: JSON.stringify({ starred }),
-    });
-    if (!response.ok) return;
+    try {
+      await apiFetch(`/api/conversations/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ starred }),
+      });
+    } catch {
+      return;
+    }
 
     const currentConversations = useAppStore.getState().conversations;
     const next = currentConversations.map((conversation) => (conversation.id === id ? { ...conversation, starred } : conversation));
@@ -230,16 +224,18 @@ function ProtectedApp() {
   }, [session?.access_token, setConversations]);
 
   const shareConversation = useCallback(async (id: string, enabled = true) => {
-    const headers: Record<string, string> = { Authorization: `Bearer ${session?.access_token ?? ""}` };
-    const body = enabled ? undefined : JSON.stringify({ enabled: false });
-    if (!enabled) headers["Content-Type"] = "application/json";
-    const response = await fetch(`/api/conversations/${id}/share`, {
-      method: enabled ? "POST" : "PATCH",
-      headers,
-      body,
-    });
-    if (!response.ok) return null;
-    const payload = await safeJson<{ conversation?: ChatConversation; shareUrl?: string }>(response);
+    let payload: { conversation?: ChatConversation; shareUrl?: string } | null;
+    try {
+      payload = await apiFetchJson<{ conversation?: ChatConversation; shareUrl?: string }>(
+        `/api/conversations/${id}/share`,
+        {
+          method: enabled ? "POST" : "PATCH",
+          body: enabled ? undefined : JSON.stringify({ enabled: false }),
+        },
+      );
+    } catch {
+      return null;
+    }
     const sharedConversation = payload?.conversation;
     const shareUrl = payload?.shareUrl ?? null;
     if (!sharedConversation) return shareUrl;
@@ -269,11 +265,7 @@ function ProtectedApp() {
 
   async function exportChats() {
     if (!session?.access_token) throw new Error("Missing auth token");
-    const response = await fetch("/api/account/export", {
-      headers: { Authorization: `Bearer ${session.access_token}` },
-    });
-    if (!response.ok) throw new Error(`Export failed (${response.status})`);
-    const exportPayload = await response.json();
+    const exportPayload = await apiFetchJson<unknown>("/api/account/export");
 
     const blob = new Blob([JSON.stringify(exportPayload, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -289,11 +281,12 @@ function ProtectedApp() {
 
   async function deleteAccount() {
     if (!session?.access_token) throw new Error("Missing auth token");
-    const response = await fetch("/api/account", {
-      method: "DELETE",
-      headers: { Authorization: `Bearer ${session.access_token}` },
-    });
-    if (!response.ok) throw new Error("Account deletion failed");
+    try {
+      await apiFetch("/api/account", { method: "DELETE" });
+    } catch (error) {
+      if (error instanceof SessionExpiredError) return;
+      throw error;
+    }
     await signOut();
   }
 

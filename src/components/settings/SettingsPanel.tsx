@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Copy, Download, LogOut, Trash2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/primitives";
+import { apiFetchJson } from "@/lib/api";
 import type { ThemePreference } from "@/lib/types";
 
 type ModelUsage = {
@@ -68,15 +69,9 @@ export function SettingsPanel({
       setUsageLoading(true);
       setUsageError(null);
       try {
-        const response = await fetch("/api/chat/usage/all", {
-          headers: { Authorization: `Bearer ${authToken}` },
+        const payload = await apiFetchJson<ModelUsageAllResponse>("/api/chat/usage/all", {
+          skipToast: true,
         });
-        if (!response.ok) {
-          if (!active) return;
-          setUsageError("Usage data is not available right now. Try refreshing.");
-          return;
-        }
-        const payload = (await response.json()) as ModelUsageAllResponse;
         if (!active) return;
         setUsageRows(Array.isArray(payload.models) ? payload.models : []);
       } catch {
@@ -100,12 +95,14 @@ export function SettingsPanel({
         if (active) setPrivacyConsent(null);
         return;
       }
-      const response = await fetch("/api/privacy/consent", {
-        headers: { Authorization: `Bearer ${authToken}` },
-      });
-      if (!active || !response.ok) return;
-      const payload = (await response.json()) as PrivacyConsentResponse;
-      if (active) setPrivacyConsent(payload);
+      try {
+        const payload = await apiFetchJson<PrivacyConsentResponse>("/api/privacy/consent", {
+          skipToast: true,
+        });
+        if (active) setPrivacyConsent(payload);
+      } catch {
+        // Privacy banner is non-critical; ignore transient failures.
+      }
     }
     void loadConsent();
     return () => {
@@ -183,19 +180,13 @@ export function SettingsPanel({
     setConsentPending(true);
     setActionStatus(null);
     try {
-      const response = await fetch("/api/privacy/consent", {
+      const payload = await apiFetchJson<PrivacyConsentResponse>("/api/privacy/consent", {
         method: "PUT",
-        headers: {
-          Authorization: `Bearer ${authToken}`,
-          "Content-Type": "application/json",
-        },
         body: JSON.stringify({
           acknowledgeAiProcessing: true,
           acknowledgeSharingWarning: true,
         }),
       });
-      if (!response.ok) throw new Error("Failed");
-      const payload = (await response.json()) as PrivacyConsentResponse;
       setPrivacyConsent(payload);
       setActionStatus({ type: "success", message: "Privacy acknowledgement saved." });
     } catch {

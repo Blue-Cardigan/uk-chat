@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { MutableRefObject } from "react";
 import type { UIMessage } from "ai";
+import { apiFetch, apiFetchJson, ApiError } from "@/lib/api";
 import { safeJson } from "@/lib/http";
 import type { PersistedMessage } from "@/lib/types";
 import { OPTIMISTIC_CHAT_ID_PREFIX } from "@/shared/chat-constants";
@@ -61,12 +62,15 @@ export function useMessageLoader(params: {
   const loadConversationMessages = useCallback(
     async (targetConversationId: string) => {
       if (!authToken) return;
-      const response = await fetch(`/api/conversations/${targetConversationId}`, {
-        headers: { Authorization: `Bearer ${authToken}` },
-      });
-      if (!response.ok) return;
-      const payload = (await safeJson<{ messages?: PersistedMessage[] }>(response)) ?? { messages: [] };
-      setMessages(mapMessages(payload.messages ?? []));
+      try {
+        const payload = await apiFetchJson<{ messages?: PersistedMessage[] }>(
+          `/api/conversations/${targetConversationId}`,
+          { skipToast: true },
+        );
+        setMessages(mapMessages(payload.messages ?? []));
+      } catch {
+        // Silent; caller surfaces reactive errors separately.
+      }
     },
     [authToken, setMessages],
   );
@@ -97,27 +101,25 @@ export function useMessageLoader(params: {
     if (liveSessionConversationIdRef.current === requestedConversationId) return;
 
     const abortController = new AbortController();
-    fetch(`/api/conversations/${requestedConversationId}`, {
-      headers: { Authorization: `Bearer ${authToken}` },
-      signal: abortController.signal,
-    })
-      .then(async (response) => {
-        if (response.status === 404) {
-          await onMissingRef.current(requestedConversationId);
-          return null;
-        }
-        if (!response.ok) throw new Error(`Failed to load conversation (${response.status})`);
-        return (await safeJson<{ messages?: PersistedMessage[] }>(response)) ?? { messages: [] };
-      })
-      .then((payload) => {
-        if (abortController.signal.aborted || !payload) return;
+    void (async () => {
+      try {
+        const response = await apiFetch(`/api/conversations/${requestedConversationId}`, {
+          signal: abortController.signal,
+          skipToast: true,
+        });
+        const payload = (await safeJson<{ messages?: PersistedMessage[] }>(response)) ?? { messages: [] };
+        if (abortController.signal.aborted) return;
         setMessages(mapMessages(payload.messages ?? []));
-      })
-      .catch((error) => {
+      } catch (error) {
         if (abortController.signal.aborted || error instanceof DOMException) return;
+        if (error instanceof ApiError && error.status === 404) {
+          await onMissingRef.current(requestedConversationId);
+          return;
+        }
         setConversationLoadError("Couldn't load this conversation. Try again or start a new chat.");
         setMessages([]);
-      });
+      }
+    })();
     return () => {
       abortController.abort();
     };

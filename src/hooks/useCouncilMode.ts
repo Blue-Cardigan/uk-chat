@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 import type { UIMessage } from "ai";
 import type { ChatModelId } from "@/shared/chat-models";
-import { readApiError } from "@/lib/http";
+import { apiFetch, ApiError } from "@/lib/api";
 
 type Part = { type: string; [key: string]: unknown };
 
@@ -85,12 +85,8 @@ export function useCouncilMode(deps: {
       if (latestCouncilId) {
         void (async () => {
           try {
-            const followupResponse = await fetch("/api/council/followup", {
+            await apiFetch("/api/council/followup", {
               method: "POST",
-              headers: {
-                Authorization: `Bearer ${authToken}`,
-                "Content-Type": "application/json",
-              },
               body: JSON.stringify({
                 councilId: latestCouncilId,
                 followUp: text,
@@ -98,18 +94,13 @@ export function useCouncilMode(deps: {
                 mcpToken,
               }),
             });
-            if (!followupResponse.ok) {
-              const errorPayload = await readApiError(followupResponse);
-              if (errorPayload.code === "MCP_TOKEN_UNAUTHORIZED") onMcpTokenUnauthorizedRef.current();
-              onSubmitErrorRef.current(errorPayload.error ?? `Failed to update council (${followupResponse.status})`);
-              setMessages((current) => current.filter((message) => message.id !== optimisticMessageId));
-              setCouncilPending(false);
-              return;
-            }
             await loadConversationMessages(ensuredConversationId);
             setCouncilPending(false);
             onPostCompleteRef.current();
           } catch (error) {
+            if (error instanceof ApiError && error.code === "MCP_TOKEN_UNAUTHORIZED") {
+              onMcpTokenUnauthorizedRef.current();
+            }
             onSubmitErrorRef.current(error instanceof Error ? error.message : "Failed to update council.");
             setMessages((current) => current.filter((message) => message.id !== optimisticMessageId));
             setCouncilPending(false);
@@ -121,12 +112,8 @@ export function useCouncilMode(deps: {
       void (async () => {
         try {
           const scope = await inferCouncilScopeRef.current(text);
-          const createResponse = await fetch("/api/council", {
+          await apiFetch("/api/council", {
             method: "POST",
-            headers: {
-              Authorization: `Bearer ${authToken}`,
-              "Content-Type": "application/json",
-            },
             body: JSON.stringify({
               conversationId: ensuredConversationId,
               issue: text,
@@ -135,18 +122,13 @@ export function useCouncilMode(deps: {
               mcpToken,
             }),
           });
-          if (!createResponse.ok) {
-            const errorPayload = await readApiError(createResponse);
-            if (errorPayload.code === "MCP_TOKEN_UNAUTHORIZED") onMcpTokenUnauthorizedRef.current();
-            onSubmitErrorRef.current(errorPayload.error ?? `Failed to create council (${createResponse.status})`);
-            setMessages((current) => current.filter((message) => message.id !== optimisticMessageId));
-            setCouncilPending(false);
-            return;
-          }
           await loadConversationMessages(ensuredConversationId);
           setCouncilPending(false);
           onPostCompleteRef.current();
         } catch (error) {
+          if (error instanceof ApiError && error.code === "MCP_TOKEN_UNAUTHORIZED") {
+            onMcpTokenUnauthorizedRef.current();
+          }
           onSubmitErrorRef.current(error instanceof Error ? error.message : "Failed to create council.");
           setMessages((current) => current.filter((message) => message.id !== optimisticMessageId));
           setCouncilPending(false);
