@@ -145,6 +145,86 @@ adminRoutes.post("/onboard-user", async (c) => {
   }
 });
 
+// GET /admins — list admin role grants
+adminRoutes.get("/admins", async (c) => {
+  const admin = await ensureAdmin(c.req.raw, c.env);
+  if ("error" in admin) return admin.error;
+
+  const supabase = getSupabaseAdmin(c.env);
+  const { data, error } = await supabase
+    .from("uk_chat_admin_roles")
+    .select("user_id,role,granted_by,granted_at")
+    .order("granted_at", { ascending: false });
+  if (error) return dbError(error, { context: "api/admin/admins GET", publicMessage: "Failed to load admins", status: 400 });
+
+  const userIds = Array.from(new Set([...(data ?? []).map((r) => r.user_id), ...(data ?? []).map((r) => r.granted_by).filter(Boolean) as string[]]));
+  const emailByUserId = new Map<string, string>();
+  if (userIds.length > 0) {
+    const { data: profiles } = await supabase.from("uk_chat_profiles").select("id,email").in("id", userIds);
+    for (const row of profiles ?? []) if (row.email) emailByUserId.set(row.id, row.email);
+  }
+
+  return json(
+    (data ?? []).map((row) => ({
+      userId: row.user_id,
+      email: emailByUserId.get(row.user_id) ?? null,
+      role: row.role,
+      grantedByEmail: row.granted_by ? emailByUserId.get(row.granted_by) ?? null : null,
+      grantedAt: row.granted_at,
+    })),
+  );
+});
+
+const grantAdminSchema = z.object({ email: emailSchema, role: z.enum(["admin", "superadmin"]).optional() });
+
+adminRoutes.post("/admins", async (c) => {
+  const admin = await ensureAdmin(c.req.raw, c.env);
+  if ("error" in admin) return admin.error;
+
+  const parsed = await parseJson(c, grantAdminSchema);
+  if (!parsed.ok) return parsed.response;
+  const { email, role = "admin" } = parsed.data;
+
+  const supabase = getSupabaseAdmin(c.env);
+  const targetUserId = await findUserIdByEmail(email, c.env);
+  if (!targetUserId) return json({ error: "User not found" }, 404);
+
+  const { error } = await supabase
+    .from("uk_chat_admin_roles")
+    .upsert({ user_id: targetUserId, role, granted_by: admin.user.id }, { onConflict: "user_id" });
+  if (error) return dbError(error, { context: "api/admin/admins POST", publicMessage: "Failed to grant admin", status: 400 });
+
+  await writeAdminAuditLog(c.env, {
+    actorUserId: admin.user.id,
+    actorEmail: admin.user.email ?? null,
+    action: "admin.roles.grant",
+    target: email,
+    metadata: { role },
+  });
+  return json({ ok: true });
+});
+
+adminRoutes.delete("/admins/:userId", async (c) => {
+  const admin = await ensureAdmin(c.req.raw, c.env);
+  if ("error" in admin) return admin.error;
+
+  const targetUserId = c.req.param("userId");
+  if (targetUserId === admin.user.id) return json({ error: "Cannot revoke your own admin role" }, 400);
+
+  const supabase = getSupabaseAdmin(c.env);
+  const { error } = await supabase.from("uk_chat_admin_roles").delete().eq("user_id", targetUserId);
+  if (error) return dbError(error, { context: "api/admin/admins DELETE", publicMessage: "Failed to revoke admin", status: 400 });
+
+  await writeAdminAuditLog(c.env, {
+    actorUserId: admin.user.id,
+    actorEmail: admin.user.email ?? null,
+    action: "admin.roles.revoke",
+    target: targetUserId,
+    metadata: {},
+  });
+  return json({ ok: true });
+});
+
 // GET /system-settings/council-source
 adminRoutes.get("/system-settings/council-source", async (c) => {
   const admin = await ensureAdmin(c.req.raw, c.env);

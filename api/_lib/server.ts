@@ -25,12 +25,35 @@ export async function getUserFromRequest(request: Request, env: Env) {
   return data.user ?? null;
 }
 
-export async function ensureAdmin(request: Request, env: Env): Promise<{ user: User } | { error: Response }> {
+export async function ensureAdmin(request: Request, env: Env): Promise<{ user: User; role: string } | { error: Response }> {
   const user = await getUserFromRequest(request, env);
   if (!user) return { error: json({ error: "Unauthorized" }, 401) };
-  const adminEmail = env.ADMIN_EMAIL;
-  if (!adminEmail || user.email?.toLowerCase() !== adminEmail.toLowerCase()) {
-    return { error: json({ error: "Forbidden" }, 403) };
+
+  const supabase = getSupabaseAdmin(env);
+  const { data: roleRow } = await supabase
+    .from("uk_chat_admin_roles")
+    .select("role")
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  if (roleRow?.role) return { user, role: roleRow.role };
+
+  // Bootstrap: if the roles table is empty and this user matches ADMIN_EMAIL,
+  // grant them superadmin. After first bootstrap, ADMIN_EMAIL is effectively ignored.
+  const adminEmail = env.ADMIN_EMAIL?.trim().toLowerCase();
+  const userEmail = user.email?.toLowerCase();
+  if (adminEmail && userEmail && userEmail === adminEmail) {
+    const { count } = await supabase
+      .from("uk_chat_admin_roles")
+      .select("user_id", { count: "exact", head: true });
+    if ((count ?? 0) === 0) {
+      await supabase.from("uk_chat_admin_roles").upsert(
+        { user_id: user.id, role: "superadmin", granted_by: user.id },
+        { onConflict: "user_id" },
+      );
+      return { user, role: "superadmin" };
+    }
   }
-  return { user };
+
+  return { error: json({ error: "Forbidden" }, 403) };
 }
