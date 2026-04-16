@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { z } from "zod";
 import type { Env } from "../env.js";
 import { getSupabaseAdmin, getUserFromRequest, json } from "../_lib/server.js";
 import {
@@ -10,12 +11,23 @@ import {
   DEFAULT_SHARE_EXPIRY_DAYS,
 } from "../_lib/internals.js";
 import { logWarn } from "../_lib/logger.js";
+import { parseJson, parseParam, uuidSchema, dbError } from "../_lib/validation.js";
 
 // ---------------------------------------------------------------------------
 // Routes
 // ---------------------------------------------------------------------------
 
 export const conversationRoutes = new Hono<{ Bindings: Env }>();
+
+const createBodySchema = z.object({ title: z.string().max(500).optional() });
+const patchBodySchema = z.object({
+  title: z.string().max(500).optional(),
+  starred: z.boolean().optional(),
+});
+const shareUpdateBodySchema = z.object({
+  enabled: z.boolean(),
+  expiresInDays: z.number().int().min(1).max(365).optional(),
+});
 
 // GET / — list conversations
 conversationRoutes.get("/", async (c) => {
@@ -24,8 +36,7 @@ conversationRoutes.get("/", async (c) => {
   try {
     await ensureProfileExists(user, c.env);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to prepare user profile";
-    return json({ error: message }, 500);
+    return dbError(error as { message?: string }, { context: "api/conversations", publicMessage: "Failed to prepare user profile" });
   }
   const supabase = getSupabaseAdmin(c.env);
 
@@ -35,7 +46,7 @@ conversationRoutes.get("/", async (c) => {
     .eq("user_id", user.id)
     .order("starred", { ascending: false })
     .order("updated_at", { ascending: false });
-  if (error) return json({ error: error.message }, 400);
+  if (error) return dbError(error, { context: "api/conversations", publicMessage: "Failed to load conversations" });
   return json(data ?? []);
 });
 
@@ -46,13 +57,13 @@ conversationRoutes.post("/", async (c) => {
   try {
     await ensureProfileExists(user, c.env);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to prepare user profile";
-    return json({ error: message }, 500);
+    return dbError(error as { message?: string }, { context: "api/conversations", publicMessage: "Failed to prepare user profile" });
   }
   const supabase = getSupabaseAdmin(c.env);
 
-  const { title } = (await c.req.raw.json()) as { title?: string };
-  const payload = { user_id: user.id, title: title?.trim() || "New chat" };
+  const parsed = await parseJson(c, createBodySchema);
+  if (!parsed.ok) return parsed.response;
+  const payload = { user_id: user.id, title: parsed.data.title?.trim() || "New chat" };
   const createConversation = () =>
     supabase.from("uk_chat_conversations").insert(payload).select(CONVERSATION_SELECT_FIELDS).single();
 
@@ -63,8 +74,7 @@ conversationRoutes.post("/", async (c) => {
     try {
       await ensureProfileExists(user, c.env);
     } catch (ensureError) {
-      const message = ensureError instanceof Error ? ensureError.message : "Failed to prepare user profile";
-      return json({ error: message }, 500);
+      return dbError(ensureError as { message?: string }, { context: "api/conversations", publicMessage: "Failed to prepare user profile" });
     }
     const retry = await createConversation();
     data = retry.data;
@@ -73,7 +83,7 @@ conversationRoutes.post("/", async (c) => {
 
   if (error) {
     const status = error.code?.startsWith("22") ? 400 : 500;
-    return json({ error: error.message }, status);
+    return dbError(error, { context: "api/conversations", publicMessage: "Failed to create conversation", status });
   }
 
   return json(data, 201);
@@ -83,7 +93,9 @@ conversationRoutes.post("/", async (c) => {
 conversationRoutes.get("/:id", async (c) => {
   const user = await getUserFromRequest(c.req.raw, c.env);
   if (!user) return json({ error: "Unauthorized" }, 401);
-  const id = c.req.param("id");
+  const idResult = parseParam(c, "id", uuidSchema);
+  if (!idResult.ok) return idResult.response;
+  const id = idResult.data;
   const supabase = getSupabaseAdmin(c.env);
 
   const { data: conversation, error: conversationError } = await supabase
@@ -100,7 +112,7 @@ conversationRoutes.get("/:id", async (c) => {
       error: conversationError.message,
       code: conversationError.code ?? null,
     });
-    return json({ error: conversationError.message }, 404);
+    return json({ error: "Conversation not found" }, 404);
   }
 
   const { data: messages, error: messageError } = await supabase
@@ -108,7 +120,7 @@ conversationRoutes.get("/:id", async (c) => {
     .select("id,conversation_id,role,parts,created_at")
     .eq("conversation_id", id)
     .order("created_at", { ascending: true });
-  if (messageError) return json({ error: messageError.message }, 400);
+  if (messageError) return dbError(messageError, { context: "api/conversations/:id", publicMessage: "Failed to load messages" });
 
   return json({ conversation, messages: messages ?? [] });
 });
@@ -117,10 +129,14 @@ conversationRoutes.get("/:id", async (c) => {
 conversationRoutes.patch("/:id", async (c) => {
   const user = await getUserFromRequest(c.req.raw, c.env);
   if (!user) return json({ error: "Unauthorized" }, 401);
-  const id = c.req.param("id");
+  const idResult = parseParam(c, "id", uuidSchema);
+  if (!idResult.ok) return idResult.response;
+  const id = idResult.data;
   const supabase = getSupabaseAdmin(c.env);
 
-  const { title, starred } = (await c.req.raw.json()) as { title?: string; starred?: boolean };
+  const parsed = await parseJson(c, patchBodySchema);
+  if (!parsed.ok) return parsed.response;
+  const { title, starred } = parsed.data;
   const updates: { title?: string; starred?: boolean; updated_at: string } = {
     updated_at: new Date().toISOString(),
   };
@@ -133,7 +149,7 @@ conversationRoutes.patch("/:id", async (c) => {
     .eq("user_id", user.id)
     .select(CONVERSATION_SELECT_FIELDS)
     .single();
-  if (error) return json({ error: error.message }, 400);
+  if (error) return dbError(error, { context: "api/conversations/:id PATCH", publicMessage: "Failed to update conversation", status: 400 });
   return json(data);
 });
 
@@ -141,11 +157,13 @@ conversationRoutes.patch("/:id", async (c) => {
 conversationRoutes.delete("/:id", async (c) => {
   const user = await getUserFromRequest(c.req.raw, c.env);
   if (!user) return json({ error: "Unauthorized" }, 401);
-  const id = c.req.param("id");
+  const idResult = parseParam(c, "id", uuidSchema);
+  if (!idResult.ok) return idResult.response;
+  const id = idResult.data;
   const supabase = getSupabaseAdmin(c.env);
 
   const { error } = await supabase.from("uk_chat_conversations").delete().eq("id", id).eq("user_id", user.id);
-  if (error) return json({ error: error.message }, 400);
+  if (error) return dbError(error, { context: "api/conversations/:id DELETE", publicMessage: "Failed to delete conversation", status: 400 });
   return json({ success: true });
 });
 
@@ -153,7 +171,9 @@ conversationRoutes.delete("/:id", async (c) => {
 conversationRoutes.post("/:id/share", async (c) => {
   const user = await getUserFromRequest(c.req.raw, c.env);
   if (!user) return json({ error: "Unauthorized" }, 401);
-  const id = c.req.param("id");
+  const idResult = parseParam(c, "id", uuidSchema);
+  if (!idResult.ok) return idResult.response;
+  const id = idResult.data;
   const supabase = getSupabaseAdmin(c.env);
 
   const { data: conversation, error: conversationError } = await supabase
@@ -181,7 +201,7 @@ conversationRoutes.post("/:id/share", async (c) => {
     .eq("user_id", user.id)
     .select(CONVERSATION_SELECT_FIELDS)
     .single();
-  if (error || !data) return json({ error: error?.message ?? "Failed to share conversation" }, 400);
+  if (error || !data) return dbError(error, { context: "api/conversations/:id/share", publicMessage: "Failed to share conversation", status: 400 });
 
   const shareUrl = `${getAuthRedirectBase(c.req.raw, c.env).replace(/\/+$/, "")}/shared/${shareToken}`;
   return json({ conversation: data, shareUrl });
@@ -191,7 +211,9 @@ conversationRoutes.post("/:id/share", async (c) => {
 conversationRoutes.patch("/:id/share", async (c) => {
   const user = await getUserFromRequest(c.req.raw, c.env);
   if (!user) return json({ error: "Unauthorized" }, 401);
-  const id = c.req.param("id");
+  const idResult = parseParam(c, "id", uuidSchema);
+  if (!idResult.ok) return idResult.response;
+  const id = idResult.data;
   const supabase = getSupabaseAdmin(c.env);
 
   const { data: conversation, error: conversationError } = await supabase
@@ -204,15 +226,11 @@ conversationRoutes.patch("/:id/share", async (c) => {
     return json({ error: "Conversation not found" }, 404);
   }
 
-  const body = (await c.req.raw.json().catch(() => ({}))) as {
-    enabled?: boolean;
-    expiresInDays?: number;
-  };
-  if (typeof body.enabled !== "boolean") return json({ error: "enabled must be boolean" }, 400);
+  const parsed = await parseJson(c, shareUpdateBodySchema);
+  if (!parsed.ok) return parsed.response;
   const now = new Date().toISOString();
-  const enabled = body.enabled;
-  const expiresInDays =
-    typeof body.expiresInDays === "number" ? Math.max(1, Math.min(365, Math.round(body.expiresInDays))) : DEFAULT_SHARE_EXPIRY_DAYS;
+  const enabled = parsed.data.enabled;
+  const expiresInDays = parsed.data.expiresInDays ?? DEFAULT_SHARE_EXPIRY_DAYS;
   const nextShareToken = enabled ? conversation.share_token ?? createShareToken() : null;
   const { data, error } = await supabase
     .from("uk_chat_conversations")
@@ -227,7 +245,7 @@ conversationRoutes.patch("/:id/share", async (c) => {
     .eq("user_id", user.id)
     .select(CONVERSATION_SELECT_FIELDS)
     .single();
-  if (error || !data) return json({ error: error?.message ?? "Failed to update share settings" }, 400);
+  if (error || !data) return dbError(error, { context: "api/conversations/:id/share PATCH", publicMessage: "Failed to update share settings", status: 400 });
   if (enabled && nextShareToken) {
     const shareUrl = `${getAuthRedirectBase(c.req.raw, c.env).replace(/\/+$/, "")}/shared/${nextShareToken}`;
     return json({ conversation: data, shareUrl });

@@ -1,18 +1,20 @@
 import { Hono } from "hono";
+import { z } from "zod";
 import type { Env } from "../env.js";
 import { getSupabaseAdmin, json } from "../_lib/server.js";
 import { isDevBypassEnabled, isAllowedEmailDomain, getEmailDomain, getAuthRedirectBase } from "../_lib/internals.js";
 import { onboardUser } from "../_lib/onboarding.js";
 import { logWarn, logError } from "../_lib/logger.js";
+import { parseJson, emailSchema, dbError } from "../_lib/validation.js";
 
 export const authRoutes = new Hono<{ Bindings: Env }>();
 
+const emailBodySchema = z.object({ email: emailSchema });
+
 authRoutes.post("/check-email", async (c) => {
-  const { email } = (await c.req.json()) as { email?: string };
-  const normalizedEmail = email?.trim().toLowerCase();
-  if (!normalizedEmail) {
-    return json({ error: "Email is required" }, 400);
-  }
+  const parsed = await parseJson(c, emailBodySchema);
+  if (!parsed.ok) return parsed.response;
+  const normalizedEmail = parsed.data.email;
 
   if (isDevBypassEnabled()) {
     return json({ allowed: true, message: "Dev bypass: any email accepted." });
@@ -20,7 +22,7 @@ authRoutes.post("/check-email", async (c) => {
 
   const supabase = getSupabaseAdmin(c.env);
   const { data, error } = await supabase.from("uk_chat_email_gate").select("email").eq("email", normalizedEmail).maybeSingle();
-  if (error) return json({ error: "Unable to verify email access right now" }, 500);
+  if (error) return dbError(error, { context: "api/auth/check-email", publicMessage: "Unable to verify email access right now" });
   if (!data && isAllowedEmailDomain(normalizedEmail, c.env)) {
     return json({
       allowed: true,
@@ -36,11 +38,9 @@ authRoutes.post("/check-email", async (c) => {
 });
 
 authRoutes.post("/sign-in", async (c) => {
-  const { email } = (await c.req.json()) as { email?: string };
-  const normalizedEmail = email?.trim().toLowerCase();
-  if (!normalizedEmail) {
-    return json({ error: "Email is required" }, 400);
-  }
+  const parsed = await parseJson(c, emailBodySchema);
+  if (!parsed.ok) return parsed.response;
+  const normalizedEmail = parsed.data.email;
 
   const supabase = getSupabaseAdmin(c.env);
 
@@ -50,7 +50,7 @@ authRoutes.post("/sign-in", async (c) => {
       .select("email")
       .eq("email", normalizedEmail)
       .maybeSingle();
-    if (gateError) return json({ error: "Unable to verify email access right now" }, 500);
+    if (gateError) return dbError(gateError, { context: "api/auth/sign-in", publicMessage: "Unable to verify email access right now" });
     if (!gateRow) {
       if (!isAllowedEmailDomain(normalizedEmail, c.env)) {
         return json({
@@ -85,18 +85,15 @@ authRoutes.post("/sign-in", async (c) => {
     },
   });
   if (linkError) {
-    return json({ error: "Unable to sign in right now. Please try again." }, 500);
+    return dbError(linkError, { context: "api/auth/sign-in", publicMessage: "Unable to sign in right now. Please try again." });
   }
 
   const actionLink = linkData?.properties?.action_link;
   if (!actionLink) return json({ error: "Unable to sign in right now. Please try again." }, 500);
 
-  let finalLink = actionLink;
-  const parsed = new URL(actionLink);
-  parsed.searchParams.set("redirect_to", callbackUrl);
-  finalLink = parsed.toString();
-
-  return json({ allowed: true, redirectTo: finalLink });
+  const parsedLink = new URL(actionLink);
+  parsedLink.searchParams.set("redirect_to", callbackUrl);
+  return json({ allowed: true, redirectTo: parsedLink.toString() });
 });
 
 authRoutes.get("/callback", async () => {

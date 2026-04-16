@@ -1,12 +1,23 @@
 import { Hono } from "hono";
+import { z } from "zod";
 import type { Env } from "../env.js";
-import { getSupabaseAdmin, ensureAdmin, ensureAdminOrBootstrap, json } from "../_lib/server.js";
+import { getSupabaseAdmin, ensureAdmin, json } from "../_lib/server.js";
 import { findUserIdByEmail, getProfileTokenMapByEmail } from "../_lib/internals.js";
 import { onboardUser } from "../_lib/onboarding.js";
 import { writeAdminAuditLog } from "../_lib/audit.js";
 import { encryptMcpToken } from "../_lib/crypto.js";
+import { parseJson, emailSchema, dbError } from "../_lib/validation.js";
 
 export const adminRoutes = new Hono<{ Bindings: Env }>();
+
+const emailBodySchema = z.object({ email: emailSchema });
+const onboardBodySchema = z.object({
+  email: emailSchema,
+  sendEmail: z.boolean().optional(),
+  token: z.string().min(8).max(512).optional(),
+  rotateToken: z.boolean().optional(),
+  appUrl: z.string().url().optional(),
+});
 
 // GET /users + POST /users
 adminRoutes.get("/users", async (c) => {
@@ -18,7 +29,7 @@ adminRoutes.get("/users", async (c) => {
     .from("uk_chat_email_gate")
     .select("email,claimed_at,pending_mcp_token")
     .order("invited_at", { ascending: false });
-  if (error) return json({ error: error.message }, 400);
+  if (error) return dbError(error, { context: "api/admin/users", publicMessage: "Failed to load users", status: 400 });
   const emails = (data ?? []).map((row) => row.email);
   const profileTokenMap = await getProfileTokenMapByEmail(emails, c.env);
   await writeAdminAuditLog(c.env, {
@@ -40,10 +51,10 @@ adminRoutes.post("/users", async (c) => {
   const admin = await ensureAdmin(c.req.raw, c.env);
   if ("error" in admin) return admin.error;
 
-  const { email } = (await c.req.json()) as { email?: string };
-  if (!email) return json({ error: "Email is required" }, 400);
+  const parsed = await parseJson(c, emailBodySchema);
+  if (!parsed.ok) return parsed.response;
   try {
-    const result = await onboardUser({ email, sendEmail: true }, c.env);
+    const result = await onboardUser({ email: parsed.data.email, sendEmail: true }, c.env);
     await writeAdminAuditLog(c.env, {
       actorUserId: admin.user.id,
       actorEmail: admin.user.email ?? null,
@@ -66,10 +77,10 @@ adminRoutes.post("/tokens", async (c) => {
   const admin = await ensureAdmin(c.req.raw, c.env);
   if ("error" in admin) return admin.error;
 
-  const { email } = (await c.req.json()) as { email?: string };
-  if (!email) return json({ error: "Email is required" }, 400);
+  const parsed = await parseJson(c, emailBodySchema);
+  if (!parsed.ok) return parsed.response;
   try {
-    const result = await onboardUser({ email, rotateToken: true, sendEmail: false }, c.env);
+    const result = await onboardUser({ email: parsed.data.email, rotateToken: true, sendEmail: false }, c.env);
     const supabase = getSupabaseAdmin(c.env);
     const targetUserId = await findUserIdByEmail(result.email, c.env);
     if (targetUserId && result.token) {
@@ -94,17 +105,12 @@ adminRoutes.post("/tokens", async (c) => {
 
 // POST /onboard-user
 adminRoutes.post("/onboard-user", async (c) => {
-  const auth = await ensureAdminOrBootstrap(c.req.raw, c.env);
-  if ("error" in auth) return auth.error;
+  const admin = await ensureAdmin(c.req.raw, c.env);
+  if ("error" in admin) return admin.error;
 
-  const body = (await c.req.json()) as {
-    email?: string;
-    sendEmail?: boolean;
-    token?: string;
-    rotateToken?: boolean;
-    appUrl?: string;
-  };
-  if (!body.email) return json({ error: "Email is required" }, 400);
+  const parsed = await parseJson(c, onboardBodySchema);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.data;
 
   try {
     const result = await onboardUser({
@@ -115,14 +121,13 @@ adminRoutes.post("/onboard-user", async (c) => {
       appUrl: body.appUrl,
     }, c.env);
     await writeAdminAuditLog(c.env, {
-      actorUserId: auth.user?.id ?? null,
-      actorEmail: auth.user?.email ?? null,
+      actorUserId: admin.user.id,
+      actorEmail: admin.user.email ?? null,
       action: "admin.users.onboard",
       target: result.email,
       metadata: {
         tokenIssued: Boolean(result.tokenIssued),
         emailSent: Boolean(result.emailSent),
-        viaBootstrapSecret: auth.user === null,
       },
     });
     return json({
@@ -152,7 +157,7 @@ adminRoutes.get("/system-settings/council-source", async (c) => {
     "council_national_whatgov_debates_table",
   ];
   const { data, error } = await supabase.from("system_settings").select("key,value").in("key", settingKeys);
-  if (error) return json({ error: error.message }, 400);
+  if (error) return dbError(error, { context: "api/admin/system-settings", publicMessage: "Failed to load system settings", status: 400 });
 
   const values = new Map<string, string>();
   for (const row of (data ?? []) as Array<{ key?: string | null; value?: string | null }>) {

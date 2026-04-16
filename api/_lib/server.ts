@@ -34,14 +34,3 @@ export async function ensureAdmin(request: Request, env: Env): Promise<{ user: U
   }
   return { user };
 }
-
-export async function ensureAdminOrBootstrap(request: Request, env: Env): Promise<{ user: User | null } | { error: Response }> {
-  const bootstrapSecret = env.ADMIN_BOOTSTRAP_SECRET;
-  const providedSecret = request.headers.get("x-admin-bootstrap-secret");
-  if (bootstrapSecret && providedSecret && providedSecret === bootstrapSecret) {
-    return { user: null };
-  }
-  const admin = await ensureAdmin(request, env);
-  if ("error" in admin) return admin;
-  return { user: admin.user };
-}

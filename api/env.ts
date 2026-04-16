@@ -13,7 +13,6 @@ export type Env = {
   RESEND_API_KEY: string;
   RESEND_WEBHOOK_SECRET: string;
   RESEND_FROM_EMAIL: string;
-  ADMIN_BOOTSTRAP_SECRET: string;
   CRON_SECRET: string;
   DATA_RETENTION_DAYS: string;
   COUNCIL_NATIONAL_SOURCE_PREFERENCE: string;

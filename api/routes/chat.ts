@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { z } from "zod";
 import { convertToModelMessages, generateText, stepCountIs, streamText } from "ai";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { CHAT_MODEL_CONFIGS, CHAT_SUPPORT_CONTACT, getChatModelConfig } from "../../src/shared/chat-models.js";
@@ -46,6 +47,23 @@ import {
   generateAutoChatTitleFromFirstMessage,
 } from "../_lib/internals.js";
 import { compactMessagesForModel as compactUiMessagesForModel } from "../_lib/context.js";
+import { parseJson, uuidSchema, dbError } from "../_lib/validation.js";
+
+const toolsBodySchema = z.object({
+  mcpToken: z.string().max(512).nullable().optional(),
+  query: z.string().max(500).optional(),
+  offset: z.number().int().min(0).max(10_000).optional(),
+  limit: z.number().int().min(1).max(100).optional(),
+});
+
+const chatBodySchema = z.object({
+  messages: z.array(z.object({ role: z.string().optional(), parts: z.array(z.unknown()).optional() })).optional(),
+  mcpToken: z.string().max(512).nullable().optional(),
+  conversationId: uuidSchema,
+  modelId: z.string().max(200).nullable().optional(),
+  documents: z.unknown().optional(),
+  artifactContext: z.unknown().optional(),
+});
 
 const chatRoutes = new Hono<{ Bindings: Env }>();
 
@@ -57,12 +75,9 @@ chatRoutes.post("/tools", async (c) => {
   const user = await getUserFromRequest(c.req.raw, c.env);
   if (!user) return json({ error: "Unauthorized" }, 401);
 
-  const body = (await c.req.json()) as {
-    mcpToken?: string | null;
-    query?: string;
-    offset?: number;
-    limit?: number;
-  };
+  const parsed = await parseJson(c, toolsBodySchema);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.data;
 
   const supabase = getSupabaseAdmin(c.env);
   const toolLoad = await loadAuthorizedMcpTools({ supabase, user, mcpToken: body.mcpToken, env: c.env });
@@ -139,7 +154,7 @@ chatRoutes.get("/usage/all", async (c) => {
     .eq("user_id", user.id)
     .eq("usage_date", usageDate);
 
-  if (error) return json({ error: error.message }, 500);
+  if (error) return dbError(error, { context: "api/chat/usage/all", publicMessage: "Failed to load usage" });
 
   type DailyModelUsage = {
     requests: number;
@@ -191,17 +206,11 @@ chatRoutes.post("/", async (c) => {
   const user = await getUserFromRequest(c.req.raw, c.env);
   if (!user) return json({ error: "Unauthorized" }, 401);
 
-  const body = (await c.req.json()) as {
-    messages?: Array<{ role?: string; parts?: unknown[] }>;
-    mcpToken?: string | null;
-    conversationId?: string | null;
-    modelId?: string | null;
-    documents?: unknown;
-    artifactContext?: unknown;
-  };
+  const parsed = await parseJson(c, chatBodySchema);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.data;
 
   const supabase = getSupabaseAdmin(c.env);
-  if (!body.conversationId) return json({ error: "Missing conversationId" }, 400);
 
   const { data: conversation } = await supabase
     .from("uk_chat_conversations")

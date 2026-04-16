@@ -1,7 +1,14 @@
 import { Hono } from "hono";
+import { z } from "zod";
 import type { Env } from "../env.js";
 import { getSupabaseAdmin, getUserFromRequest, json } from "../_lib/server.js";
 import { ensureProfileExists, PRIVACY_NOTICE_VERSION } from "../_lib/internals.js";
+import { parseJson, dbError } from "../_lib/validation.js";
+
+const consentBodySchema = z.object({
+  acknowledgeAiProcessing: z.boolean().optional(),
+  acknowledgeSharingWarning: z.boolean().optional(),
+});
 
 export const privacyRoutes = new Hono<{ Bindings: Env }>();
 
@@ -16,7 +23,7 @@ privacyRoutes.get("/consent", async (c) => {
     .select("privacy_notice_version,ai_processing_acknowledged_at,sharing_warning_acknowledged_at,updated_at")
     .eq("user_id", user.id)
     .maybeSingle();
-  if (error) return json({ error: error.message }, 500);
+  if (error) return dbError(error, { context: "api/privacy/consent GET", publicMessage: "Failed to load consent" });
   return json({
     privacyNoticeVersion: data?.privacy_notice_version ?? null,
     aiProcessingAcknowledgedAt: data?.ai_processing_acknowledged_at ?? null,
@@ -32,16 +39,14 @@ privacyRoutes.put("/consent", async (c) => {
   const supabase = getSupabaseAdmin(c.env);
   await ensureProfileExists(user, c.env);
 
-  const body = (await c.req.json().catch(() => ({}))) as {
-    acknowledgeAiProcessing?: boolean;
-    acknowledgeSharingWarning?: boolean;
-  };
+  const parsed = await parseJson(c, consentBodySchema);
+  if (!parsed.ok) return parsed.response;
   const now = new Date().toISOString();
   const patch = {
     user_id: user.id,
     privacy_notice_version: PRIVACY_NOTICE_VERSION,
-    ai_processing_acknowledged_at: body.acknowledgeAiProcessing ? now : null,
-    sharing_warning_acknowledged_at: body.acknowledgeSharingWarning ? now : null,
+    ai_processing_acknowledged_at: parsed.data.acknowledgeAiProcessing ? now : null,
+    sharing_warning_acknowledged_at: parsed.data.acknowledgeSharingWarning ? now : null,
     updated_at: now,
   };
   const { data, error } = await supabase
@@ -49,7 +54,7 @@ privacyRoutes.put("/consent", async (c) => {
     .upsert(patch, { onConflict: "user_id" })
     .select("privacy_notice_version,ai_processing_acknowledged_at,sharing_warning_acknowledged_at,updated_at")
     .single();
-  if (error) return json({ error: error.message }, 500);
+  if (error) return dbError(error, { context: "api/privacy/consent PUT", publicMessage: "Failed to update consent" });
   return json({
     privacyNoticeVersion: data.privacy_notice_version,
     aiProcessingAcknowledgedAt: data.ai_processing_acknowledged_at,

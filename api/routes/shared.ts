@@ -2,12 +2,14 @@ import { Hono } from "hono";
 import type { Env } from "../env.js";
 import { getSupabaseAdmin, json } from "../_lib/server.js";
 import { extractArtifactsFromMessages, SHARED_CONVERSATION_SELECT_FIELDS } from "../_lib/internals.js";
+import { parseParam, shareTokenSchema, dbError } from "../_lib/validation.js";
 
 export const sharedRoutes = new Hono<{ Bindings: Env }>();
 
 sharedRoutes.get("/:token", async (c) => {
-  const token = c.req.param("token");
-  if (!token) return json({ error: "Not found" }, 404);
+  const tokenResult = parseParam(c, "token", shareTokenSchema);
+  if (!tokenResult.ok) return json({ error: "Not found" }, 404);
+  const token = tokenResult.data;
   const supabase = getSupabaseAdmin(c.env);
 
   const { data: conversation, error: conversationError } = await supabase
@@ -28,7 +30,7 @@ sharedRoutes.get("/:token", async (c) => {
     .select("id,conversation_id,role,parts,created_at")
     .eq("conversation_id", conversation.id)
     .order("created_at", { ascending: true });
-  if (messageError) return json({ error: messageError.message }, 400);
+  if (messageError) return dbError(messageError, { context: "api/shared/:token", publicMessage: "Failed to load messages", status: 400 });
 
   const normalizedMessages = (messages ?? []).map((message) => ({
     ...message,
