@@ -14,7 +14,7 @@ create index if not exists uk_chat_admin_roles_role_idx
 alter table public.uk_chat_admin_roles enable row level security;
 
 -- Service role bypasses RLS; authenticated clients cannot read this table directly.
-drop policy if exists admin_roles_service_only on public.uk_chat_admin_roles;
+drop policy if exists admin_roles_select_own on public.uk_chat_admin_roles;
 create policy admin_roles_select_own on public.uk_chat_admin_roles
   for select to authenticated
   using (auth.uid() = user_id);

@@ -16,13 +16,23 @@ export function getSupabaseAdmin(env: Env) {
   return createClient(url, key);
 }
 
+// Memoize per-Request so middleware (rate limit) and route handlers don't
+// each pay a Supabase auth round-trip for the same incoming request.
+const userCache = new WeakMap<Request, Promise<User | null>>();
+
 export async function getUserFromRequest(request: Request, env: Env) {
-  const authHeader = request.headers.get("authorization");
-  const token = authHeader?.replace(/^Bearer\s+/i, "");
-  if (!token) return null;
-  const supabase = getSupabaseAdmin(env);
-  const { data } = await supabase.auth.getUser(token);
-  return data.user ?? null;
+  const cached = userCache.get(request);
+  if (cached) return cached;
+  const promise = (async () => {
+    const authHeader = request.headers.get("authorization");
+    const token = authHeader?.replace(/^Bearer\s+/i, "");
+    if (!token) return null;
+    const supabase = getSupabaseAdmin(env);
+    const { data } = await supabase.auth.getUser(token);
+    return data.user ?? null;
+  })();
+  userCache.set(request, promise);
+  return promise;
 }
 
 export async function ensureAdmin(request: Request, env: Env): Promise<{ user: User; role: string } | { error: Response }> {

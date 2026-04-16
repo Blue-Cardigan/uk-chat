@@ -157,7 +157,12 @@ adminRoutes.get("/admins", async (c) => {
     .order("granted_at", { ascending: false });
   if (error) return dbError(error, { context: "api/admin/admins GET", publicMessage: "Failed to load admins", status: 400 });
 
-  const userIds = Array.from(new Set([...(data ?? []).map((r) => r.user_id), ...(data ?? []).map((r) => r.granted_by).filter(Boolean) as string[]]));
+  const userIdSet = new Set<string>();
+  for (const row of data ?? []) {
+    userIdSet.add(row.user_id);
+    if (row.granted_by) userIdSet.add(row.granted_by);
+  }
+  const userIds = Array.from(userIdSet);
   const emailByUserId = new Map<string, string>();
   if (userIds.length > 0) {
     const { data: profiles } = await supabase.from("uk_chat_profiles").select("id,email").in("id", userIds);

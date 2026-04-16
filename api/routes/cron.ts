@@ -62,30 +62,48 @@ async function computeSignature(secret: string, message: string): Promise<Uint8A
   return new Uint8Array(sig);
 }
 
-async function authenticateCron(c: { env: Env; req: { raw: Request } }): Promise<Response | null> {
-  const cronSecret = c.env.CRON_SECRET;
-  if (!cronSecret) return json({ error: "CRON_SECRET is required" }, 500);
+export type CronAuthResult = "ok" | "unauthorized" | "misconfigured";
 
-  const authHeader = c.req.raw.headers.get("authorization") ?? "";
-  const provided = authHeader.replace(/^Bearer\s+/i, "").trim();
-  const timestampHeader = c.req.raw.headers.get("x-signature-timestamp");
-  if (!provided || !timestampHeader) return json({ error: "Unauthorized" }, 401);
+export async function verifyCronAuth(input: {
+  secret: string | undefined;
+  method: string;
+  path: string;
+  authorizationHeader: string | null;
+  timestampHeader: string | null;
+  now?: number;
+}): Promise<CronAuthResult> {
+  if (!input.secret) return "misconfigured";
+
+  const provided = (input.authorizationHeader ?? "").replace(/^Bearer\s+/i, "").trim();
+  const timestampHeader = input.timestampHeader;
+  if (!provided || !timestampHeader) return "unauthorized";
 
   const timestamp = Number.parseInt(timestampHeader, 10);
-  if (!Number.isFinite(timestamp)) return json({ error: "Unauthorized" }, 401);
+  if (!Number.isFinite(timestamp)) return "unauthorized";
+  // Accept either Unix seconds (10 digits) or milliseconds (13 digits) — disambiguated by magnitude.
   const timestampMs = timestamp > 10_000_000_000 ? timestamp : timestamp * 1000;
-  if (Math.abs(Date.now() - timestampMs) > MAX_TIMESTAMP_SKEW_MS) {
-    return json({ error: "Unauthorized" }, 401);
-  }
+  const now = input.now ?? Date.now();
+  if (Math.abs(now - timestampMs) > MAX_TIMESTAMP_SKEW_MS) return "unauthorized";
 
-  const url = new URL(c.req.raw.url);
-  const message = `${c.req.raw.method.toUpperCase()}\n${url.pathname}\n${timestampHeader}`;
-  const expected = await computeSignature(cronSecret, message);
+  const message = `${input.method.toUpperCase()}\n${input.path}\n${timestampHeader}`;
+  const expected = await computeSignature(input.secret, message);
   const providedBytes = hexToBytes(provided.toLowerCase());
-  if (!providedBytes || !constantTimeEqual(expected, providedBytes)) {
-    return json({ error: "Unauthorized" }, 401);
-  }
-  return null;
+  if (!providedBytes || !constantTimeEqual(expected, providedBytes)) return "unauthorized";
+  return "ok";
+}
+
+async function authenticateCron(c: { env: Env; req: { raw: Request } }): Promise<Response | null> {
+  const url = new URL(c.req.raw.url);
+  const result = await verifyCronAuth({
+    secret: c.env.CRON_SECRET,
+    method: c.req.raw.method,
+    path: url.pathname,
+    authorizationHeader: c.req.raw.headers.get("authorization"),
+    timestampHeader: c.req.raw.headers.get("x-signature-timestamp"),
+  });
+  if (result === "ok") return null;
+  if (result === "misconfigured") return json({ error: "CRON_SECRET is required" }, 500);
+  return json({ error: "Unauthorized" }, 401);
 }
 
 cronRoutes.get("/data-retention", async (c) => {
