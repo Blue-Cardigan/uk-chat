@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { Env } from "../env.js";
 import { getSupabaseAdmin, json } from "../_lib/server.js";
 import { DEFAULT_RETENTION_DAYS } from "../_lib/internals.js";
+import { dbError } from "../_lib/validation.js";
 
 export const cronRoutes = new Hono<{ Bindings: Env }>();
 
@@ -43,7 +44,9 @@ cronRoutes.get("/data-retention", async (c) => {
   if (authError) return authError;
 
   const result = await runDataRetention(c.env);
-  if (result.error) return json({ error: result.error }, 500);
+  if (result.error) {
+    return dbError({ message: result.error }, { context: "api/cron/data-retention GET", publicMessage: "Retention job failed" });
+  }
   return json(result);
 });
 
@@ -52,6 +55,8 @@ cronRoutes.post("/data-retention", async (c) => {
   if (authError) return authError;
 
   const result = await runDataRetention(c.env);
-  if (result.error) return json({ error: result.error }, 500);
+  if (result.error) {
+    return dbError({ message: result.error }, { context: "api/cron/data-retention POST", publicMessage: "Retention job failed" });
+  }
   return json(result);
 });

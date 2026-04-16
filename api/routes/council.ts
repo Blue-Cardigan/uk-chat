@@ -5,6 +5,7 @@ import type { Env } from "../env.js";
 import { getSupabaseAdmin, getUserFromRequest, json } from "../_lib/server.js";
 import { loadAuthorizedMcpTools, parseJsonSafely, UK_POSTCODE_REGEX } from "../_lib/internals.js";
 import { logWarn } from "../_lib/logger.js";
+import { dbError } from "../_lib/validation.js";
 import { createCouncilDeliberation, continueCouncilDeliberation } from "../_lib/council/handler.js";
 import {
   parseCouncilCreateRequest,
@@ -188,7 +189,7 @@ councilRoutes.post("/", async (c) => {
     created_at: draft.createdAt,
     updated_at: draft.createdAt,
   });
-  if (insertCouncilError) return json({ error: insertCouncilError.message }, 500);
+  if (insertCouncilError) return dbError(insertCouncilError, { context: "api/council POST council", publicMessage: "Failed to create council" });
 
   const { error: insertTurnsError } = await supabase.from("uk_chat_council_turns").insert({
     council_id: councilId,
@@ -196,7 +197,7 @@ councilRoutes.post("/", async (c) => {
     source: "initial",
     created_at: draft.createdAt,
   });
-  if (insertTurnsError) return json({ error: insertTurnsError.message }, 500);
+  if (insertTurnsError) return dbError(insertTurnsError, { context: "api/council turns insert", publicMessage: "Failed to save council turns" });
 
   const userParts = [
     {
@@ -301,14 +302,14 @@ councilRoutes.post("/followup", async (c) => {
     source: "follow_up",
     created_at: now,
   });
-  if (insertTurnsError) return json({ error: insertTurnsError.message }, 500);
+  if (insertTurnsError) return dbError(insertTurnsError, { context: "api/council turns insert", publicMessage: "Failed to save council turns" });
 
   const { error: updateCouncilError } = await supabase
     .from("uk_chat_councils")
     .update({ resolution: next.resolution, updated_at: now })
     .eq("id", parsed.data.councilId)
     .eq("user_id", user.id);
-  if (updateCouncilError) return json({ error: updateCouncilError.message }, 500);
+  if (updateCouncilError) return dbError(updateCouncilError, { context: "api/council followup update", publicMessage: "Failed to update council" });
 
   const assistantPayload = {
     councilId: parsed.data.councilId,

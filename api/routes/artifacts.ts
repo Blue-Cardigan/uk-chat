@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { Env } from "../env.js";
 import { getSupabaseAdmin, getUserFromRequest, json } from "../_lib/server.js";
 import { extractArtifactsFromMessages } from "../_lib/internals.js";
+import { uuidSchema, dbError } from "../_lib/validation.js";
 
 export const artifactRoutes = new Hono<{ Bindings: Env }>();
 
@@ -9,7 +10,9 @@ artifactRoutes.get("/", async (c) => {
   const user = await getUserFromRequest(c.req.raw, c.env);
   if (!user) return json({ error: "Unauthorized" }, 401);
 
-  const currentConversationId = c.req.query("currentConversationId")?.trim() || null;
+  const rawCurrent = c.req.query("currentConversationId")?.trim();
+  const currentConversationIdResult = rawCurrent ? uuidSchema.safeParse(rawCurrent) : null;
+  const currentConversationId = currentConversationIdResult?.success ? currentConversationIdResult.data : null;
   const supabase = getSupabaseAdmin(c.env);
   const { data: conversations, error: conversationsError } = await supabase
     .from("uk_chat_conversations")
@@ -17,7 +20,7 @@ artifactRoutes.get("/", async (c) => {
     .eq("user_id", user.id)
     .order("updated_at", { ascending: false })
     .limit(16);
-  if (conversationsError) return json({ error: conversationsError.message }, 500);
+  if (conversationsError) return dbError(conversationsError, { context: "api/artifacts", publicMessage: "Failed to load artifacts" });
   if (!conversations || conversations.length === 0) return json({ conversations: [] });
 
   const conversationIds = conversations.map((conversation) => conversation.id);
@@ -27,7 +30,7 @@ artifactRoutes.get("/", async (c) => {
     .in("conversation_id", conversationIds)
     .eq("role", "assistant")
     .order("created_at", { ascending: false });
-  if (messagesError) return json({ error: messagesError.message }, 500);
+  if (messagesError) return dbError(messagesError, { context: "api/artifacts messages", publicMessage: "Failed to load artifacts" });
 
   const messageByConversation = new Map<string, Array<{ id: string; conversation_id: string; parts: unknown[]; created_at: string }>>();
   for (const message of messages ?? []) {

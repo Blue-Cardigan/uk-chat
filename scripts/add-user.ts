@@ -1,5 +1,8 @@
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
+import type { Env } from "../api/env.js";
+import { onboardUser } from "../api/_lib/onboarding.js";
+
 function loadEnvFromWorkspace() {
   const envPath = resolve(process.cwd(), ".env");
   if (!existsSync(envPath)) return;
@@ -30,14 +33,22 @@ Flags:
   --token <token>   Optional token override (otherwise server issues/reuses)
   --no-email        Skip sending a magic-link email
   --rotate-token    Force issuing a fresh MCP token
-  --api-url <url>   Base URL for API requests (defaults to ADMIN_API_URL or http://localhost:3000)
   --app-url <url>   App URL used for magic-link redirect (defaults to INVITE_APP_URL or https://chatgb.co.uk)
   --help            Show this help
 `);
 }
 
-function parseArgs(argv) {
-  const args = { email: "", token: undefined, help: false, sendEmail: true, rotateToken: false, apiUrl: "", appUrl: "" };
+type Args = {
+  email: string;
+  token?: string;
+  help: boolean;
+  sendEmail: boolean;
+  rotateToken: boolean;
+  appUrl: string;
+};
+
+function parseArgs(argv: string[]): Args {
+  const args: Args = { email: "", token: undefined, help: false, sendEmail: true, rotateToken: false, appUrl: "" };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--help" || arg === "-h") {
@@ -62,11 +73,6 @@ function parseArgs(argv) {
       i += 1;
       continue;
     }
-    if (arg === "--api-url") {
-      args.apiUrl = argv[i + 1] ?? "";
-      i += 1;
-      continue;
-    }
     if (arg === "--app-url") {
       args.appUrl = argv[i + 1] ?? "";
       i += 1;
@@ -81,8 +87,18 @@ function parseArgs(argv) {
   return args;
 }
 
-function isValidEmail(email) {
+function isValidEmail(email: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+function buildEnv(): Env {
+  const required = ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"] as const;
+  for (const key of required) {
+    if (!process.env[key]) {
+      throw new Error(`${key} must be set in .env or environment.`);
+    }
+  }
+  return process.env as unknown as Env;
 }
 
 async function main() {
@@ -100,41 +116,22 @@ async function main() {
     throw new Error("A valid email is required.");
   }
 
-  const apiBase = (args.apiUrl || process.env.ADMIN_API_URL || "http://localhost:3000").replace(/\/$/, "");
   const appUrl = (args.appUrl || process.env.INVITE_APP_URL || "https://chatgb.co.uk").replace(/\/$/, "");
-  const bootstrapSecret = process.env.ADMIN_BOOTSTRAP_SECRET;
+  const env = buildEnv();
 
-  if (!bootstrapSecret) {
-    throw new Error("ADMIN_BOOTSTRAP_SECRET must be set in .env or environment.");
-  }
-
-  const response = await fetch(`${apiBase}/api/admin/onboard-user`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-admin-bootstrap-secret": bootstrapSecret,
-    },
-    body: JSON.stringify({
+  const result = await onboardUser(
+    {
       email,
       sendEmail: args.sendEmail,
       token: args.token,
       rotateToken: args.rotateToken,
       appUrl,
-    }),
-  });
+    },
+    env,
+  );
 
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    if (response.status >= 500) {
-      throw new Error(`Onboarding API failed at ${apiBase}. Is your local API server running (for example, vercel dev on :3000)?`);
-    }
-    const message = typeof payload?.error === "string" ? payload.error : "Onboarding request failed";
-    throw new Error(message);
-  }
-
-  const message = typeof payload?.message === "string" ? payload.message : "User onboarded";
-  console.log(message);
-  console.log(JSON.stringify(payload?.meta ?? payload, null, 2));
+  console.log("User onboarding completed");
+  console.log(JSON.stringify(result, null, 2));
 }
 
 main().catch((error) => {
