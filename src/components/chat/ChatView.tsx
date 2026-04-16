@@ -42,7 +42,10 @@ type ToolsCacheEntry = {
   totalCount: number;
   nextOffset: number | null;
   hasMore: boolean;
+  fetchedAt: number;
 };
+
+const TOOLS_CACHE_TTL_MS = 5 * 60 * 1000;
 type ModelUsageResponse = {
   banner: string | null;
   approaching: boolean;
@@ -208,7 +211,7 @@ export function ChatView({
       const totalCount = payload.totalCount ?? items.length;
       const nextOffset = payload.nextOffset ?? null;
       const hasMore = payload.hasMore ?? nextOffset !== null;
-      return { items, totalCount, nextOffset, hasMore };
+      return { items, totalCount, nextOffset, hasMore, fetchedAt: Date.now() };
     },
     [authToken, mcpToken],
   );
@@ -219,7 +222,7 @@ export function ChatView({
     setToolsTotalCount(0);
     setToolsNextOffset(0);
     setToolsHasMore(false);
-  }, [authToken, mcpToken]);
+  }, [authToken, mcpToken, conversationId]);
 
   useEffect(() => {
     if (!authToken || !mcpToken) {
@@ -237,7 +240,10 @@ export function ChatView({
     }
     const queryKey = toolsQuery.trim().toLowerCase();
     const cached = toolsCacheRef.current.get(queryKey);
-    if (cached) {
+    if (cached && Date.now() - cached.fetchedAt > TOOLS_CACHE_TTL_MS) {
+      toolsCacheRef.current.delete(queryKey);
+    }
+    if (cached && Date.now() - cached.fetchedAt <= TOOLS_CACHE_TTL_MS) {
       setTools(cached.items);
       setToolsTotalCount(cached.totalCount);
       setToolsNextOffset(cached.nextOffset);
@@ -594,6 +600,7 @@ export function ChatView({
             totalCount: page.totalCount,
             nextOffset: page.nextOffset,
             hasMore: page.hasMore,
+            fetchedAt: Date.now(),
           });
           return merged;
         });
