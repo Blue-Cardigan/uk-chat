@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 import type { UIMessage } from "ai";
 import type { ChatModelId } from "@/shared/chat-models";
+import { readApiError } from "@/lib/http";
 
 type Part = { type: string; [key: string]: unknown };
 
@@ -8,16 +9,6 @@ export type CouncilScope =
   | { kind: "postcode"; postcode: string }
   | { kind: "area"; area: string }
   | { kind: "national" };
-
-async function safeJson<T>(response: Response): Promise<T | null> {
-  const text = await response.text();
-  if (!text) return null;
-  try {
-    return JSON.parse(text) as T;
-  } catch {
-    return null;
-  }
-}
 
 function extractLatestCouncilIdFromMessages(inputMessages: UIMessage[]): string | null {
   const latestAssistant = [...inputMessages]
@@ -108,9 +99,9 @@ export function useCouncilMode(deps: {
               }),
             });
             if (!followupResponse.ok) {
-              const errorPayload = await safeJson<{ error?: string; code?: string }>(followupResponse);
-              if (errorPayload?.code === "MCP_TOKEN_UNAUTHORIZED") onMcpTokenUnauthorizedRef.current();
-              onSubmitErrorRef.current(errorPayload?.error ?? `Failed to update council (${followupResponse.status})`);
+              const errorPayload = await readApiError(followupResponse);
+              if (errorPayload.code === "MCP_TOKEN_UNAUTHORIZED") onMcpTokenUnauthorizedRef.current();
+              onSubmitErrorRef.current(errorPayload.error ?? `Failed to update council (${followupResponse.status})`);
               setMessages((current) => current.filter((message) => message.id !== optimisticMessageId));
               setCouncilPending(false);
               return;
@@ -145,9 +136,9 @@ export function useCouncilMode(deps: {
             }),
           });
           if (!createResponse.ok) {
-            const errorPayload = await safeJson<{ error?: string; code?: string }>(createResponse);
-            if (errorPayload?.code === "MCP_TOKEN_UNAUTHORIZED") onMcpTokenUnauthorizedRef.current();
-            onSubmitErrorRef.current(errorPayload?.error ?? `Failed to create council (${createResponse.status})`);
+            const errorPayload = await readApiError(createResponse);
+            if (errorPayload.code === "MCP_TOKEN_UNAUTHORIZED") onMcpTokenUnauthorizedRef.current();
+            onSubmitErrorRef.current(errorPayload.error ?? `Failed to create council (${createResponse.status})`);
             setMessages((current) => current.filter((message) => message.id !== optimisticMessageId));
             setCouncilPending(false);
             return;

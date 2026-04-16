@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { MutableRefObject } from "react";
 import type { UIMessage } from "ai";
+import { safeJson } from "@/lib/http";
 
 type Part = { type: string; [key: string]: unknown };
 type PersistedMessage = {
@@ -14,16 +15,6 @@ const OPTIMISTIC_CHAT_ID_PREFIX = "optimistic-chat-";
 
 function isOptimisticConversationId(value: string | null | undefined): boolean {
   return typeof value === "string" && value.startsWith(OPTIMISTIC_CHAT_ID_PREFIX);
-}
-
-async function safeJson<T>(response: Response): Promise<T | null> {
-  const text = await response.text();
-  if (!text) return null;
-  try {
-    return JSON.parse(text) as T;
-  } catch {
-    return null;
-  }
 }
 
 function mapMessages(messages: PersistedMessage[]): UIMessage[] {
