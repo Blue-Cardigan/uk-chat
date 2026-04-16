@@ -1,13 +1,10 @@
-import { generateText } from "ai";
+import { generateText, type LanguageModel } from "ai";
+import { isRecord } from "./internals.js";
 
 type PlanStep = {
   tool: string;
   objective: string;
 };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
 
 function parsePlanSteps(raw: string): PlanStep[] {
   const trimmed = raw.trim();
@@ -60,7 +57,7 @@ export function buildQuantContinuationContext(params: {
 }
 
 export async function generateExecutionPlan(params: {
-  model: unknown;
+  model: LanguageModel;
   query: string;
   availableTools: string[];
   maxSteps?: number;
@@ -81,7 +78,7 @@ export async function generateExecutionPlan(params: {
 
   try {
     const result = await generateText({
-      model: params.model as never,
+      model: params.model,
       temperature: 0,
       maxOutputTokens: 220,
       prompt,

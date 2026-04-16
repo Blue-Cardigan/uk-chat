@@ -1,13 +1,11 @@
 import type { CouncilCreateRequest, CouncilFollowUpRequest, CouncilScope } from "./types.js";
+import { isRecord } from "../internals.js";
+
 type CouncilNation = "uk" | "england" | "scotland" | "wales" | "northern_ireland";
 export type CouncilInferScopeRequest = {
   text: string;
   modelId?: string | null;
 };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
 
 function asTrimmedString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";

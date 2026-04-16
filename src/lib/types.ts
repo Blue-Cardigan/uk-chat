@@ -19,6 +19,19 @@ export type ChatMessageRecord = {
   created_at: string;
 };
 
+// AI SDK message parts have an open shape (text, tool-*, data-*, and others).
+// We keep the index signature rather than a discriminated union because any
+// narrowed union member would be subsumed by the fallback, defeating the
+// point. Consumers narrow via explicit `part.type === "..."` checks.
+export type MessagePart = { type: string; [key: string]: unknown };
+
+export type PersistedMessage = {
+  id: string;
+  role: "user" | "assistant";
+  parts: MessagePart[];
+  created_at: string;
+};
+
 export type ChartSpec = {
   type: "line" | "bar" | "scatter" | "area" | "pie" | "table";
   title: string;

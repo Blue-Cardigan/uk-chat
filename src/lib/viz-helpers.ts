@@ -1,14 +1,11 @@
 import { buildChartSpecFromVizHint, isChartSpec } from "@/lib/viz-data-parser";
+import { isRecord } from "@/lib/utils";
 
 export function normalizeVizToolName(toolName: string): string {
   return toolName
     .trim()
     .replace(/[^a-zA-Z0-9_]+/g, "_")
     .replace(/^_+|_+$/g, "");
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
 }
 
 function hasChartLikeShape(value: unknown): boolean {

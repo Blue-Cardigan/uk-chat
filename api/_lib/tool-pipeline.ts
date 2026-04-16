@@ -1,4 +1,5 @@
 import { jsonSchema } from "ai";
+import { isRecord } from "./internals.js";
 
 export const CREATE_CHART_TOOL_NAME = "create_chart";
 
@@ -32,10 +33,6 @@ type ToolCatalogItem = {
   score: number;
   recommended: boolean;
 };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
 
 function classifyTool(name: string, description: string): { category: "data" | "analysis" | "system"; baseScore: number } {
   const normalizedName = name.toLowerCase();

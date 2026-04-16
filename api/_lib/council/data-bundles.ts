@@ -1,12 +1,9 @@
 import type { CouncillorRecord, CouncillorsBundleLike, CouncilResolvedGeography, LocalMpApiResponse } from "./types.js";
 import type { Env } from "../../env.js";
 import { getSupabaseAdmin } from "../server.js";
+import { isRecord } from "../internals.js";
 
 type ToolMap = Record<string, unknown>;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
 
 async function callTool<T = unknown>(tools: ToolMap, name: string, args: Record<string, unknown>): Promise<T | null> {
   const tool = tools[name];

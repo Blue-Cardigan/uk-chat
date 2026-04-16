@@ -1,5 +1,6 @@
 import { VisualizationCard } from "@/components/viz/VisualizationCard";
 import type { VizPayload } from "@/lib/types";
+import { isRecord } from "@/lib/utils";
 
 function KeyValue({ label, value }: { label: string; value: string }) {
   return (
@@ -85,10 +86,6 @@ export function FloodAlertCard() {
 function readStringList(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
 }
 
 export function CouncilDeliberationCard({ payload }: { payload: VizPayload }) {
