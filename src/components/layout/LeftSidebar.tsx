@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { MoreHorizontal, PanelLeftClose, Plus, Search, Settings, Star } from "lucide-react";
 import { ConversationContextMenu } from "@/components/chat/ConversationContextMenu";
 import { Button, Input } from "@/components/ui/primitives";
 import type { ChatConversation } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-const DEFAULT_VISIBLE_COUNT = 25;
-const VISIBLE_COUNT_STEP = 25;
+type SidebarRow =
+  | { kind: "header"; label: string; key: string }
+  | { kind: "conversation"; conversation: ChatConversation; key: string };
 
 export function LeftSidebar({
   conversations,
@@ -40,8 +42,6 @@ export function LeftSidebar({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draftTitle, setDraftTitle] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
-  const [visibleStarredCount, setVisibleStarredCount] = useState(DEFAULT_VISIBLE_COUNT);
-  const [visibleRecentCount, setVisibleRecentCount] = useState(DEFAULT_VISIBLE_COUNT);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const conversationById = useMemo(() => new Map(conversations.map((conversation) => [conversation.id, conversation])), [conversations]);
@@ -56,15 +56,35 @@ export function LeftSidebar({
     if (!normalizedSearchQuery) return recentConversations;
     return recentConversations.filter((conversation) => conversation.title.toLowerCase().includes(normalizedSearchQuery));
   }, [normalizedSearchQuery, recentConversations]);
-  const visibleStarredConversations = useMemo(
-    () => filteredStarredConversations.slice(0, visibleStarredCount),
-    [filteredStarredConversations, visibleStarredCount],
-  );
-  const visibleRecentConversations = useMemo(
-    () => filteredRecentConversations.slice(0, visibleRecentCount),
-    [filteredRecentConversations, visibleRecentCount],
-  );
   const hasChatMatches = filteredStarredConversations.length + filteredRecentConversations.length > 0;
+
+  const rows = useMemo<SidebarRow[]>(() => {
+    const out: SidebarRow[] = [];
+    if (filteredStarredConversations.length > 0) {
+      out.push({ kind: "header", label: "Starred", key: "header:starred" });
+      for (const conversation of filteredStarredConversations) {
+        out.push({ kind: "conversation", conversation, key: `s:${conversation.id}` });
+      }
+    }
+    if (filteredRecentConversations.length > 0) {
+      if (filteredStarredConversations.length > 0) {
+        out.push({ kind: "header", label: "Recent", key: "header:recent" });
+      }
+      for (const conversation of filteredRecentConversations) {
+        out.push({ kind: "conversation", conversation, key: `r:${conversation.id}` });
+      }
+    }
+    return out;
+  }, [filteredStarredConversations, filteredRecentConversations]);
+
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => listRef.current,
+    estimateSize: (index) => (rows[index]?.kind === "header" ? 28 : 44),
+    overscan: 8,
+    getItemKey: (index) => rows[index]?.key ?? index,
+    measureElement: (el) => el.getBoundingClientRect().height,
+  });
 
   useEffect(() => {
     if (!openMenuId && !editingId) return;
@@ -89,11 +109,6 @@ export function LeftSidebar({
       document.removeEventListener("keydown", handleEscape);
     };
   }, [editingId, openMenuId]);
-
-  useEffect(() => {
-    setVisibleStarredCount(DEFAULT_VISIBLE_COUNT);
-    setVisibleRecentCount(DEFAULT_VISIBLE_COUNT);
-  }, [normalizedSearchQuery]);
 
   useEffect(() => {
     if (!openMenuId) return;
@@ -130,10 +145,9 @@ export function LeftSidebar({
     const isMenuOpen = openMenuId === conversation.id;
 
     return (
-      <li
-        key={conversation.id}
+      <div
         className={cn(
-          "relative list-none animate-[slideUp_200ms_ease-out_both] transition-colors duration-200 ease-out",
+          "relative animate-[slideUp_200ms_ease-out_both] transition-colors duration-200 ease-out",
           isMenuOpen ? "z-40" : "z-0",
           isActive ? "border-(--color-primary)" : "",
         )}
@@ -252,7 +266,7 @@ export function LeftSidebar({
             />
           ) : null}
         </div>
-      </li>
+      </div>
     );
   }
 
@@ -301,44 +315,46 @@ export function LeftSidebar({
           aria-label="Search chats"
         />
       </div>
-      <nav aria-label="Conversations" ref={listRef} className="relative isolate flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
-        {filteredStarredConversations.length > 0 ? (
-          <div className="space-y-1">
-            <p className="px-2 text-[11px] font-semibold uppercase tracking-wide text-(--color-muted-foreground)">Starred</p>
-            <ul className="space-y-1">{visibleStarredConversations.map(renderConversation)}</ul>
-            {visibleStarredConversations.length < filteredStarredConversations.length ? (
-              <Button
-                variant="ghost"
-                className="h-7 w-full justify-start px-2 text-xs text-(--color-muted-foreground)"
-                onClick={() => setVisibleStarredCount((current) => current + VISIBLE_COUNT_STEP)}
-              >
-                Show more ({filteredStarredConversations.length - visibleStarredConversations.length} remaining)
-              </Button>
-            ) : null}
+      <nav aria-label="Conversations" ref={listRef} className="relative isolate flex min-h-0 flex-1 flex-col overflow-y-auto">
+        {hasChatMatches ? (
+          <div style={{ height: virtualizer.getTotalSize(), position: "relative", width: "100%" }}>
+            {virtualizer.getVirtualItems().map((virtualRow) => {
+              const row = rows[virtualRow.index];
+              if (!row) return null;
+              return (
+                <div
+                  key={virtualRow.key}
+                  data-index={virtualRow.index}
+                  ref={virtualizer.measureElement}
+                  style={{
+                    position: "absolute",
+                    top: 0,
+                    left: 0,
+                    width: "100%",
+                    transform: `translateY(${virtualRow.start}px)`,
+                  }}
+                >
+                  {row.kind === "header" ? (
+                    <p
+                      className={cn(
+                        "px-2 text-[11px] font-semibold uppercase tracking-wide text-(--color-muted-foreground)",
+                        row.key === "header:recent" ? "pt-2" : "",
+                      )}
+                    >
+                      {row.label}
+                    </p>
+                  ) : (
+                    renderConversation(row.conversation)
+                  )}
+                </div>
+              );
+            })}
           </div>
-        ) : null}
-        {filteredRecentConversations.length > 0 ? (
-          <div className="space-y-1">
-            {filteredStarredConversations.length > 0 ? (
-              <p className="px-2 pt-2 text-[11px] font-semibold uppercase tracking-wide text-(--color-muted-foreground)">Recent</p>
-            ) : null}
-            <ul className="space-y-1">{visibleRecentConversations.map(renderConversation)}</ul>
-            {visibleRecentConversations.length < filteredRecentConversations.length ? (
-              <Button
-                variant="ghost"
-                className="h-7 w-full justify-start px-2 text-xs text-(--color-muted-foreground)"
-                onClick={() => setVisibleRecentCount((current) => current + VISIBLE_COUNT_STEP)}
-              >
-                Show more ({filteredRecentConversations.length - visibleRecentConversations.length} remaining)
-              </Button>
-            ) : null}
-          </div>
-        ) : null}
-        {!hasChatMatches ? (
+        ) : (
           <p className="px-2 py-1 text-xs text-(--color-muted-foreground)">
             {normalizedSearchQuery ? "No chats match your search." : "No chats yet."}
           </p>
-        ) : null}
+        )}
       </nav>
 
       <div className="border-t border-(--color-border) pt-2">

@@ -20,6 +20,7 @@
     "@ai-sdk/react": "^3.0.143",
     "@openrouter/ai-sdk-provider": "^2.3.3",
     "@supabase/supabase-js": "^2.100.1",
+    "@tanstack/react-virtual": "^3.13.23",
     "@types/d3-scale": "^4.0.9",
     "ai": "^6.0.141",
     "clsx": "^2.1.1",
