@@ -8,6 +8,7 @@ import { compactMessagesForModel as compactUiMessagesForModel } from "./context.
 import { compactToolOutputForModel, sanitizeToolName } from "./message-utils.js";
 import { stripToolContextEchoes } from "../../src/shared/text-sanitize.js";
 import { AUTO_CHAT_TITLE_REGEX } from "../../src/shared/chat-constants.js";
+import { isRecord } from "../../src/shared/type-guards.js";
 import { loadMcpToolsWithFallback as loadMcpToolsWithFallbackFromLib } from "./mcp.js";
 import type { McpAttempt } from "./mcp.js";
 export type { McpAttempt } from "./mcp.js";
@@ -134,10 +135,6 @@ export {
 // ---------------------------------------------------------------------------
 // Pure utility functions (no env needed)
 // ---------------------------------------------------------------------------
-
-export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
 
 export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);

@@ -1,5 +1,5 @@
 import { jsonSchema } from "ai";
-import { isRecord } from "./internals.js";
+import { isRecord } from "../../src/shared/type-guards.js";
 
 export const PROVIDER_TOOL_NAME_MAX_LENGTH = 128;
 export const PROVIDER_TOOL_NAME_PATTERN = /^[a-zA-Z0-9_-]{1,128}$/;

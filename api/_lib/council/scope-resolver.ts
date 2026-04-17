@@ -1,5 +1,5 @@
 import type { CouncilResolvedGeography, CouncilScope } from "./types.js";
-import { isRecord } from "../internals.js";
+import { isRecord } from "../../../src/shared/type-guards.js";
 
 type ToolMap = Record<string, unknown>;
 

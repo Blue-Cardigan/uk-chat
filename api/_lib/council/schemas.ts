@@ -1,5 +1,5 @@
 import type { CouncilCreateRequest, CouncilFollowUpRequest, CouncilScope } from "./types.js";
-import { isRecord } from "../internals.js";
+import { isRecord } from "../../../src/shared/type-guards.js";
 
 type CouncilNation = "uk" | "england" | "scotland" | "wales" | "northern_ireland";
 export type CouncilInferScopeRequest = {

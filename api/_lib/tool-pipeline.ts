@@ -1,5 +1,5 @@
 import { jsonSchema } from "ai";
-import { isRecord } from "./internals.js";
+import { isRecord } from "../../src/shared/type-guards.js";
 import {
   MAX_TOOL_OUTPUT_ARRAY_ITEMS,
   MAX_TOOL_OUTPUT_DEPTH,
