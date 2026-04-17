@@ -152,6 +152,7 @@ councilRoutes.post("/", async (c) => {
     .select("id")
     .eq("id", parsed.data.conversationId)
     .eq("user_id", user.id)
+    .is("deleted_at", null)
     .single();
   if (!conversation) return json({ error: "Conversation not found" }, 404);
 
@@ -235,7 +236,8 @@ councilRoutes.post("/", async (c) => {
     .from("uk_chat_conversations")
     .update({ updated_at: new Date().toISOString() })
     .eq("id", draft.conversationId)
-    .eq("user_id", user.id);
+    .eq("user_id", user.id)
+    .is("deleted_at", null);
 
   return json({
     councilId,
@@ -341,7 +343,8 @@ councilRoutes.post("/followup", async (c) => {
     .from("uk_chat_conversations")
     .update({ updated_at: now })
     .eq("id", council.conversation_id)
-    .eq("user_id", user.id);
+    .eq("user_id", user.id)
+    .is("deleted_at", null);
 
   return json(assistantPayload);
 });

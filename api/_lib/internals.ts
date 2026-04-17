@@ -77,6 +77,8 @@ export const SHARED_CONVERSATION_SELECT_FIELDS = "id,title,created_at,updated_at
 export const PRIVACY_NOTICE_VERSION = "2026-03-30";
 export const DEFAULT_SHARE_EXPIRY_DAYS = 30;
 export const DEFAULT_RETENTION_DAYS = 365;
+export const DEFAULT_SOFT_DELETE_GRACE_DAYS = 30;
+export const DEFAULT_AUDIT_LOG_RETENTION_DAYS = 90;
 export const AUTO_CHAT_TITLE_MAX_LENGTH = 72;
 export { AUTO_CHAT_TITLE_REGEX as AUTO_CHAT_TITLE_DEFAULT_REGEX };
 export const AUTO_CHAT_TITLE_MODEL = "google/gemini-2.5-flash-lite";

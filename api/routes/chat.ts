@@ -221,6 +221,7 @@ chatRoutes.post("/", async (c) => {
     .select("id,title")
     .eq("id", body.conversationId)
     .eq("user_id", user.id)
+    .is("deleted_at", null)
     .single();
   if (!conversation) return json({ error: "Conversation not found" }, 404);
 
@@ -375,7 +376,8 @@ chatRoutes.post("/", async (c) => {
           .update({ title: generatedTitle, updated_at: new Date().toISOString() })
           .eq("id", body.conversationId!)
           .eq("user_id", user.id)
-          .eq("title", conversation.title);
+          .eq("title", conversation.title)
+          .is("deleted_at", null);
         if (autoTitleUpdateError) {
           logWarn("[api/chat] Failed to persist auto chat title", {
             conversationId: body.conversationId,
@@ -572,7 +574,8 @@ chatRoutes.post("/", async (c) => {
         .from("uk_chat_conversations")
         .update({ updated_at: new Date().toISOString() })
         .eq("id", body.conversationId!)
-        .eq("user_id", user.id);
+        .eq("user_id", user.id)
+        .is("deleted_at", null);
       if (updateConversationError) {
         logError("[api/chat] Failed to update conversation timestamp", {
           conversationId: body.conversationId,

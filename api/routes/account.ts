@@ -49,6 +49,7 @@ accountRoutes.get("/export", async (c) => {
       .from("uk_chat_conversations")
       .select(CONVERSATION_SELECT_FIELDS)
       .eq("user_id", user.id)
+      .is("deleted_at", null)
       .order("updated_at", { ascending: false }),
     supabase.from("uk_chat_model_usage").select("model_id,usage_date,request_count,total_prompt_tokens,total_completion_tokens,total_tool_calls,created_at,updated_at").eq("user_id", user.id),
     supabase

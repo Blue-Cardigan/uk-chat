@@ -1,33 +1,109 @@
 import { Hono } from "hono";
 import type { Env } from "../env.js";
 import { getSupabaseAdmin, json } from "../_lib/server.js";
-import { DEFAULT_RETENTION_DAYS } from "../_lib/internals.js";
+import {
+  DEFAULT_RETENTION_DAYS,
+  DEFAULT_SOFT_DELETE_GRACE_DAYS,
+  DEFAULT_AUDIT_LOG_RETENTION_DAYS,
+} from "../_lib/internals.js";
 import { dbError } from "../_lib/validation.js";
 
 export const cronRoutes = new Hono<{ Bindings: Env }>();
 
-function computeRetention(env: Env) {
-  const retentionDaysRaw = Number(env.DATA_RETENTION_DAYS ?? DEFAULT_RETENTION_DAYS);
-  const retentionDays = Number.isFinite(retentionDaysRaw) ? Math.max(30, Math.min(3650, Math.round(retentionDaysRaw))) : DEFAULT_RETENTION_DAYS;
-  const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000).toISOString();
-  return { retentionDays, cutoff };
+const SOFT_DELETE_SWEEP_LIMIT = 2000;
+const AUDIT_SWEEP_LIMIT = 5000;
+
+function clampDays(raw: unknown, fallback: number, min: number, max: number): number {
+  const n = Number(raw ?? fallback);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, Math.round(n)));
+}
+
+function cutoffIso(days: number): string {
+  return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
 }
 
 export async function runDataRetention(env: Env) {
-  const { retentionDays, cutoff } = computeRetention(env);
+  const retentionDays = clampDays(env.DATA_RETENTION_DAYS, DEFAULT_RETENTION_DAYS, 30, 3650);
+  const graceDays = clampDays(env.SOFT_DELETE_GRACE_DAYS, DEFAULT_SOFT_DELETE_GRACE_DAYS, 1, 365);
+  const auditDays = clampDays(env.AUDIT_LOG_RETENTION_DAYS, DEFAULT_AUDIT_LOG_RETENTION_DAYS, 30, 3650);
+
+  const inactiveCutoff = cutoffIso(retentionDays);
+  const graceCutoff = cutoffIso(graceDays);
+  const auditCutoff = cutoffIso(auditDays);
+
   const supabase = getSupabaseAdmin(env);
+  const baseResult: {
+    retentionDays: number;
+    graceDays: number;
+    auditDays: number;
+    inactiveCutoff: string;
+    graceCutoff: string;
+    auditCutoff: string;
+    softDeleted: number;
+    hardDeleted: number;
+    auditPurged: number;
+    error?: string;
+  } = {
+    retentionDays,
+    graceDays,
+    auditDays,
+    inactiveCutoff,
+    graceCutoff,
+    auditCutoff,
+    softDeleted: 0,
+    hardDeleted: 0,
+    auditPurged: 0,
+  };
+
+  // 1. Soft-delete inactive conversations.
   const { data: staleRows, error: staleError } = await supabase
     .from("uk_chat_conversations")
     .select("id")
-    .lt("updated_at", cutoff)
-    .limit(2000);
-  if (staleError) return { error: staleError.message, deletedCount: 0, retentionDays, cutoff };
+    .is("deleted_at", null)
+    .lt("updated_at", inactiveCutoff)
+    .limit(SOFT_DELETE_SWEEP_LIMIT);
+  if (staleError) return { ...baseResult, error: staleError.message };
   const staleIds = (staleRows ?? []).map((row) => row.id);
-  if (staleIds.length === 0) return { deletedCount: 0, retentionDays, cutoff };
+  if (staleIds.length > 0) {
+    const { error: softErr } = await supabase
+      .from("uk_chat_conversations")
+      .update({ deleted_at: new Date().toISOString() })
+      .in("id", staleIds)
+      .is("deleted_at", null);
+    if (softErr) return { ...baseResult, error: softErr.message };
+    baseResult.softDeleted = staleIds.length;
+  }
 
-  const { error: deleteError } = await supabase.from("uk_chat_conversations").delete().in("id", staleIds);
-  if (deleteError) return { error: deleteError.message, deletedCount: 0, retentionDays, cutoff };
-  return { deletedCount: staleIds.length, retentionDays, cutoff };
+  // 2. Hard-delete conversations past the soft-delete grace window (cascade handles children).
+  const { data: expiredRows, error: expiredError } = await supabase
+    .from("uk_chat_conversations")
+    .select("id")
+    .lt("deleted_at", graceCutoff)
+    .limit(SOFT_DELETE_SWEEP_LIMIT);
+  if (expiredError) return { ...baseResult, error: expiredError.message };
+  const expiredIds = (expiredRows ?? []).map((row) => row.id);
+  if (expiredIds.length > 0) {
+    const { error: hardErr } = await supabase.from("uk_chat_conversations").delete().in("id", expiredIds);
+    if (hardErr) return { ...baseResult, error: hardErr.message };
+    baseResult.hardDeleted = expiredIds.length;
+  }
+
+  // 3. Purge old admin audit log rows.
+  const { data: oldAudit, error: auditSelectError } = await supabase
+    .from("uk_chat_admin_audit_log")
+    .select("id")
+    .lt("created_at", auditCutoff)
+    .limit(AUDIT_SWEEP_LIMIT);
+  if (auditSelectError) return { ...baseResult, error: auditSelectError.message };
+  const auditIds = (oldAudit ?? []).map((row) => row.id);
+  if (auditIds.length > 0) {
+    const { error: auditDeleteError } = await supabase.from("uk_chat_admin_audit_log").delete().in("id", auditIds);
+    if (auditDeleteError) return { ...baseResult, error: auditDeleteError.message };
+    baseResult.auditPurged = auditIds.length;
+  }
+
+  return baseResult;
 }
 
 const MAX_TIMESTAMP_SKEW_MS = 5 * 60 * 1000;
