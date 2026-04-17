@@ -18,6 +18,7 @@ artifactRoutes.get("/", async (c) => {
     .from("uk_chat_conversations")
     .select("id,title,updated_at")
     .eq("user_id", user.id)
+    .is("deleted_at", null)
     .order("updated_at", { ascending: false })
     .limit(16);
   if (conversationsError) return dbError(conversationsError, { context: "api/artifacts", publicMessage: "Failed to load artifacts" });

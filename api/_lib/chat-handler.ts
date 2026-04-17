@@ -1,5 +1,5 @@
 import { generateText, type LanguageModel } from "ai";
-import { isRecord } from "./internals.js";
+import { isRecord } from "../../src/shared/type-guards.js";
 
 type PlanStep = {
   tool: string;

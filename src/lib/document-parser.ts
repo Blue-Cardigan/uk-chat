@@ -38,9 +38,15 @@ export type ParsedDocumentFailure = {
   error: string;
 };
 
+export type ParsedDocumentWarning = {
+  name: string;
+  message: string;
+};
+
 export type ParseDocumentsResult = {
   documents: ParsedDocument[];
   failures: ParsedDocumentFailure[];
+  warnings: ParsedDocumentWarning[];
 };
 
 let workerConfigured = false;
@@ -153,6 +159,7 @@ async function parseFile(file: File, extension: string): Promise<ParsedDocument>
 export async function parseDocuments(files: File[]): Promise<ParseDocumentsResult> {
   const documents: ParsedDocument[] = [];
   const failures: ParsedDocumentFailure[] = [];
+  const warnings: ParsedDocumentWarning[] = [];
 
   const selectedFiles = files.slice(0, MAX_DOCUMENT_COUNT);
   if (files.length > MAX_DOCUMENT_COUNT) {
@@ -178,12 +185,24 @@ export async function parseDocuments(files: File[]): Promise<ParseDocumentsResul
         continue;
       }
       const perDocLimited = shorten(normalizedText, MAX_DOCUMENT_TEXT_CHARS);
+      if (perDocLimited.length < normalizedText.length) {
+        warnings.push({
+          name: file.name,
+          message: `Truncated to ${MAX_DOCUMENT_TEXT_CHARS.toLocaleString()} characters (per-document limit).`,
+        });
+      }
       const remaining = Math.max(0, MAX_TOTAL_DOCUMENT_TEXT_CHARS - totalChars);
       if (remaining === 0) {
         failures.push({ name: file.name, error: "Total extracted text limit reached." });
         continue;
       }
       const textForPayload = shorten(perDocLimited, remaining);
+      if (textForPayload.length < perDocLimited.length) {
+        warnings.push({
+          name: file.name,
+          message: `Further truncated — total document text limit (${MAX_TOTAL_DOCUMENT_TEXT_CHARS.toLocaleString()} chars) reached.`,
+        });
+      }
       totalChars += textForPayload.length;
       documents.push({
         ...parsed,
@@ -198,5 +217,5 @@ export async function parseDocuments(files: File[]): Promise<ParseDocumentsResul
     }
   }
 
-  return { documents, failures };
+  return { documents, failures, warnings };
 }

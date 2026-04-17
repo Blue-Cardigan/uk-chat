@@ -8,6 +8,7 @@ import { compactMessagesForModel as compactUiMessagesForModel } from "./context.
 import { compactToolOutputForModel, sanitizeToolName } from "./message-utils.js";
 import { stripToolContextEchoes } from "../../src/shared/text-sanitize.js";
 import { AUTO_CHAT_TITLE_REGEX } from "../../src/shared/chat-constants.js";
+import { isRecord } from "../../src/shared/type-guards.js";
 import { loadMcpToolsWithFallback as loadMcpToolsWithFallbackFromLib } from "./mcp.js";
 import type { McpAttempt } from "./mcp.js";
 export type { McpAttempt } from "./mcp.js";
@@ -76,6 +77,8 @@ export const SHARED_CONVERSATION_SELECT_FIELDS = "id,title,created_at,updated_at
 export const PRIVACY_NOTICE_VERSION = "2026-03-30";
 export const DEFAULT_SHARE_EXPIRY_DAYS = 30;
 export const DEFAULT_RETENTION_DAYS = 365;
+export const DEFAULT_SOFT_DELETE_GRACE_DAYS = 30;
+export const DEFAULT_AUDIT_LOG_RETENTION_DAYS = 90;
 export const AUTO_CHAT_TITLE_MAX_LENGTH = 72;
 export { AUTO_CHAT_TITLE_REGEX as AUTO_CHAT_TITLE_DEFAULT_REGEX };
 export const AUTO_CHAT_TITLE_MODEL = "google/gemini-2.5-flash-lite";
@@ -134,10 +137,6 @@ export {
 // ---------------------------------------------------------------------------
 // Pure utility functions (no env needed)
 // ---------------------------------------------------------------------------
-
-export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
 
 export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);

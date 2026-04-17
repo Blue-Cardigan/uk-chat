@@ -1,5 +1,5 @@
 import { buildChartSpecFromVizHint, isChartSpec } from "@/lib/viz-data-parser";
-import { isRecord } from "@/lib/utils";
+import { isRecord } from "@/shared/type-guards";
 
 export function normalizeVizToolName(toolName: string): string {
   return toolName

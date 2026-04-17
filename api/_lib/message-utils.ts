@@ -1,5 +1,5 @@
 import { compactMessagesForModel as compactUiMessagesForModel } from "./context.js";
-import { isRecord } from "./internals.js";
+import { isRecord } from "../../src/shared/type-guards.js";
 import type { CompactModelMessage, PersistedMessagePart } from "./internals.js";
 import { stripToolContextEchoes } from "../../src/shared/text-sanitize.js";
 import {

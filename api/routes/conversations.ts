@@ -44,6 +44,7 @@ conversationRoutes.get("/", async (c) => {
     .from("uk_chat_conversations")
     .select(CONVERSATION_SELECT_FIELDS)
     .eq("user_id", user.id)
+    .is("deleted_at", null)
     .order("starred", { ascending: false })
     .order("updated_at", { ascending: false });
   if (error) return dbError(error, { context: "api/conversations", publicMessage: "Failed to load conversations" });
@@ -103,6 +104,7 @@ conversationRoutes.get("/:id", async (c) => {
     .select(CONVERSATION_SELECT_FIELDS)
     .eq("id", id)
     .eq("user_id", user.id)
+    .is("deleted_at", null)
     .single();
   if (conversationError) {
     logWarn("[api/conversations/:id] lookup failed", {
@@ -147,6 +149,7 @@ conversationRoutes.patch("/:id", async (c) => {
     .update(updates)
     .eq("id", id)
     .eq("user_id", user.id)
+    .is("deleted_at", null)
     .select(CONVERSATION_SELECT_FIELDS)
     .single();
   if (error) return dbError(error, { context: "api/conversations/:id PATCH", publicMessage: "Failed to update conversation", status: 400 });
@@ -162,7 +165,12 @@ conversationRoutes.delete("/:id", async (c) => {
   const id = idResult.data;
   const supabase = getSupabaseAdmin(c.env);
 
-  const { error } = await supabase.from("uk_chat_conversations").delete().eq("id", id).eq("user_id", user.id);
+  const { error } = await supabase
+    .from("uk_chat_conversations")
+    .update({ deleted_at: new Date().toISOString() })
+    .eq("id", id)
+    .eq("user_id", user.id)
+    .is("deleted_at", null);
   if (error) return dbError(error, { context: "api/conversations/:id DELETE", publicMessage: "Failed to delete conversation", status: 400 });
   return json({ success: true });
 });
@@ -181,6 +189,7 @@ conversationRoutes.post("/:id/share", async (c) => {
     .select("id,title,is_public,share_token")
     .eq("id", id)
     .eq("user_id", user.id)
+    .is("deleted_at", null)
     .single();
   if (conversationError || !conversation) {
     return json({ error: "Conversation not found" }, 404);
@@ -199,6 +208,7 @@ conversationRoutes.post("/:id/share", async (c) => {
     })
     .eq("id", id)
     .eq("user_id", user.id)
+    .is("deleted_at", null)
     .select(CONVERSATION_SELECT_FIELDS)
     .single();
   if (error || !data) return dbError(error, { context: "api/conversations/:id/share", publicMessage: "Failed to share conversation", status: 400 });
@@ -221,6 +231,7 @@ conversationRoutes.patch("/:id/share", async (c) => {
     .select("id,title,is_public,share_token")
     .eq("id", id)
     .eq("user_id", user.id)
+    .is("deleted_at", null)
     .single();
   if (conversationError || !conversation) {
     return json({ error: "Conversation not found" }, 404);
@@ -243,6 +254,7 @@ conversationRoutes.patch("/:id/share", async (c) => {
     })
     .eq("id", id)
     .eq("user_id", user.id)
+    .is("deleted_at", null)
     .select(CONVERSATION_SELECT_FIELDS)
     .single();
   if (error || !data) return dbError(error, { context: "api/conversations/:id/share PATCH", publicMessage: "Failed to update share settings", status: 400 });

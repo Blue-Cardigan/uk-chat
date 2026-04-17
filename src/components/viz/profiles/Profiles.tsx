@@ -1,6 +1,6 @@
 import { VisualizationCard } from "@/components/viz/VisualizationCard";
 import type { VizPayload } from "@/lib/types";
-import { isRecord } from "@/lib/utils";
+import { isRecord } from "@/shared/type-guards";
 
 function KeyValue({ label, value }: { label: string; value: string }) {
   return (

@@ -1,7 +1,7 @@
 import type { CouncillorRecord, CouncillorsBundleLike, CouncilResolvedGeography, LocalMpApiResponse } from "./types.js";
 import type { Env } from "../../env.js";
 import { getSupabaseAdmin } from "../server.js";
-import { isRecord } from "../internals.js";
+import { isRecord } from "../../../src/shared/type-guards.js";
 
 type ToolMap = Record<string, unknown>;
 

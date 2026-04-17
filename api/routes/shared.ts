@@ -20,6 +20,7 @@ sharedRoutes.get("/:token", async (c) => {
     .select(SHARED_CONVERSATION_SELECT_FIELDS)
     .eq("share_token", token)
     .eq("is_public", true)
+    .is("deleted_at", null)
     .single();
   if (conversationError || !conversation) {
     return json({ error: "Shared conversation not found" }, 404);
