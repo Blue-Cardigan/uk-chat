@@ -3,6 +3,8 @@ import { useEffect, type RefObject } from "react";
 export const FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
+// `onEscape` should be stable (wrapped in useCallback); it sits in the effect
+// deps, so an inline callback would tear down and re-run the trap every render.
 export function useFocusTrap(
   containerRef: RefObject<HTMLElement | null>,
   active: boolean,
@@ -10,9 +12,11 @@ export function useFocusTrap(
 ) {
   useEffect(() => {
     if (!active) return;
+    const container = containerRef.current;
     const previousFocusedElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const focusables = containerRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR);
-    focusables?.[0]?.focus();
+    const queryFocusables = () =>
+      container ? Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)) : [];
+    queryFocusables()[0]?.focus();
 
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape") {
@@ -20,7 +24,8 @@ export function useFocusTrap(
         return;
       }
       if (e.key !== "Tab") return;
-      if (!focusables || focusables.length === 0) {
+      const focusables = queryFocusables();
+      if (focusables.length === 0) {
         e.preventDefault();
         return;
       }

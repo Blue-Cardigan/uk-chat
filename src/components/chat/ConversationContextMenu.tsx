@@ -52,6 +52,7 @@ export function ConversationContextMenu({
       <button
         type="button"
         role="menuitem"
+        autoFocus
         className="w-full rounded px-2 py-1 text-left text-xs font-medium hover:bg-[color-mix(in_oklch,var(--color-foreground)_6%,transparent)]"
         onClick={onRename}
       >
