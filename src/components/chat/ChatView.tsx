@@ -3,8 +3,7 @@ import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import type { UIMessage } from "ai";
 import { MoreVertical } from "lucide-react";
-import { Conversation } from "@/components/ai-elements/conversation";
-import { AssistantThinkingMessage, Message } from "@/components/ai-elements/message";
+import { VirtualizedMessageList } from "@/components/chat/VirtualizedMessageList";
 import { ChatInput, type ChatToolOption } from "@/components/chat/ChatInput";
 import { ConversationContextMenu } from "@/components/chat/ConversationContextMenu";
 import { SuggestedMessages } from "@/components/chat/SuggestedMessages";
@@ -174,6 +173,7 @@ export function ChatView({
   const toolsCacheRef = useRef<Map<string, ToolsCacheEntry>>(new Map());
   const titleMenuRef = useRef<HTMLDivElement | null>(null);
   const liveSessionConversationIdRef = useRef<string | null>(null);
+  const messageScrollRef = useRef<HTMLDivElement | null>(null);
 
   const fetchToolsPage = useCallback(
     async ({
@@ -742,7 +742,7 @@ export function ChatView({
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-6 py-6 md:px-12">
+      <div ref={messageScrollRef} className="flex-1 overflow-y-auto px-6 py-6 md:px-12">
         <div className="mx-auto w-full md:max-w-[clamp(0px,calc(100vw-600px),860px)]">
           {messages.length === 0 && !showPreConversationLoading ? (
             <div className="mx-auto max-w-2xl space-y-4 pt-[20vh]">
@@ -766,14 +766,17 @@ export function ChatView({
               />
             </div>
           ) : (
-            <Conversation>
-              {messages.map((message) => (
-                <Message key={message.id} message={message} />
-              ))}
-              {showPreConversationLoading ? <AssistantThinkingMessage /> : null}
-              {showThinkingIndicator ? <AssistantThinkingMessage /> : null}
-              {showCouncilThinkingIndicator ? <AssistantThinkingMessage /> : null}
-            </Conversation>
+            <VirtualizedMessageList
+              messages={messages}
+              scrollRef={messageScrollRef}
+              conversationKey={conversationId ?? "__new__"}
+              isStreaming={status === "streaming" || status === "submitted"}
+              trailingIndicators={[
+                ...(showPreConversationLoading ? (["pre-conversation"] as const) : []),
+                ...(showThinkingIndicator ? (["thinking"] as const) : []),
+                ...(showCouncilThinkingIndicator ? (["council-thinking"] as const) : []),
+              ]}
+            />
           )}
         </div>
       </div>

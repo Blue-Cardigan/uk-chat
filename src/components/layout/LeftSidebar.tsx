@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { MoreHorizontal, PanelLeftClose, Plus, Search, Settings, Star } from "lucide-react";
 import { ConversationContextMenu } from "@/components/chat/ConversationContextMenu";
 import { Button, Input } from "@/components/ui/primitives";
 import type { ChatConversation } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-const DEFAULT_VISIBLE_COUNT = 25;
-const VISIBLE_COUNT_STEP = 25;
+type SidebarRow =
+  | { kind: "header"; label: string; key: string }
+  | { kind: "conversation"; conversation: ChatConversation; key: string };
 
 export function LeftSidebar({
   conversations,
@@ -36,12 +39,10 @@ export function LeftSidebar({
   onClearChat: () => void;
 }) {
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
-  const [openMenuPlacement, setOpenMenuPlacement] = useState<"up" | "down">("down");
+  const [menuAnchor, setMenuAnchor] = useState<{ top: number; left: number } | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draftTitle, setDraftTitle] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
-  const [visibleStarredCount, setVisibleStarredCount] = useState(DEFAULT_VISIBLE_COUNT);
-  const [visibleRecentCount, setVisibleRecentCount] = useState(DEFAULT_VISIBLE_COUNT);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const conversationById = useMemo(() => new Map(conversations.map((conversation) => [conversation.id, conversation])), [conversations]);
@@ -56,15 +57,34 @@ export function LeftSidebar({
     if (!normalizedSearchQuery) return recentConversations;
     return recentConversations.filter((conversation) => conversation.title.toLowerCase().includes(normalizedSearchQuery));
   }, [normalizedSearchQuery, recentConversations]);
-  const visibleStarredConversations = useMemo(
-    () => filteredStarredConversations.slice(0, visibleStarredCount),
-    [filteredStarredConversations, visibleStarredCount],
-  );
-  const visibleRecentConversations = useMemo(
-    () => filteredRecentConversations.slice(0, visibleRecentCount),
-    [filteredRecentConversations, visibleRecentCount],
-  );
   const hasChatMatches = filteredStarredConversations.length + filteredRecentConversations.length > 0;
+
+  const rows = useMemo<SidebarRow[]>(() => {
+    const out: SidebarRow[] = [];
+    if (filteredStarredConversations.length > 0) {
+      out.push({ kind: "header", label: "Starred", key: "header:starred" });
+      for (const conversation of filteredStarredConversations) {
+        out.push({ kind: "conversation", conversation, key: `s:${conversation.id}` });
+      }
+    }
+    if (filteredRecentConversations.length > 0) {
+      if (filteredStarredConversations.length > 0) {
+        out.push({ kind: "header", label: "Recent", key: "header:recent" });
+      }
+      for (const conversation of filteredRecentConversations) {
+        out.push({ kind: "conversation", conversation, key: `r:${conversation.id}` });
+      }
+    }
+    return out;
+  }, [filteredStarredConversations, filteredRecentConversations]);
+
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => listRef.current,
+    estimateSize: (index) => (rows[index]?.kind === "header" ? 28 : 44),
+    overscan: 8,
+    getItemKey: (index) => rows[index]?.key ?? index,
+  });
 
   useEffect(() => {
     if (!openMenuId && !editingId) return;
@@ -74,11 +94,13 @@ export function LeftSidebar({
       if (!(target instanceof Node)) return;
       if (menuRef.current?.contains(target)) return;
       setOpenMenuId(null);
+      setMenuAnchor(null);
     }
 
     function handleEscape(event: KeyboardEvent) {
       if (event.key !== "Escape") return;
       setOpenMenuId(null);
+      setMenuAnchor(null);
       setEditingId(null);
     }
 
@@ -91,21 +113,19 @@ export function LeftSidebar({
   }, [editingId, openMenuId]);
 
   useEffect(() => {
-    setVisibleStarredCount(DEFAULT_VISIBLE_COUNT);
-    setVisibleRecentCount(DEFAULT_VISIBLE_COUNT);
-  }, [normalizedSearchQuery]);
-
-  useEffect(() => {
     if (!openMenuId) return;
 
-    function handleListScroll() {
+    function handleClose() {
       setOpenMenuId(null);
+      setMenuAnchor(null);
     }
 
     const listElement = listRef.current;
-    listElement?.addEventListener("scroll", handleListScroll, { passive: true });
+    listElement?.addEventListener("scroll", handleClose, { passive: true });
+    window.addEventListener("resize", handleClose);
     return () => {
-      listElement?.removeEventListener("scroll", handleListScroll);
+      listElement?.removeEventListener("scroll", handleClose);
+      window.removeEventListener("resize", handleClose);
     };
   }, [openMenuId]);
 
@@ -115,6 +135,7 @@ export function LeftSidebar({
     setDraftTitle(conversation.title);
     setEditingId(id);
     setOpenMenuId(null);
+    setMenuAnchor(null);
   }
 
   function submitRename(id: string) {
@@ -130,10 +151,10 @@ export function LeftSidebar({
     const isMenuOpen = openMenuId === conversation.id;
 
     return (
-      <li
-        key={conversation.id}
+      <div
+        role="listitem"
         className={cn(
-          "relative list-none animate-[slideUp_200ms_ease-out_both] transition-colors duration-200 ease-out",
+          "relative animate-[slideUp_200ms_ease-out_both] transition-colors duration-200 ease-out",
           isMenuOpen ? "z-40" : "z-0",
           isActive ? "border-(--color-primary)" : "",
         )}
@@ -215,11 +236,20 @@ export function LeftSidebar({
               const nextMenuId = openMenuId === conversation.id ? null : conversation.id;
               if (nextMenuId) {
                 const triggerRect = event.currentTarget.getBoundingClientRect();
-                const estimatedMenuHeight = 140;
+                const estimatedMenuHeight = 180;
+                const estimatedMenuWidth = 176;
                 const spaceBelow = window.innerHeight - triggerRect.bottom;
-                const spaceAbove = triggerRect.top;
-                const shouldOpenDown = spaceBelow >= estimatedMenuHeight || spaceBelow >= spaceAbove;
-                setOpenMenuPlacement(shouldOpenDown ? "down" : "up");
+                const shouldOpenDown = spaceBelow >= estimatedMenuHeight || spaceBelow >= triggerRect.top;
+                const top = shouldOpenDown
+                  ? triggerRect.bottom + 4
+                  : Math.max(8, triggerRect.top - estimatedMenuHeight - 4);
+                const left = Math.max(
+                  8,
+                  Math.min(triggerRect.right - estimatedMenuWidth, window.innerWidth - estimatedMenuWidth - 8),
+                );
+                setMenuAnchor({ top, left });
+              } else {
+                setMenuAnchor(null);
               }
               setOpenMenuId(nextMenuId);
             }}
@@ -227,32 +257,36 @@ export function LeftSidebar({
             <MoreHorizontal className="h-4 w-4" />
           </Button>
 
-          {isMenuOpen ? (
-            <ConversationContextMenu
-              conversation={conversation}
-              containerRef={menuRef}
-              className={cn(
-                "absolute right-0 z-120 min-w-40 rounded-md border border-(--color-border) bg-(--color-background) p-1 shadow-xl",
-                openMenuPlacement === "up" ? "bottom-10" : "top-10",
-              )}
-              onRename={() => startRename(conversation.id)}
-              onToggleStar={() => {
-                onToggleStar(conversation.id, !conversation.starred);
-                setOpenMenuId(null);
-              }}
-              onShare={() => {
-                onShare(conversation);
-                setOpenMenuId(null);
-              }}
-              onUnshare={() => {
-                onUnshare(conversation);
-                setOpenMenuId(null);
-              }}
-              onDelete={() => onDelete(conversation.id)}
-            />
-          ) : null}
+          {isMenuOpen && menuAnchor
+            ? createPortal(
+                <ConversationContextMenu
+                  conversation={conversation}
+                  containerRef={menuRef}
+                  className="z-120 min-w-44 rounded-md border border-(--color-border) bg-(--color-background) p-1 shadow-xl"
+                  style={{ position: "fixed", top: menuAnchor.top, left: menuAnchor.left }}
+                  onRename={() => startRename(conversation.id)}
+                  onToggleStar={() => {
+                    onToggleStar(conversation.id, !conversation.starred);
+                    setOpenMenuId(null);
+                    setMenuAnchor(null);
+                  }}
+                  onShare={() => {
+                    onShare(conversation);
+                    setOpenMenuId(null);
+                    setMenuAnchor(null);
+                  }}
+                  onUnshare={() => {
+                    onUnshare(conversation);
+                    setOpenMenuId(null);
+                    setMenuAnchor(null);
+                  }}
+                  onDelete={() => onDelete(conversation.id)}
+                />,
+                document.body,
+              )
+            : null}
         </div>
-      </li>
+      </div>
     );
   }
 
@@ -301,44 +335,46 @@ export function LeftSidebar({
           aria-label="Search chats"
         />
       </div>
-      <nav aria-label="Conversations" ref={listRef} className="relative isolate flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
-        {filteredStarredConversations.length > 0 ? (
-          <div className="space-y-1">
-            <p className="px-2 text-[11px] font-semibold uppercase tracking-wide text-(--color-muted-foreground)">Starred</p>
-            <ul className="space-y-1">{visibleStarredConversations.map(renderConversation)}</ul>
-            {visibleStarredConversations.length < filteredStarredConversations.length ? (
-              <Button
-                variant="ghost"
-                className="h-7 w-full justify-start px-2 text-xs text-(--color-muted-foreground)"
-                onClick={() => setVisibleStarredCount((current) => current + VISIBLE_COUNT_STEP)}
-              >
-                Show more ({filteredStarredConversations.length - visibleStarredConversations.length} remaining)
-              </Button>
-            ) : null}
+      <nav aria-label="Conversations" ref={listRef} className="relative isolate flex min-h-0 flex-1 flex-col overflow-y-auto">
+        {hasChatMatches ? (
+          <div role="list" style={{ height: virtualizer.getTotalSize(), position: "relative", width: "100%" }}>
+            {virtualizer.getVirtualItems().map((virtualRow) => {
+              const row = rows[virtualRow.index];
+              if (!row) return null;
+              return (
+                <div
+                  key={virtualRow.key}
+                  data-index={virtualRow.index}
+                  ref={virtualizer.measureElement}
+                  style={{
+                    position: "absolute",
+                    top: 0,
+                    left: 0,
+                    width: "100%",
+                    transform: `translateY(${virtualRow.start}px)`,
+                  }}
+                >
+                  {row.kind === "header" ? (
+                    <p
+                      className={cn(
+                        "px-2 text-[11px] font-semibold uppercase tracking-wide text-(--color-muted-foreground)",
+                        row.key === "header:recent" ? "pt-2" : "",
+                      )}
+                    >
+                      {row.label}
+                    </p>
+                  ) : (
+                    renderConversation(row.conversation)
+                  )}
+                </div>
+              );
+            })}
           </div>
-        ) : null}
-        {filteredRecentConversations.length > 0 ? (
-          <div className="space-y-1">
-            {filteredStarredConversations.length > 0 ? (
-              <p className="px-2 pt-2 text-[11px] font-semibold uppercase tracking-wide text-(--color-muted-foreground)">Recent</p>
-            ) : null}
-            <ul className="space-y-1">{visibleRecentConversations.map(renderConversation)}</ul>
-            {visibleRecentConversations.length < filteredRecentConversations.length ? (
-              <Button
-                variant="ghost"
-                className="h-7 w-full justify-start px-2 text-xs text-(--color-muted-foreground)"
-                onClick={() => setVisibleRecentCount((current) => current + VISIBLE_COUNT_STEP)}
-              >
-                Show more ({filteredRecentConversations.length - visibleRecentConversations.length} remaining)
-              </Button>
-            ) : null}
-          </div>
-        ) : null}
-        {!hasChatMatches ? (
+        ) : (
           <p className="px-2 py-1 text-xs text-(--color-muted-foreground)">
             {normalizedSearchQuery ? "No chats match your search." : "No chats yet."}
           </p>
-        ) : null}
+        )}
       </nav>
 
       <div className="border-t border-(--color-border) pt-2">

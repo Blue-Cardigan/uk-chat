@@ -1,4 +1,4 @@
-import { lazy, Suspense, useMemo, useRef } from "react";
+import { lazy, memo, Suspense, useMemo, useRef } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Card } from "@/components/ui/primitives";
@@ -308,7 +308,58 @@ function ReasoningPartView({ part, hideRedacted }: { part: UiPart; hideRedacted:
   );
 }
 
-export function Message({ message }: { message: UiMessage }) {
+function lastPartSignature(message: UiMessage): string {
+  const parts = message.parts ?? [];
+  if (parts.length === 0) return "";
+  const last = parts[parts.length - 1] as UiPart & {
+    text?: unknown;
+    reasoning?: unknown;
+    state?: unknown;
+    toolInvocation?: { state?: unknown; result?: unknown };
+    output?: unknown;
+  };
+  const type = last.type ?? "";
+  if (type === "text") {
+    const text = typeof last.text === "string" ? last.text : "";
+    return `text:${text.length}`;
+  }
+  if (type === "reasoning") {
+    const r = typeof last.reasoning === "string" ? last.reasoning : typeof last.text === "string" ? last.text : "";
+    return `reason:${r.length}`;
+  }
+  if (type === "tool-invocation") {
+    const inv = last.toolInvocation;
+    const state = inv?.state ?? "";
+    const hasResult = inv?.result != null ? 1 : 0;
+    return `ti:${String(state)}:${hasResult}`;
+  }
+  if (typeof type === "string" && type.startsWith("tool-")) {
+    const state = last.state ?? "";
+    const hasOutput = last.output != null ? 1 : 0;
+    return `${type}:${String(state)}:${hasOutput}`;
+  }
+  return String(type);
+}
+
+// Assumes the AI SDK only mutates the trailing part during streaming — earlier
+// parts are frozen once a new part is appended. If that invariant ever changes,
+// widen the signature to cover all parts.
+function messagePropsEqual(
+  prev: { message: UiMessage },
+  next: { message: UiMessage },
+): boolean {
+  const a = prev.message;
+  const b = next.message;
+  if (a === b) return true;
+  if (a.id !== b.id) return false;
+  if (a.role !== b.role) return false;
+  const ap = a.parts ?? [];
+  const bp = b.parts ?? [];
+  if (ap.length !== bp.length) return false;
+  return lastPartSignature(a) === lastPartSignature(b);
+}
+
+function MessageImpl({ message }: { message: UiMessage }) {
   const parts = message.parts ?? [];
   const hasAnyContent = parts.length > 0;
   const hasNonReasoningContent = parts.some(hasRenderableNonReasoningContent);
@@ -358,6 +409,8 @@ export function Message({ message }: { message: UiMessage }) {
     </div>
   );
 }
+
+export const Message = memo(MessageImpl, messagePropsEqual);
 
 function StreamingIndicator() {
   return (
