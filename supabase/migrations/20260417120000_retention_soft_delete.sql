@@ -1,3 +1,22 @@
+-- Assert that uk_chat_messages.conversation_id cascades on conversation delete. The retention
+-- cron hard-deletes conversations past the soft-delete grace window and relies on this cascade
+-- to remove child messages; without it the delete would either fail (FK violation) or orphan rows.
+do $$
+begin
+  if not exists (
+    select 1
+    from information_schema.referential_constraints rc
+    join information_schema.table_constraints tc
+      on tc.constraint_name = rc.constraint_name
+     and tc.constraint_schema = rc.constraint_schema
+    where tc.table_schema = 'public'
+      and tc.table_name = 'uk_chat_messages'
+      and rc.delete_rule = 'CASCADE'
+  ) then
+    raise exception 'uk_chat_messages.conversation_id must have ON DELETE CASCADE for retention cron';
+  end if;
+end$$;
+
 alter table public.uk_chat_conversations
   add column if not exists deleted_at timestamptz;
 
