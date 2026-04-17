@@ -341,6 +341,9 @@ function lastPartSignature(message: UiMessage): string {
   return String(type);
 }
 
+// Assumes the AI SDK only mutates the trailing part during streaming — earlier
+// parts are frozen once a new part is appended. If that invariant ever changes,
+// widen the signature to cover all parts.
 function messagePropsEqual(
   prev: { message: UiMessage },
   next: { message: UiMessage },

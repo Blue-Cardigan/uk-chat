@@ -1,9 +1,10 @@
-import type { Ref } from "react";
+import type { CSSProperties, Ref } from "react";
 import type { ChatConversation } from "@/lib/types";
 
 export function ConversationContextMenu({
   conversation,
   className,
+  style,
   containerRef,
   onRename,
   onToggleStar,
@@ -13,6 +14,7 @@ export function ConversationContextMenu({
 }: {
   conversation: ChatConversation;
   className?: string;
+  style?: CSSProperties;
   containerRef?: Ref<HTMLDivElement>;
   onRename: () => void;
   onToggleStar: () => void;
@@ -21,7 +23,7 @@ export function ConversationContextMenu({
   onDelete: () => void;
 }) {
   return (
-    <div ref={containerRef} className={className}>
+    <div ref={containerRef} className={className} style={style}>
       <button
         type="button"
         className="w-full rounded px-2 py-1 text-left text-xs font-medium hover:bg-[color-mix(in_oklch,var(--color-foreground)_6%,transparent)]"

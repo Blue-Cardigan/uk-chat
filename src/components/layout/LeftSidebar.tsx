@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { MoreHorizontal, PanelLeftClose, Plus, Search, Settings, Star } from "lucide-react";
 import { ConversationContextMenu } from "@/components/chat/ConversationContextMenu";
@@ -38,7 +39,7 @@ export function LeftSidebar({
   onClearChat: () => void;
 }) {
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
-  const [openMenuPlacement, setOpenMenuPlacement] = useState<"up" | "down">("down");
+  const [menuAnchor, setMenuAnchor] = useState<{ top: number; left: number } | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draftTitle, setDraftTitle] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
@@ -83,7 +84,6 @@ export function LeftSidebar({
     estimateSize: (index) => (rows[index]?.kind === "header" ? 28 : 44),
     overscan: 8,
     getItemKey: (index) => rows[index]?.key ?? index,
-    measureElement: (el) => el.getBoundingClientRect().height,
   });
 
   useEffect(() => {
@@ -94,11 +94,13 @@ export function LeftSidebar({
       if (!(target instanceof Node)) return;
       if (menuRef.current?.contains(target)) return;
       setOpenMenuId(null);
+      setMenuAnchor(null);
     }
 
     function handleEscape(event: KeyboardEvent) {
       if (event.key !== "Escape") return;
       setOpenMenuId(null);
+      setMenuAnchor(null);
       setEditingId(null);
     }
 
@@ -113,14 +115,17 @@ export function LeftSidebar({
   useEffect(() => {
     if (!openMenuId) return;
 
-    function handleListScroll() {
+    function handleClose() {
       setOpenMenuId(null);
+      setMenuAnchor(null);
     }
 
     const listElement = listRef.current;
-    listElement?.addEventListener("scroll", handleListScroll, { passive: true });
+    listElement?.addEventListener("scroll", handleClose, { passive: true });
+    window.addEventListener("resize", handleClose);
     return () => {
-      listElement?.removeEventListener("scroll", handleListScroll);
+      listElement?.removeEventListener("scroll", handleClose);
+      window.removeEventListener("resize", handleClose);
     };
   }, [openMenuId]);
 
@@ -130,6 +135,7 @@ export function LeftSidebar({
     setDraftTitle(conversation.title);
     setEditingId(id);
     setOpenMenuId(null);
+    setMenuAnchor(null);
   }
 
   function submitRename(id: string) {
@@ -146,6 +152,7 @@ export function LeftSidebar({
 
     return (
       <div
+        role="listitem"
         className={cn(
           "relative animate-[slideUp_200ms_ease-out_both] transition-colors duration-200 ease-out",
           isMenuOpen ? "z-40" : "z-0",
@@ -229,11 +236,20 @@ export function LeftSidebar({
               const nextMenuId = openMenuId === conversation.id ? null : conversation.id;
               if (nextMenuId) {
                 const triggerRect = event.currentTarget.getBoundingClientRect();
-                const estimatedMenuHeight = 140;
+                const estimatedMenuHeight = 180;
+                const estimatedMenuWidth = 176;
                 const spaceBelow = window.innerHeight - triggerRect.bottom;
-                const spaceAbove = triggerRect.top;
-                const shouldOpenDown = spaceBelow >= estimatedMenuHeight || spaceBelow >= spaceAbove;
-                setOpenMenuPlacement(shouldOpenDown ? "down" : "up");
+                const shouldOpenDown = spaceBelow >= estimatedMenuHeight || spaceBelow >= triggerRect.top;
+                const top = shouldOpenDown
+                  ? triggerRect.bottom + 4
+                  : Math.max(8, triggerRect.top - estimatedMenuHeight - 4);
+                const left = Math.max(
+                  8,
+                  Math.min(triggerRect.right - estimatedMenuWidth, window.innerWidth - estimatedMenuWidth - 8),
+                );
+                setMenuAnchor({ top, left });
+              } else {
+                setMenuAnchor(null);
               }
               setOpenMenuId(nextMenuId);
             }}
@@ -241,30 +257,34 @@ export function LeftSidebar({
             <MoreHorizontal className="h-4 w-4" />
           </Button>
 
-          {isMenuOpen ? (
-            <ConversationContextMenu
-              conversation={conversation}
-              containerRef={menuRef}
-              className={cn(
-                "absolute right-0 z-120 min-w-40 rounded-md border border-(--color-border) bg-(--color-background) p-1 shadow-xl",
-                openMenuPlacement === "up" ? "bottom-10" : "top-10",
-              )}
-              onRename={() => startRename(conversation.id)}
-              onToggleStar={() => {
-                onToggleStar(conversation.id, !conversation.starred);
-                setOpenMenuId(null);
-              }}
-              onShare={() => {
-                onShare(conversation);
-                setOpenMenuId(null);
-              }}
-              onUnshare={() => {
-                onUnshare(conversation);
-                setOpenMenuId(null);
-              }}
-              onDelete={() => onDelete(conversation.id)}
-            />
-          ) : null}
+          {isMenuOpen && menuAnchor
+            ? createPortal(
+                <ConversationContextMenu
+                  conversation={conversation}
+                  containerRef={menuRef}
+                  className="z-120 min-w-44 rounded-md border border-(--color-border) bg-(--color-background) p-1 shadow-xl"
+                  style={{ position: "fixed", top: menuAnchor.top, left: menuAnchor.left }}
+                  onRename={() => startRename(conversation.id)}
+                  onToggleStar={() => {
+                    onToggleStar(conversation.id, !conversation.starred);
+                    setOpenMenuId(null);
+                    setMenuAnchor(null);
+                  }}
+                  onShare={() => {
+                    onShare(conversation);
+                    setOpenMenuId(null);
+                    setMenuAnchor(null);
+                  }}
+                  onUnshare={() => {
+                    onUnshare(conversation);
+                    setOpenMenuId(null);
+                    setMenuAnchor(null);
+                  }}
+                  onDelete={() => onDelete(conversation.id)}
+                />,
+                document.body,
+              )
+            : null}
         </div>
       </div>
     );
@@ -317,7 +337,7 @@ export function LeftSidebar({
       </div>
       <nav aria-label="Conversations" ref={listRef} className="relative isolate flex min-h-0 flex-1 flex-col overflow-y-auto">
         {hasChatMatches ? (
-          <div style={{ height: virtualizer.getTotalSize(), position: "relative", width: "100%" }}>
+          <div role="list" style={{ height: virtualizer.getTotalSize(), position: "relative", width: "100%" }}>
             {virtualizer.getVirtualItems().map((virtualRow) => {
               const row = rows[virtualRow.index];
               if (!row) return null;
