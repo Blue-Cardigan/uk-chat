@@ -1,4 +1,4 @@
-import type { CSSProperties, Ref } from "react";
+import { useCallback, type CSSProperties, type KeyboardEvent, type Ref } from "react";
 import type { ChatConversation } from "@/lib/types";
 
 export function ConversationContextMenu({
@@ -22,6 +22,24 @@ export function ConversationContextMenu({
   onUnshare: () => void;
   onDelete: () => void;
 }) {
+  const onKeyDown = useCallback((event: KeyboardEvent<HTMLDivElement>) => {
+    const key = event.key;
+    if (key !== "ArrowDown" && key !== "ArrowUp" && key !== "Home" && key !== "End") return;
+    const container = event.currentTarget;
+    const items = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
+    );
+    if (items.length === 0) return;
+    event.preventDefault();
+    const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement);
+    let nextIndex = currentIndex;
+    if (key === "ArrowDown") nextIndex = currentIndex < 0 ? 0 : (currentIndex + 1) % items.length;
+    else if (key === "ArrowUp") nextIndex = currentIndex < 0 ? items.length - 1 : (currentIndex - 1 + items.length) % items.length;
+    else if (key === "Home") nextIndex = 0;
+    else if (key === "End") nextIndex = items.length - 1;
+    items[nextIndex]?.focus();
+  }, []);
+
   return (
     <div
       ref={containerRef}
@@ -29,6 +47,7 @@ export function ConversationContextMenu({
       style={style}
       role="menu"
       aria-label={`Actions for ${conversation.title}`}
+      onKeyDown={onKeyDown}
     >
       <button
         type="button"
