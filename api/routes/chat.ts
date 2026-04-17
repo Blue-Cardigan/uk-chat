@@ -486,11 +486,10 @@ chatRoutes.post("/", async (c) => {
 
       const prefetchToolsLine = Array.isArray(prefetch.steps)
         ? prefetch.steps
-            .flatMap((step) =>
-              Array.isArray((step as { toolCalls?: unknown[] }).toolCalls)
-                ? ((step as { toolCalls?: unknown[] }).toolCalls as unknown[])
-                : [],
-            )
+            .flatMap((step) => {
+              const toolCalls = (step as { toolCalls?: unknown }).toolCalls;
+              return Array.isArray(toolCalls) ? toolCalls : [];
+            })
             .map((call) =>
               isRecord(call) && typeof call.toolName === "string" ? call.toolName : null,
             )
