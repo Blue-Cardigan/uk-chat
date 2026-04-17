@@ -42,6 +42,8 @@ function ArtifactPreview({
           type="button"
           className="flex min-w-0 flex-1 items-center gap-2 rounded px-1.5 py-1 text-left text-xs hover:bg-[color-mix(in_oklch,var(--color-foreground)_6%,transparent)]"
           onClick={onToggleExpanded}
+          aria-expanded={expanded}
+          aria-label={`${expanded ? "Collapse" : "Expand"} ${artifact.title ?? artifact.toolName}`}
         >
           <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 transition-transform", expanded ? "rotate-0" : "-rotate-90")} />
           <BarChart3 className="h-3.5 w-3.5 shrink-0 text-(--color-muted-foreground)" />
@@ -206,6 +208,8 @@ export function RightSidebar({ authToken }: Props) {
                     type="button"
                     className="flex w-full items-center justify-between gap-2 rounded px-1 py-1 text-left hover:bg-[color-mix(in_oklch,var(--color-foreground)_6%,transparent)]"
                     onClick={() => toggleConversationGroup(group.id)}
+                    aria-expanded={isExpanded}
+                    aria-label={`${isExpanded ? "Collapse" : "Expand"} artifacts for ${group.title}`}
                   >
                     <span className="truncate text-xs font-semibold uppercase tracking-wide text-(--color-muted-foreground)">
                       {group.title}

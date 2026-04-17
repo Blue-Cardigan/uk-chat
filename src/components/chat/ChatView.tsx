@@ -716,6 +716,8 @@ export function ChatView({
                 variant="ghost"
                 className="h-7 w-7 p-0"
                 aria-label={conversation ? `Open actions for ${conversation.title}` : "Conversation actions"}
+                aria-haspopup="menu"
+                aria-expanded={menuOpen}
                 onClick={() => setMenuOpen((current) => !current)}
                 disabled={!conversation}
               >

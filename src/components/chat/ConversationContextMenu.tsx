@@ -23,9 +23,16 @@ export function ConversationContextMenu({
   onDelete: () => void;
 }) {
   return (
-    <div ref={containerRef} className={className} style={style}>
+    <div
+      ref={containerRef}
+      className={className}
+      style={style}
+      role="menu"
+      aria-label={`Actions for ${conversation.title}`}
+    >
       <button
         type="button"
+        role="menuitem"
         className="w-full rounded px-2 py-1 text-left text-xs font-medium hover:bg-[color-mix(in_oklch,var(--color-foreground)_6%,transparent)]"
         onClick={onRename}
       >
@@ -33,6 +40,7 @@ export function ConversationContextMenu({
       </button>
       <button
         type="button"
+        role="menuitem"
         className="w-full rounded px-2 py-1 text-left text-xs font-medium hover:bg-[color-mix(in_oklch,var(--color-foreground)_6%,transparent)]"
         onClick={onToggleStar}
       >
@@ -40,6 +48,7 @@ export function ConversationContextMenu({
       </button>
       <button
         type="button"
+        role="menuitem"
         className="w-full rounded px-2 py-1 text-left text-xs font-medium hover:bg-[color-mix(in_oklch,var(--color-foreground)_6%,transparent)]"
         onClick={onShare}
       >
@@ -48,6 +57,7 @@ export function ConversationContextMenu({
       {conversation.is_public ? (
         <button
           type="button"
+          role="menuitem"
           className="w-full rounded px-2 py-1 text-left text-xs font-medium hover:bg-[color-mix(in_oklch,var(--color-foreground)_6%,transparent)]"
           onClick={onUnshare}
         >
@@ -56,6 +66,7 @@ export function ConversationContextMenu({
       ) : null}
       <button
         type="button"
+        role="menuitem"
         className="w-full rounded px-2 py-1 text-left text-xs font-medium text-(--color-accent) hover:bg-[color-mix(in_oklch,var(--color-accent)_14%,transparent)]"
         onClick={onDelete}
       >
