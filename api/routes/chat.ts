@@ -80,7 +80,7 @@ chatRoutes.post("/tools", async (c) => {
   if (!user) return json({ error: "Unauthorized" }, 401);
 
   const parsed = await parseJson(c, toolsBodySchema);
-  if (!parsed.ok) return parsed.response;
+  if ("response" in parsed) return parsed.response;
   const body = parsed.data;
 
   const supabase = getSupabaseAdmin(c.env);
@@ -211,7 +211,7 @@ chatRoutes.post("/", async (c) => {
   if (!user) return json({ error: "Unauthorized" }, 401);
 
   const parsed = await parseJson(c, chatBodySchema);
-  if (!parsed.ok) return parsed.response;
+  if ("response" in parsed) return parsed.response;
   const body = parsed.data;
 
   const supabase = getSupabaseAdmin(c.env);

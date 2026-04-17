@@ -62,7 +62,7 @@ conversationRoutes.post("/", async (c) => {
   const supabase = getSupabaseAdmin(c.env);
 
   const parsed = await parseJson(c, createBodySchema);
-  if (!parsed.ok) return parsed.response;
+  if ("response" in parsed) return parsed.response;
   const payload = { user_id: user.id, title: parsed.data.title?.trim() || "New chat" };
   const createConversation = () =>
     supabase.from("uk_chat_conversations").insert(payload).select(CONVERSATION_SELECT_FIELDS).single();
@@ -94,7 +94,7 @@ conversationRoutes.get("/:id", async (c) => {
   const user = await getUserFromRequest(c.req.raw, c.env);
   if (!user) return json({ error: "Unauthorized" }, 401);
   const idResult = parseParam(c, "id", uuidSchema);
-  if (!idResult.ok) return idResult.response;
+  if ("response" in idResult) return idResult.response;
   const id = idResult.data;
   const supabase = getSupabaseAdmin(c.env);
 
@@ -130,12 +130,12 @@ conversationRoutes.patch("/:id", async (c) => {
   const user = await getUserFromRequest(c.req.raw, c.env);
   if (!user) return json({ error: "Unauthorized" }, 401);
   const idResult = parseParam(c, "id", uuidSchema);
-  if (!idResult.ok) return idResult.response;
+  if ("response" in idResult) return idResult.response;
   const id = idResult.data;
   const supabase = getSupabaseAdmin(c.env);
 
   const parsed = await parseJson(c, patchBodySchema);
-  if (!parsed.ok) return parsed.response;
+  if ("response" in parsed) return parsed.response;
   const { title, starred } = parsed.data;
   const updates: { title?: string; starred?: boolean; updated_at: string } = {
     updated_at: new Date().toISOString(),
@@ -158,7 +158,7 @@ conversationRoutes.delete("/:id", async (c) => {
   const user = await getUserFromRequest(c.req.raw, c.env);
   if (!user) return json({ error: "Unauthorized" }, 401);
   const idResult = parseParam(c, "id", uuidSchema);
-  if (!idResult.ok) return idResult.response;
+  if ("response" in idResult) return idResult.response;
   const id = idResult.data;
   const supabase = getSupabaseAdmin(c.env);
 
@@ -172,7 +172,7 @@ conversationRoutes.post("/:id/share", async (c) => {
   const user = await getUserFromRequest(c.req.raw, c.env);
   if (!user) return json({ error: "Unauthorized" }, 401);
   const idResult = parseParam(c, "id", uuidSchema);
-  if (!idResult.ok) return idResult.response;
+  if ("response" in idResult) return idResult.response;
   const id = idResult.data;
   const supabase = getSupabaseAdmin(c.env);
 
@@ -212,7 +212,7 @@ conversationRoutes.patch("/:id/share", async (c) => {
   const user = await getUserFromRequest(c.req.raw, c.env);
   if (!user) return json({ error: "Unauthorized" }, 401);
   const idResult = parseParam(c, "id", uuidSchema);
-  if (!idResult.ok) return idResult.response;
+  if ("response" in idResult) return idResult.response;
   const id = idResult.data;
   const supabase = getSupabaseAdmin(c.env);
 
@@ -227,7 +227,7 @@ conversationRoutes.patch("/:id/share", async (c) => {
   }
 
   const parsed = await parseJson(c, shareUpdateBodySchema);
-  if (!parsed.ok) return parsed.response;
+  if ("response" in parsed) return parsed.response;
   const now = new Date().toISOString();
   const enabled = parsed.data.enabled;
   const expiresInDays = parsed.data.expiresInDays ?? DEFAULT_SHARE_EXPIRY_DAYS;

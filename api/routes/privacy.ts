@@ -40,7 +40,7 @@ privacyRoutes.put("/consent", async (c) => {
   await ensureProfileExists(user, c.env);
 
   const parsed = await parseJson(c, consentBodySchema);
-  if (!parsed.ok) return parsed.response;
+  if ("response" in parsed) return parsed.response;
   const now = new Date().toISOString();
   const patch = {
     user_id: user.id,

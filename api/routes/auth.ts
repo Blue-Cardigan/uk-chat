@@ -16,7 +16,7 @@ const emailBodySchema = z.object({ email: emailSchema });
 
 authRoutes.post("/check-email", async (c) => {
   const parsed = await parseJson(c, emailBodySchema);
-  if (!parsed.ok) return parsed.response;
+  if ("response" in parsed) return parsed.response;
   const normalizedEmail = parsed.data.email;
 
   if (isDevBypassEnabled()) {
@@ -42,7 +42,7 @@ authRoutes.post("/check-email", async (c) => {
 
 authRoutes.post("/sign-in", async (c) => {
   const parsed = await parseJson(c, emailBodySchema);
-  if (!parsed.ok) return parsed.response;
+  if ("response" in parsed) return parsed.response;
   const normalizedEmail = parsed.data.email;
 
   const supabase = getSupabaseAdmin(c.env);

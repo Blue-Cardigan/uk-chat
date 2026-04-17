@@ -52,7 +52,7 @@ adminRoutes.post("/users", async (c) => {
   if ("error" in admin) return admin.error;
 
   const parsed = await parseJson(c, emailBodySchema);
-  if (!parsed.ok) return parsed.response;
+  if ("response" in parsed) return parsed.response;
   try {
     const result = await onboardUser({ email: parsed.data.email, sendEmail: true }, c.env);
     await writeAdminAuditLog(c.env, {
@@ -78,7 +78,7 @@ adminRoutes.post("/tokens", async (c) => {
   if ("error" in admin) return admin.error;
 
   const parsed = await parseJson(c, emailBodySchema);
-  if (!parsed.ok) return parsed.response;
+  if ("response" in parsed) return parsed.response;
   try {
     const result = await onboardUser({ email: parsed.data.email, rotateToken: true, sendEmail: false }, c.env);
     const supabase = getSupabaseAdmin(c.env);
@@ -109,7 +109,7 @@ adminRoutes.post("/onboard-user", async (c) => {
   if ("error" in admin) return admin.error;
 
   const parsed = await parseJson(c, onboardBodySchema);
-  if (!parsed.ok) return parsed.response;
+  if ("response" in parsed) return parsed.response;
   const body = parsed.data;
 
   try {
@@ -187,7 +187,7 @@ adminRoutes.post("/admins", async (c) => {
   if ("error" in admin) return admin.error;
 
   const parsed = await parseJson(c, grantAdminSchema);
-  if (!parsed.ok) return parsed.response;
+  if ("response" in parsed) return parsed.response;
   const { email, role = "admin" } = parsed.data;
 
   const supabase = getSupabaseAdmin(c.env);
