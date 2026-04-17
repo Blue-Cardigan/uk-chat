@@ -77,7 +77,7 @@ export const PRIVACY_NOTICE_VERSION = "2026-03-30";
 export const DEFAULT_SHARE_EXPIRY_DAYS = 30;
 export const DEFAULT_RETENTION_DAYS = 365;
 export const AUTO_CHAT_TITLE_MAX_LENGTH = 72;
-export { AUTO_CHAT_TITLE_REGEX as AUTO_CHAT_TITLE_DEFAULT_REGEX } from "../../src/shared/chat-constants.js";
+export { AUTO_CHAT_TITLE_REGEX as AUTO_CHAT_TITLE_DEFAULT_REGEX };
 export const AUTO_CHAT_TITLE_MODEL = "google/gemini-2.5-flash-lite";
 export const UK_POSTCODE_REGEX = /\b([A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2})\b/i;
 export const MAX_CHAT_DOCUMENT_COUNT = 8;
