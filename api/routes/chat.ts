@@ -500,10 +500,12 @@ chatRoutes.post("/", async (c) => {
             .join(", ")
         : "";
       if (prefetchToolsLine) {
-        compactedMessages.push({
-          role: "assistant",
-          parts: [{ type: "text", text: `Evidence prefetch calls: ${prefetchToolsLine}` }],
-        });
+        quantContinuationContext = [
+          quantContinuationContext,
+          `Evidence prefetch calls: ${prefetchToolsLine}`,
+        ]
+          .filter(Boolean)
+          .join("\n");
       }
     } catch (error) {
       quantTelemetry.prefetchError = error instanceof Error ? error.message : String(error);
