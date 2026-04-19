@@ -7,6 +7,8 @@
     "dev": "concurrently -k -n WEB,API -c cyan,magenta \"npm:dev:web\" \"npm:dev:api\"",
     "dev:web": "vite",
     "dev:api": "wrangler pages dev dist --port 3000 --compatibility-date 2026-04-01 --compatibility-flags nodejs_compat",
+    "dev:worker": "wrangler dev --config=wrangler.worker.jsonc --port 3000",
+    "deploy:worker": "wrangler deploy --config=wrangler.worker.jsonc",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "tsc -b",

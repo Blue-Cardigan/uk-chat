@@ -1,0 +1,21 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "chatgb",
+  "main": "api/worker.ts",
+  "compatibility_date": "2026-04-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "ratelimits": [
+    { "name": "CHAT_LIMITER", "namespace_id": "2001", "simple": { "limit": 60, "period": 60 } },
+    { "name": "AUTH_LIMITER", "namespace_id": "2002", "simple": { "limit": 10, "period": 60 } },
+    { "name": "SHARE_LIMITER", "namespace_id": "2003", "simple": { "limit": 30, "period": 60 } }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}
