@@ -50,7 +50,7 @@ for key in "${KEYS[@]}"; do
   fi
   echo "==> secret put $key"
   printf "%s" "$value" | ./node_modules/.bin/wrangler secret put "$key" \
-    --config=wrangler.worker.jsonc >/dev/null
+     >/dev/null
 done
 
 if [ "${#missing[@]}" -gt 0 ]; then

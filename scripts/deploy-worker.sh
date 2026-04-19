@@ -33,5 +33,5 @@ if [ "${1:-}" != "--dry-run" ]; then
   npm run build
 fi
 
-echo "==> wrangler deploy --config=wrangler.worker.jsonc ${*:-}"
-./node_modules/.bin/wrangler deploy --config=wrangler.worker.jsonc "$@"
+echo "==> wrangler deploy ${*:-}"
+./node_modules/.bin/wrangler deploy "$@"

@@ -7,3 +7,7 @@ dist
 !.env.example
 *.tsbuildinfo
 .vercel
+
+# Local tooling
+.claude/
+.wrangler/
