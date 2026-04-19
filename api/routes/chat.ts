@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { convertToModelMessages, generateText, stepCountIs, streamText } from "ai";
+import { convertToModelMessages, createUIMessageStream, createUIMessageStreamResponse, generateText, stepCountIs, streamText } from "ai";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { CHAT_MODEL_CONFIGS, CHAT_SUPPORT_CONTACT, getChatModelConfig } from "../../src/shared/chat-models.js";
 import type { Env } from "../env.js";
@@ -545,7 +545,14 @@ chatRoutes.post("/", async (c) => {
     });
   }
 
-  // --- onFinish callback ---
+  // --- Phase 1 finish event capture (telemetry + state hand-off to execute) ---
+  type FinishEvent = Parameters<NonNullable<Parameters<typeof streamText>[0]["onFinish"]>>[0];
+  let resolveFinishEvent: (event: FinishEvent) => void = () => {};
+  let rejectFinishEvent: (reason: unknown) => void = () => {};
+  const finishEventPromise = new Promise<FinishEvent>((resolve, reject) => {
+    resolveFinishEvent = resolve;
+    rejectFinishEvent = reject;
+  });
   const onAssistantFinish: Parameters<typeof streamText>[0]["onFinish"] = async (event) => {
     if (requireDataToolCall) {
       const finalEvidence = summarizeQuantEvidence(event, selectedModel.minDataToolCallsForQuant);
@@ -559,140 +566,7 @@ chatRoutes.post("/", async (c) => {
       providerModel: selectedModel.providerModel,
       quantTelemetry,
     });
-
-    const persistPromise = (async () => {
-      const rawParts = buildAssistantPartsFromFinishEvent(event, (name) => safeToOriginal.get(name) ?? name);
-      const { parts: pairedParts, orphanCount } = ensureToolResultsPaired(rawParts);
-      if (orphanCount > 0) {
-        quantTelemetry.orphanToolCallsSynthesized = orphanCount;
-        logWarn("[api/chat] Synthesized stub results for orphan tool calls", {
-          conversationId: body.conversationId,
-          modelId: selectedModel.id,
-          orphanCount,
-        });
-      }
-
-      let assistantParts = pairedParts;
-      if (!hasMeaningfulTextPart(assistantParts) && hasAnyToolOutput(assistantParts)) {
-        quantTelemetry.nextSpeakerSynthesisTriggered = true;
-        try {
-          const priorMessages = isRecord(event.response) && Array.isArray(event.response.messages)
-            ? (event.response.messages as never)
-            : [];
-          const synthesis = await generateText({
-            model: openrouter.chat(selectedModel.providerModel),
-            system: systemPrompt,
-            messages: [
-              ...modelMessages,
-              ...priorMessages,
-              {
-                role: "user",
-                content:
-                  "Write the final answer now using ONLY the tool outputs above. No further tool calls. Use markdown, lead with the answer, and keep caveats proportionate.",
-              },
-            ] as never,
-            temperature: selectedModel.toolTemperature,
-            maxOutputTokens: 700,
-          });
-          const synthesisText = synthesis.text?.trim();
-          if (synthesisText) {
-            assistantParts = [...assistantParts, { type: "text", text: synthesisText }];
-            quantTelemetry.nextSpeakerSynthesisChars = synthesisText.length;
-          }
-        } catch (error) {
-          quantTelemetry.nextSpeakerSynthesisError = error instanceof Error ? error.message : String(error);
-          logWarn("[api/chat] Next-speaker synthesis failed", {
-            conversationId: body.conversationId,
-            modelId: selectedModel.id,
-            error: quantTelemetry.nextSpeakerSynthesisError,
-          });
-        }
-      }
-
-      const { error: assistantInsertError } = await supabase.from("uk_chat_messages").insert({
-        conversation_id: body.conversationId!,
-        role: "assistant",
-        parts: assistantParts,
-      });
-      if (assistantInsertError) {
-        logError("[api/chat] Failed to persist assistant message", {
-          conversationId: body.conversationId,
-          userId: user.id,
-          error: assistantInsertError.message,
-          code: assistantInsertError.code ?? null,
-        });
-        return;
-      }
-
-      const { error: updateConversationError } = await supabase
-        .from("uk_chat_conversations")
-        .update({ updated_at: new Date().toISOString() })
-        .eq("id", body.conversationId!)
-        .eq("user_id", user.id)
-        .is("deleted_at", null);
-      if (updateConversationError) {
-        logError("[api/chat] Failed to update conversation timestamp", {
-          conversationId: body.conversationId,
-          userId: user.id,
-          error: updateConversationError.message,
-          code: updateConversationError.code ?? null,
-        });
-      }
-    })();
-
-    const tokenTrackingPromise = (async () => {
-      const usage = isRecord(event.usage) ? (event.usage as Record<string, unknown>) : null;
-      const promptTokens =
-        (typeof usage?.["inputTokens"] === "number" ? usage["inputTokens"] : null) ??
-        (typeof usage?.["promptTokens"] === "number" ? usage["promptTokens"] : null) ??
-        0;
-      const completionTokens =
-        (typeof usage?.["outputTokens"] === "number" ? usage["outputTokens"] : null) ??
-        (typeof usage?.["completionTokens"] === "number" ? usage["completionTokens"] : null) ??
-        0;
-      const toolCallCount = Array.isArray(event.toolCalls) ? event.toolCalls.length : 0;
-      if (promptTokens === 0 && completionTokens === 0 && toolCallCount === 0) return;
-
-      const { error: tokenError } = await supabase.rpc("increment_token_usage", {
-        p_user_id: user.id,
-        p_model_id: selectedModel.id,
-        p_usage_date: utcDateStamp(),
-        p_prompt_tokens: promptTokens,
-        p_completion_tokens: completionTokens,
-        p_tool_calls: toolCallCount,
-      });
-      if (tokenError) {
-        logError("[api/chat] Failed to persist token usage", {
-          conversationId: body.conversationId,
-          userId: user.id,
-          modelId: selectedModel.id,
-          promptTokens,
-          completionTokens,
-          toolCallCount,
-          error: tokenError.message,
-        });
-      }
-    })();
-
-    const safePersist = persistPromise.catch((err) => {
-      logError("[api/chat] Persist background task threw", {
-        conversationId: body.conversationId,
-        userId: user.id,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    });
-    const safeTokens = tokenTrackingPromise.catch((err) => {
-      logError("[api/chat] Token tracking background task threw", {
-        conversationId: body.conversationId,
-        userId: user.id,
-        modelId: selectedModel.id,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    });
-    c.executionCtx.waitUntil(safePersist);
-    c.executionCtx.waitUntil(safeTokens);
-    // Errors are swallowed into logs; Promise.all never rejects here by design — response succeeds even if persist/token tracking fail.
-    await Promise.all([safePersist, safeTokens]);
+    resolveFinishEvent(event);
   };
 
   // --- Streaming with fallback chain ---
@@ -746,10 +620,174 @@ chatRoutes.post("/", async (c) => {
     telemetry: quantTelemetry,
   });
 
-  return result.toUIMessageStreamResponse({
-    // SDK narrows to its own UIMessage generic; request payload is unknown-shaped.
+  const composedStream = createUIMessageStream({
     originalMessages: (body.messages ?? []) as never,
+    execute: async ({ writer }) => {
+      writer.merge(result.toUIMessageStream());
+
+      let event: FinishEvent;
+      try {
+        event = await finishEventPromise;
+      } catch (error) {
+        logError("[api/chat] Phase 1 stream finished without onFinish event", {
+          conversationId: body.conversationId,
+          userId: user.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return;
+      }
+
+      const rawParts = buildAssistantPartsFromFinishEvent(event, (name) => safeToOriginal.get(name) ?? name);
+      const { parts: pairedParts, orphanCount } = ensureToolResultsPaired(rawParts);
+      if (orphanCount > 0) {
+        quantTelemetry.orphanToolCallsSynthesized = orphanCount;
+        logWarn("[api/chat] Synthesized stub results for orphan tool calls", {
+          conversationId: body.conversationId,
+          modelId: selectedModel.id,
+          orphanCount,
+        });
+      }
+
+      let assistantParts = pairedParts;
+      let synthesisUsage: Record<string, unknown> | null = null;
+
+      if (!hasMeaningfulTextPart(assistantParts) && hasAnyToolOutput(assistantParts)) {
+        quantTelemetry.nextSpeakerSynthesisTriggered = true;
+        try {
+          const priorMessages = isRecord(event.response) && Array.isArray(event.response.messages)
+            ? (event.response.messages as never[])
+            : [];
+          const synthesis = streamText({
+            model: openrouter.chat(selectedModel.providerModel),
+            system: systemPrompt,
+            messages: [
+              ...modelMessages,
+              ...priorMessages,
+              {
+                role: "user",
+                content:
+                  "Write the final answer now using ONLY the tool outputs above. No further tool calls. Use markdown, lead with the answer, and keep caveats proportionate.",
+              },
+            ] as never,
+            temperature: selectedModel.toolTemperature,
+            maxOutputTokens: 700,
+            abortSignal: c.req.raw.signal,
+          });
+          writer.merge(synthesis.toUIMessageStream());
+          const [synthText, synthUsageRaw] = await Promise.all([synthesis.text, synthesis.usage]);
+          synthesisUsage = isRecord(synthUsageRaw) ? (synthUsageRaw as Record<string, unknown>) : null;
+          const trimmed = synthText?.trim();
+          if (trimmed) {
+            assistantParts = [...assistantParts, { type: "text", text: trimmed }];
+            quantTelemetry.nextSpeakerSynthesisChars = trimmed.length;
+          }
+        } catch (error) {
+          quantTelemetry.nextSpeakerSynthesisError = error instanceof Error ? error.message : String(error);
+          logWarn("[api/chat] Next-speaker synthesis failed", {
+            conversationId: body.conversationId,
+            modelId: selectedModel.id,
+            error: quantTelemetry.nextSpeakerSynthesisError,
+          });
+        }
+      }
+
+      const persistPromise = (async () => {
+        const { error: assistantInsertError } = await supabase.from("uk_chat_messages").insert({
+          conversation_id: body.conversationId!,
+          role: "assistant",
+          parts: assistantParts,
+        });
+        if (assistantInsertError) {
+          logError("[api/chat] Failed to persist assistant message", {
+            conversationId: body.conversationId,
+            userId: user.id,
+            error: assistantInsertError.message,
+            code: assistantInsertError.code ?? null,
+          });
+          return;
+        }
+
+        const { error: updateConversationError } = await supabase
+          .from("uk_chat_conversations")
+          .update({ updated_at: new Date().toISOString() })
+          .eq("id", body.conversationId!)
+          .eq("user_id", user.id)
+          .is("deleted_at", null);
+        if (updateConversationError) {
+          logError("[api/chat] Failed to update conversation timestamp", {
+            conversationId: body.conversationId,
+            userId: user.id,
+            error: updateConversationError.message,
+            code: updateConversationError.code ?? null,
+          });
+        }
+      })();
+
+      const tokenTrackingPromise = (async () => {
+        const phase1Usage = isRecord(event.usage) ? (event.usage as Record<string, unknown>) : null;
+        const getNum = (usage: Record<string, unknown> | null, keys: string[]) => {
+          for (const key of keys) {
+            const value = usage?.[key];
+            if (typeof value === "number") return value;
+          }
+          return 0;
+        };
+        const promptTokens =
+          getNum(phase1Usage, ["inputTokens", "promptTokens"]) +
+          getNum(synthesisUsage, ["inputTokens", "promptTokens"]);
+        const completionTokens =
+          getNum(phase1Usage, ["outputTokens", "completionTokens"]) +
+          getNum(synthesisUsage, ["outputTokens", "completionTokens"]);
+        const toolCallCount = Array.isArray(event.toolCalls) ? event.toolCalls.length : 0;
+        if (promptTokens === 0 && completionTokens === 0 && toolCallCount === 0) return;
+
+        const { error: tokenError } = await supabase.rpc("increment_token_usage", {
+          p_user_id: user.id,
+          p_model_id: selectedModel.id,
+          p_usage_date: utcDateStamp(),
+          p_prompt_tokens: promptTokens,
+          p_completion_tokens: completionTokens,
+          p_tool_calls: toolCallCount,
+        });
+        if (tokenError) {
+          logError("[api/chat] Failed to persist token usage", {
+            conversationId: body.conversationId,
+            userId: user.id,
+            modelId: selectedModel.id,
+            promptTokens,
+            completionTokens,
+            toolCallCount,
+            error: tokenError.message,
+          });
+        }
+      })();
+
+      const safePersist = persistPromise.catch((err) => {
+        logError("[api/chat] Persist background task threw", {
+          conversationId: body.conversationId,
+          userId: user.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+      const safeTokens = tokenTrackingPromise.catch((err) => {
+        logError("[api/chat] Token tracking background task threw", {
+          conversationId: body.conversationId,
+          userId: user.id,
+          modelId: selectedModel.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+      c.executionCtx.waitUntil(safePersist);
+      c.executionCtx.waitUntil(safeTokens);
+      await Promise.all([safePersist, safeTokens]);
+    },
+    onError: (error) => {
+      rejectFinishEvent(error);
+      return error instanceof Error ? error.message : String(error);
+    },
   });
+
+  return createUIMessageStreamResponse({ stream: composedStream });
 });
 
 export { chatRoutes };
