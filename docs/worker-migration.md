@@ -64,20 +64,38 @@ login, chat request with tool calls, rate-limit behaviour.
 
 ### 4. Flip custom domains
 
-A custom domain can only attach to one resource at a time. Move both
-domains from Pages to the Worker:
+A custom domain can only attach to one resource at a time, and the
+domains are currently on the Pages project. Two ways to switch:
 
-- **Workers & Pages → chatgb (Pages) → Custom domains** — remove
-  `chatgb.co.uk` and `www.chatgb.co.uk`.
-- **Workers & Pages → chatgb-worker → Settings → Domains & Routes** —
-  add `chatgb.co.uk` and `www.chatgb.co.uk` as Custom Domains.
+**Dashboard flow (simpler, more clicks):**
 
-There will be a short gap (seconds) between remove + re-add during
-which the domains 404 or point nowhere. Do this when you can absorb
-it.
+1. Workers & Pages → chatgb (Pages) → Custom domains — remove
+   `chatgb.co.uk` and `www.chatgb.co.uk`.
+2. Workers & Pages → chatgb-worker → Settings → Domains & Routes —
+   add both domains as Custom Domains.
 
-DNS records are managed automatically when you use the dashboard's
-Custom Domain flow.
+**Wrangler-assisted flow (one extra commit, fewer clicks):**
+
+1. Add this block to `wrangler.worker.jsonc` (top level):
+
+   ```jsonc
+   "routes": [
+     { "pattern": "chatgb.co.uk", "custom_domain": true },
+     { "pattern": "www.chatgb.co.uk", "custom_domain": true }
+   ],
+   ```
+
+2. Workers & Pages → chatgb (Pages) → Custom domains — remove both
+   domains.
+3. `npm run deploy:worker` — wrangler attaches both domains on
+   deploy.
+
+   If this step errors with "custom hostname already in use", the
+   Pages removal hasn't propagated; wait ~30s and retry.
+
+Either way there's a short gap (seconds to a minute) during which
+the domains 404. Do this when you can absorb it. DNS records are
+managed automatically by the Custom Domain flow.
 
 ### 5. Schedule handler
 
