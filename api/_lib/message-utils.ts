@@ -264,6 +264,50 @@ export function buildAssistantPartsFromFinishEvent(
   return fallbackParts;
 }
 
+export function ensureToolResultsPaired(parts: PersistedMessagePart[]): {
+  parts: PersistedMessagePart[];
+  orphanCount: number;
+} {
+  let orphanCount = 0;
+  const paired = parts.map((part) => {
+    if (!isRecord(part) || typeof part.type !== "string" || !part.type.startsWith("tool-")) return part;
+    if (part.state === "output-available") return part;
+    orphanCount += 1;
+    return {
+      ...part,
+      state: "output-available",
+      output: {
+        isError: true,
+        error: "Tool execution did not produce a result before the stream ended.",
+        synthesized: true,
+      },
+    };
+  });
+  return { parts: paired, orphanCount };
+}
+
+export function hasMeaningfulTextPart(parts: PersistedMessagePart[]): boolean {
+  return parts.some(
+    (part) =>
+      isRecord(part) &&
+      part.type === "text" &&
+      typeof part.text === "string" &&
+      part.text.trim().length > 0,
+  );
+}
+
+export function hasAnyToolOutput(parts: PersistedMessagePart[]): boolean {
+  return parts.some(
+    (part) =>
+      isRecord(part) &&
+      typeof part.type === "string" &&
+      part.type.startsWith("tool-") &&
+      part.state === "output-available" &&
+      part.output != null &&
+      !(isRecord(part.output) && part.output.isError === true),
+  );
+}
+
 export function isPersistedToolPart(part: unknown): part is PersistedMessagePart & { type: `tool-${string}` } {
   return isRecord(part) && typeof part.type === "string" && part.type.startsWith("tool-");
 }
