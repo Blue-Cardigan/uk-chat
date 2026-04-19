@@ -17,7 +17,17 @@ export function VisualizationCard({
   const compact = useContext(VizCompactContext);
 
   if (compact) {
-    return <Card className="animate-[slideUp_250ms_ease-out_both]">{children}</Card>;
+    return (
+      <Card className="animate-[slideUp_250ms_ease-out_both] space-y-2">
+        {title ? (
+          <header className="space-y-0.5">
+            <h3 className="text-sm font-semibold">{title}</h3>
+            {subtitle ? <p className="text-xs text-(--color-muted-foreground)">{subtitle}</p> : null}
+          </header>
+        ) : null}
+        {children}
+      </Card>
+    );
   }
 
   return (

@@ -104,6 +104,11 @@ PLAN BEFORE CALLING TOOLS (IMPORTANT)
 
 function buildVisualizationBlock(): string {
   return `
+VISUALISATION INTENT DETECTION (apply before finalising the turn)
+- Treat the user's first message as implying a chart whenever it contains: "show", "chart", "graph", "plot", "visualise", "compare", "trend", "over time", "how safe", "how many", "break down", "breakdown", "by category", "by month", "by year", "by area", or similar comparative/aggregation phrasing.
+- When intent is implied, render a chart in the SAME turn via create_chart (after fetching data). Do not wait for a second prompt like "give me a chart" before producing the visual.
+- If the data is too sparse for a chart (<3 numeric points), say so explicitly and offer the compact table instead.
+
 VISUALISATION DECISION FRAMEWORK
 1) If tool output includes vizHint.suggested:
    - none -> do not force a chart; use concise narrative or compact table.

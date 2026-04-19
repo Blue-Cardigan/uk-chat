@@ -276,8 +276,16 @@ function ToolPartView({ tool, index }: { tool: NormalisedTool; index: number }) 
 
 function InlineArtifact({ payload, tool }: { payload: VizPayload; tool: NormalisedTool }) {
   const vizRef = useRef<HTMLDivElement | null>(null);
-  const hasInput = tool.input != null;
-  const inputJson = useMemo(() => (hasInput ? JSON.stringify(tool.input, null, 2) : ""), [hasInput, tool.input]);
+  const dataRows = useMemo(() => {
+    if (payload.chartSpec?.data?.length) return payload.chartSpec.data;
+    return null;
+  }, [payload.chartSpec]);
+  const sources = useMemo(() => {
+    const fromSpec = Array.isArray(payload.chartSpec?.sources) ? payload.chartSpec.sources : [];
+    const toolName = tool.toolName ? [tool.toolName] : [];
+    return Array.from(new Set([...fromSpec, ...toolName])).filter(Boolean);
+  }, [payload.chartSpec, tool.toolName]);
+  const inputJson = useMemo(() => (tool.input != null ? JSON.stringify(tool.input, null, 2) : ""), [tool.input]);
 
   return (
     <div className="group relative">
@@ -291,11 +299,71 @@ function InlineArtifact({ payload, tool }: { payload: VizPayload; tool: Normalis
       <div className="pointer-events-none absolute top-2 right-2 flex gap-1 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100">
         <ArtifactToolbar payload={payload} targetRef={vizRef} className="flex gap-1" />
       </div>
-      {hasInput ? (
+      {dataRows ? (
         <details className="mt-1 text-xs">
-          <summary className="cursor-pointer text-[11px] text-(--color-muted-foreground)">Input</summary>
+          <summary className="cursor-pointer text-[11px] text-(--color-muted-foreground)">
+            Data
+            {sources.length > 0 ? (
+              <span className="ml-2 text-(--color-muted-foreground)/80">· source: {sources.join(", ")}</span>
+            ) : null}
+          </summary>
+          <DataRowsTable rows={dataRows} />
+        </details>
+      ) : inputJson ? (
+        <details className="mt-1 text-xs">
+          <summary className="cursor-pointer text-[11px] text-(--color-muted-foreground)">
+            Request
+            {sources.length > 0 ? (
+              <span className="ml-2 text-(--color-muted-foreground)/80">· source: {sources.join(", ")}</span>
+            ) : null}
+          </summary>
           <pre className="mt-1 overflow-x-auto whitespace-pre-wrap rounded bg-(--color-background) p-2 text-[11px]">{inputJson}</pre>
         </details>
+      ) : null}
+    </div>
+  );
+}
+
+function DataRowsTable({ rows }: { rows: Array<Record<string, unknown>> }) {
+  const headers = useMemo(() => {
+    const seen = new Set<string>();
+    for (const row of rows.slice(0, 50)) {
+      for (const key of Object.keys(row)) seen.add(key);
+    }
+    return Array.from(seen);
+  }, [rows]);
+  const displayRows = rows.slice(0, 50);
+  return (
+    <div className="mt-1 overflow-x-auto rounded bg-(--color-background) p-2 text-[11px]">
+      <table className="w-full text-left">
+        <thead>
+          <tr>
+            {headers.map((header) => (
+              <th key={header} scope="col" className="border-b border-(--color-border) py-1 pr-3 font-medium text-(--color-muted-foreground)">
+                {header}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {displayRows.map((row, rowIndex) => (
+            <tr key={rowIndex}>
+              {headers.map((header) => {
+                const value = row[header];
+                const display =
+                  value == null ? "" : typeof value === "object" ? JSON.stringify(value) : String(value);
+                return (
+                  <td key={header} className="border-b border-(--color-border)/60 py-1 pr-3">
+                    {display}
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {rows.length > displayRows.length ? (
+        <p className="mt-1 text-(--color-muted-foreground)">Showing {displayRows.length} of {rows.length} rows.</p>
       ) : null}
     </div>
   );
