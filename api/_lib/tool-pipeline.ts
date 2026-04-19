@@ -361,6 +361,33 @@ export function compactMcpToolsForModelContext(
   return Object.fromEntries(compactedEntries);
 }
 
+export function wrapToolExecutionErrors(tools: Record<string, unknown>): Record<string, unknown> {
+  const wrapped = Object.entries(tools).map(([toolName, definition]) => {
+    if (!isRecord(definition) || typeof definition.execute !== "function") {
+      return [toolName, definition] as const;
+    }
+    const originalExecute = definition.execute as (...args: unknown[]) => unknown;
+    return [
+      toolName,
+      {
+        ...definition,
+        execute: async (...args: unknown[]) => {
+          try {
+            return await originalExecute(...args);
+          } catch (error) {
+            return {
+              isError: true,
+              error: error instanceof Error ? error.message : String(error),
+              tool: toolName,
+            };
+          }
+        },
+      },
+    ] as const;
+  });
+  return Object.fromEntries(wrapped);
+}
+
 type ToolCallRow = { toolName: string | null; toolCallId: string | null };
 type ToolResultRow = { toolCallId: string | null; output: unknown };
 

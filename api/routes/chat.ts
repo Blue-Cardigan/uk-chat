@@ -21,6 +21,7 @@ import {
   shouldRequireDataToolCall,
   summarizeQuantEvidence,
   summarizeToolLoopHealth,
+  wrapToolExecutionErrors,
 } from "../_lib/tool-pipeline.js";
 import {
   AUTO_CHAT_TITLE_MODEL,
@@ -288,7 +289,8 @@ chatRoutes.post("/", async (c) => {
   // --- Tool schema normalization and projection ---
   const { projectedTools, projectedToolNames } = projectToolSchemasForModel(guardedTools, selectedModel.id);
   const { normalizedTools, normalizedToolNames } = normalizeToolSchemas(projectedTools);
-  const { safeTools, safeToOriginal, renamedPairs } = buildProviderSafeTools(normalizedTools);
+  const { safeTools: rawSafeTools, safeToOriginal, renamedPairs } = buildProviderSafeTools(normalizedTools);
+  const safeTools = wrapToolExecutionErrors(rawSafeTools);
 
   const quantitativeSafeTools = Object.fromEntries(
     Object.entries(safeTools).filter(([toolName]) => toolName !== CREATE_CHART_TOOL_NAME),
