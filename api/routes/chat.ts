@@ -662,7 +662,10 @@ chatRoutes.post("/", async (c) => {
       tools: options.includeTools
         ? (options.toolsOverride ?? (safeTools as Parameters<typeof streamText>[0]["tools"]))
         : undefined,
-      toolChoice: options.includeTools ? (options.requireToolCall ? "required" : "auto") : undefined,
+      toolChoice: options.includeTools ? "auto" : undefined,
+      prepareStep: options.includeTools && options.requireToolCall
+        ? ({ stepNumber }) => (stepNumber === 0 ? { toolChoice: "required" } : {})
+        : undefined,
       stopWhen: stepCountIs(
         options.stepLimitOverride ?? (requireDataToolCall ? quantMainStepLimit : selectedModel.toolStepLimit),
       ),
