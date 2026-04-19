@@ -231,6 +231,8 @@ export function LeftSidebar({
               isMenuOpen ? "opacity-100" : "opacity-0 group-hover:opacity-100 focus:opacity-100",
             )}
             aria-label={`Open actions for ${conversation.title}`}
+            aria-haspopup="menu"
+            aria-expanded={isMenuOpen}
             onClick={(event) => {
               event.stopPropagation();
               const nextMenuId = openMenuId === conversation.id ? null : conversation.id;

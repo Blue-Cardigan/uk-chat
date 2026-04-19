@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { BarChart3, PanelLeftOpen, X } from "lucide-react";
 import { Button } from "@/components/ui/primitives";
 import { LeftSidebar } from "@/components/layout/LeftSidebar";
@@ -7,6 +7,7 @@ import { ChatView } from "@/components/chat/ChatView";
 import { useAppStore } from "@/lib/store";
 import type { ChatConversation } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { useFocusTrap } from "@/hooks/useFocusTrap";
 
 export function AppShell({
   conversations,
@@ -45,8 +46,6 @@ export function AppShell({
   settingsContent: React.ReactNode;
   onClearActiveConversation: () => void;
 }) {
-  const FOCUSABLE_SELECTOR =
-    'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
   const sidebarOpen = useAppStore((state) => state.sidebarOpen);
   const rightSidebarOpen = useAppStore((state) => state.rightSidebarOpen);
   const setSidebarOpen = useAppStore((state) => state.setSidebarOpen);
@@ -57,6 +56,10 @@ export function AppShell({
   const [sharePending, setSharePending] = useState(false);
   const settingsDialogRef = useRef<HTMLDivElement | null>(null);
   const shareDialogRef = useRef<HTMLDivElement | null>(null);
+  const closeSettings = useCallback(() => setSettingsOpen(false), []);
+  const closeShareModal = useCallback(() => setShareModalConversation(null), []);
+  useFocusTrap(settingsDialogRef, settingsOpen, closeSettings);
+  useFocusTrap(shareDialogRef, Boolean(shareModalConversation), closeShareModal);
   const activeConversation = useMemo(
     () => conversations.find((conversation) => conversation.id === activeConversationId) ?? null,
     [activeConversationId, conversations],
@@ -92,80 +95,12 @@ export function AppShell({
     window.setTimeout(() => setShareNotice(null), 3000);
   }
 
-  useEffect(() => {
-    if (!settingsOpen) return;
-    const previousFocusedElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const focusables = settingsDialogRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR);
-    focusables?.[0]?.focus();
-
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        setSettingsOpen(false);
-        return;
-      }
-      if (e.key !== "Tab") return;
-      if (!focusables || focusables.length === 0) {
-        e.preventDefault();
-        return;
-      }
-      const first = focusables[0];
-      const last = focusables[focusables.length - 1];
-      const active = document.activeElement;
-      if (e.shiftKey && active === first) {
-        e.preventDefault();
-        last.focus();
-      } else if (!e.shiftKey && active === last) {
-        e.preventDefault();
-        first.focus();
-      }
-    }
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("keydown", onKeyDown);
-      previousFocusedElement?.focus();
-    };
-  }, [FOCUSABLE_SELECTOR, settingsOpen]);
-
-  useEffect(() => {
-    if (!shareModalConversation) return;
-    const previousFocusedElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const focusables = shareDialogRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR);
-    focusables?.[0]?.focus();
-
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        setShareModalConversation(null);
-        return;
-      }
-      if (e.key !== "Tab") return;
-      if (!focusables || focusables.length === 0) {
-        e.preventDefault();
-        return;
-      }
-      const first = focusables[0];
-      const last = focusables[focusables.length - 1];
-      const active = document.activeElement;
-      if (e.shiftKey && active === first) {
-        e.preventDefault();
-        last.focus();
-      } else if (!e.shiftKey && active === last) {
-        e.preventDefault();
-        first.focus();
-      }
-    }
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("keydown", onKeyDown);
-      previousFocusedElement?.focus();
-    };
-  }, [FOCUSABLE_SELECTOR, shareModalConversation]);
-
   const desktopGridClass = sidebarOpen
     ? rightSidebarOpen
-      ? "md:grid-cols-[280px_minmax(0,1fr)_320px]"
-      : "md:grid-cols-[280px_minmax(0,1fr)_0px]"
+      ? "md:grid-cols-[240px_minmax(0,1fr)_280px] lg:grid-cols-[280px_minmax(0,1fr)_320px]"
+      : "md:grid-cols-[240px_minmax(0,1fr)_0px] lg:grid-cols-[280px_minmax(0,1fr)_0px]"
     : rightSidebarOpen
-      ? "md:grid-cols-[0px_minmax(0,1fr)_320px]"
+      ? "md:grid-cols-[0px_minmax(0,1fr)_280px] lg:grid-cols-[0px_minmax(0,1fr)_320px]"
       : "md:grid-cols-[0px_minmax(0,1fr)_0px]";
 
   return (
@@ -259,7 +194,7 @@ export function AppShell({
           <div
             className={cn(
               "absolute right-0 top-0 h-full w-full md:relative md:h-full md:w-full md:max-w-none md:transition-[opacity,transform] md:duration-250 md:ease-out",
-              "md:w-[320px]",
+              "md:w-[280px] lg:w-[320px]",
               rightSidebarOpen ? "translate-x-0 opacity-100" : "translate-x-full opacity-0",
               rightSidebarOpen ? "md:translate-x-0 md:opacity-100" : "md:pointer-events-none md:translate-x-3 md:opacity-0",
             )}
@@ -271,7 +206,7 @@ export function AppShell({
           <div
             className={cn(
               "absolute inset-y-0 right-0 z-50 overflow-y-auto bg-(--color-background)/95 backdrop-blur-sm",
-              sidebarOpen ? "left-0 md:left-[280px]" : "left-0",
+              sidebarOpen ? "left-0 md:left-[240px] lg:left-[280px]" : "left-0",
             )}
             role="dialog"
             aria-modal="true"
@@ -298,7 +233,7 @@ export function AppShell({
           <div
             className={cn(
               "absolute inset-y-0 right-0 z-60 flex items-center justify-center bg-[color-mix(in_oklch,var(--color-foreground)_40%,transparent)] px-4",
-              sidebarOpen ? "left-0 md:left-[280px]" : "left-0",
+              sidebarOpen ? "left-0 md:left-[240px] lg:left-[280px]" : "left-0",
             )}
             role="dialog"
             aria-modal="true"
