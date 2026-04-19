@@ -11,9 +11,26 @@ Current state: `wrangler.jsonc` (Pages) runs production; `wrangler.worker.jsonc`
 
 All steps are driven by the user — CI is untouched until the Worker is verified.
 
-### 1. Provision secrets on the Worker
+### 1. First deploy (creates the Worker)
 
-Pages env vars do not carry over. Set each one via `wrangler secret put`:
+Pages env vars do not carry over. The Worker must exist before
+`wrangler secret put` has a target to write to, so deploy first —
+runtime will 500 until secrets land, which is expected.
+
+```sh
+npm run build
+npm run deploy:worker
+```
+
+This creates the Worker `chatgb-worker` (name is `chatgb-worker`, not
+`chatgb`, to avoid a name conflict with the existing Pages project)
+and makes it reachable at
+`chatgb-worker.<account-subdomain>.workers.dev`.
+
+### 2. Provision secrets on the Worker
+
+`wrangler secret put KEY` is interactive — it prompts for the value
+and writes it to the Worker named in the target config. Run:
 
 ```sh
 for KEY in \
@@ -29,31 +46,40 @@ for KEY in \
 done
 ```
 
-(Skip keys that are truly optional in your setup.)
-
-### 2. Deploy the Worker
+(Skip keys that are truly optional in your setup.) Or pipe a value:
 
 ```sh
-npm run build
+wrangler secret put KEY --config=wrangler.worker.jsonc <<< "value"
+```
+
+### 3. Redeploy so the running Worker picks up the secrets
+
+```sh
 npm run deploy:worker
 ```
 
-This deploys to `chatgb.<account-subdomain>.workers.dev`. Test end-to-end there
-before touching custom domains.
+Then smoke-test the app at
+`https://chatgb-worker.<account-subdomain>.workers.dev` end-to-end —
+login, chat request with tool calls, rate-limit behaviour.
 
-### 3. Flip custom domains
+### 4. Flip custom domains
 
-In the Cloudflare dashboard:
+A custom domain can only attach to one resource at a time. Move both
+domains from Pages to the Worker:
 
-- **Workers & Pages → chatgb (Worker) → Settings → Domains & Routes** — add
-  `chatgb.co.uk` and `www.chatgb.co.uk` as Custom Domains.
-- **Workers & Pages → chatgb (Pages) → Custom domains** — remove the same
-  domains.
+- **Workers & Pages → chatgb (Pages) → Custom domains** — remove
+  `chatgb.co.uk` and `www.chatgb.co.uk`.
+- **Workers & Pages → chatgb-worker → Settings → Domains & Routes** —
+  add `chatgb.co.uk` and `www.chatgb.co.uk` as Custom Domains.
 
-DNS records are managed automatically when you use the dashboard's Custom
-Domain flow. If you configured DNS manually, update the CNAME targets.
+There will be a short gap (seconds) between remove + re-add during
+which the domains 404 or point nowhere. Do this when you can absorb
+it.
 
-### 4. Schedule handler
+DNS records are managed automatically when you use the dashboard's
+Custom Domain flow.
+
+### 5. Schedule handler
 
 `api/worker.ts` exports a `scheduled` handler for data retention. Pages does
 not invoke it; it relies on external HTTP hits to `/api/cron`. Once on
@@ -68,7 +94,7 @@ Workers, you can either:
 
   Pick a schedule that matches what the external cron currently uses.
 
-### 5. Update CI
+### 6. Update CI
 
 Once domains are flipped and production traffic is on the Worker, replace the
 Pages deploy step in `.github/workflows/ci.yml` with a Worker deploy:
@@ -85,7 +111,7 @@ Pages deploy step in `.github/workflows/ci.yml` with a Worker deploy:
 
 Also remove the `Strip unsafe bindings` step — the Worker config is valid as-is.
 
-### 6. Retire Pages
+### 7. Retire Pages
 
 When the Worker has served traffic cleanly for a week:
 
