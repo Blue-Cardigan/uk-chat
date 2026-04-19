@@ -30,6 +30,18 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Strip unsafe bindings from wrangler.jsonc (Pages-incompatible)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          node -e "
+            const fs = require('fs');
+            const path = 'wrangler.jsonc';
+            const src = fs.readFileSync(path, 'utf8');
+            const stripped = src.replace(/\s*,?\s*\"unsafe\"\s*:\s*\{[\s\S]*?\n\s*\}/m, '');
+            fs.writeFileSync(path, stripped);
+            console.log(stripped);
+          "
+
       - name: Deploy to Cloudflare Pages
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: cloudflare/wrangler-action@v3
