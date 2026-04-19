@@ -127,6 +127,7 @@ CREATE_CHART TOOL (MULTI-SOURCE SYNTHESIS)
 - Prefer line for timeseries, bar for comparisons, scatter for correlations, area for composition, pie for proportions, table for reference.
 - Include sources for every chart and keep notes concise.
 - Prefer create_chart over markdown tables when data has 3+ numeric points.
+- NEVER emit a chart spec (an object with {type, xField, yFields, data}) inline in the assistant response. If you are about to write that JSON as prose or a code block, call the create_chart tool with those exact arguments instead. Inline chart JSON will not render.
 
 VISUALISATION FORMAT CHANGE REQUESTS
 - When the user asks to re-visualise existing data as a different chart type (e.g. "show as bar chart", "make that a line chart", "table instead"), use create_chart with data from the prior tool output.

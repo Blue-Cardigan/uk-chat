@@ -6,11 +6,96 @@ import { ArtifactToolbar } from "@/components/viz/ArtifactToolbar";
 import { VizCompactContext } from "@/components/viz/VisualizationCard";
 import { buildChartSpecFromVizHint, isChartSpec } from "@/lib/viz-data-parser";
 import { isVizArtifactCandidate } from "@/lib/viz-helpers";
-import type { VizPayload } from "@/lib/types";
+import type { ChartSpec, VizPayload } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { stripToolContextEchoes } from "@/shared/text-sanitize";
 
 const VizRouter = lazy(() => import("@/components/viz/VizRouter").then((m) => ({ default: m.VizRouter })));
+const DataDrivenChart = lazy(() =>
+  import("@/components/viz/charts/DataDrivenChart").then((m) => ({ default: m.DataDrivenChart })),
+);
+
+type ChartSegment =
+  | { kind: "text"; text: string }
+  | { kind: "chart"; spec: ChartSpec };
+
+function findBalancedJsonObject(text: string, fromIndex: number): { raw: string; endIndex: number } | null {
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  let start = -1;
+  for (let index = fromIndex; index < text.length; index += 1) {
+    const char = text[index];
+    if (start === -1) {
+      if (char === "{") {
+        start = index;
+        depth = 1;
+      }
+      continue;
+    }
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (char === "\\") {
+      escape = true;
+      continue;
+    }
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (char === "{") depth += 1;
+    else if (char === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return { raw: text.slice(start, index + 1), endIndex: index + 1 };
+      }
+    }
+  }
+  return null;
+}
+
+function splitTextIntoChartSegments(text: string): ChartSegment[] {
+  const segments: ChartSegment[] = [];
+  let cursor = 0;
+  let emittedChart = false;
+  while (cursor < text.length) {
+    const braceIndex = text.indexOf("{", cursor);
+    if (braceIndex === -1) break;
+    const match = findBalancedJsonObject(text, braceIndex);
+    if (!match) break;
+    let parsed: unknown = null;
+    try {
+      parsed = JSON.parse(match.raw);
+    } catch {
+      parsed = null;
+    }
+    if (isChartSpec(parsed)) {
+      const before = text.slice(cursor, braceIndex);
+      let leading = before;
+      let trailingStart = match.endIndex;
+      const fenceStart = before.lastIndexOf("```");
+      if (fenceStart !== -1 && /^```(?:json)?\s*$/i.test(before.slice(fenceStart).trim())) {
+        leading = before.slice(0, fenceStart);
+        const closeFence = text.indexOf("```", match.endIndex);
+        if (closeFence !== -1 && text.slice(match.endIndex, closeFence).trim().length === 0) {
+          trailingStart = closeFence + 3;
+        }
+      }
+      if (leading.length > 0) segments.push({ kind: "text", text: leading });
+      segments.push({ kind: "chart", spec: parsed });
+      emittedChart = true;
+      cursor = trailingStart;
+      continue;
+    }
+    cursor = braceIndex + 1;
+  }
+  if (!emittedChart) return [{ kind: "text", text }];
+  if (cursor < text.length) segments.push({ kind: "text", text: text.slice(cursor) });
+  return segments;
+}
 
 /* ── Streaming format (AI SDK v6 UIMessage) ─────────────────────────── */
 type ToolInvocationPart = {
@@ -76,17 +161,6 @@ function readReasoningText(part: UiPart): string {
   );
 }
 
-function isProviderRedactedReasoning(part: UiPart): boolean {
-  const text = readReasoningText(part);
-  if (!text) return false;
-  const trimmed = text.trim();
-  return (
-    trimmed === "[REDACTED]" ||
-    trimmed.toLowerCase() === "redacted" ||
-    trimmed.toLowerCase().includes("[redacted]")
-  );
-}
-
 function readTextPart(part: UiPart): string | null {
   if (part.type !== "text") return null;
   const candidate = part as { text?: unknown; content?: unknown; value?: unknown };
@@ -94,13 +168,6 @@ function readTextPart(part: UiPart): string | null {
   if (typeof value !== "string") return null;
   const cleaned = stripToolContextEchoes(value);
   return cleaned.length > 0 ? cleaned : null;
-}
-
-function hasRenderableNonReasoningContent(part: UiPart): boolean {
-  if (part.type === "step-start" || part.type === "reasoning") return false;
-  if (readTextPart(part)) return true;
-  const tool = normaliseToolPart(part, 0);
-  return Boolean(tool);
 }
 
 function normalizeToolName(name: string): string {
@@ -283,21 +350,9 @@ function CouncilDeliberationToolView({ output }: { output: unknown }) {
   );
 }
 
-function ReasoningPartView({ part, hideRedacted }: { part: UiPart; hideRedacted: boolean }) {
+function ReasoningPartView({ part }: { part: UiPart }) {
   const text = readReasoningText(part);
   if (!text) return null;
-  const isProviderRedacted = isProviderRedactedReasoning(part);
-  if (isProviderRedacted) {
-    if (hideRedacted) return null;
-    return (
-      <div className="inline-flex items-center gap-2 py-1 text-xs text-(--color-muted-foreground)">
-        <span className="inline-block h-1.5 w-1.5 animate-[streamDot_900ms_ease-out_infinite] rounded-full bg-(--color-muted-foreground) [animation-delay:0ms]" />
-        <span className="inline-block h-1.5 w-1.5 animate-[streamDot_900ms_ease-out_infinite] rounded-full bg-(--color-muted-foreground) [animation-delay:150ms]" />
-        <span className="inline-block h-1.5 w-1.5 animate-[streamDot_900ms_ease-out_infinite] rounded-full bg-(--color-muted-foreground) [animation-delay:300ms]" />
-        <span>Thinking...</span>
-      </div>
-    );
-  }
   return (
     <details className="text-xs" open>
       <summary className="cursor-pointer text-(--color-muted-foreground)">Thinking</summary>
@@ -362,9 +417,6 @@ function messagePropsEqual(
 function MessageImpl({ message }: { message: UiMessage }) {
   const parts = message.parts ?? [];
   const hasAnyContent = parts.length > 0;
-  const hasNonReasoningContent = parts.some(hasRenderableNonReasoningContent);
-  const firstRedactedReasoningIndex = parts.findIndex(isProviderRedactedReasoning);
-
   const renderedParts = parts.map((part, index) => {
     const textPart = readTextPart(part);
     if (textPart) {
@@ -379,13 +431,7 @@ function MessageImpl({ message }: { message: UiMessage }) {
     }
 
     if (part.type === "reasoning") {
-      return (
-        <ReasoningPartView
-          key={`reasoning-${index}`}
-          part={part}
-          hideRedacted={hasNonReasoningContent || (isProviderRedactedReasoning(part) && index !== firstRedactedReasoningIndex)}
-        />
-      );
+      return <ReasoningPartView key={`reasoning-${index}`} part={part} />;
     }
 
     return null;
@@ -438,9 +484,34 @@ export function AssistantThinkingMessage() {
 }
 
 export function MessageResponse({ children }: { children: string }) {
+  const segments = useMemo(() => splitTextIntoChartSegments(children), [children]);
+  if (segments.length === 1 && segments[0].kind === "text") {
+    return (
+      <div className="prose-chat text-sm leading-relaxed">
+        <Markdown remarkPlugins={[remarkGfm]}>{children}</Markdown>
+      </div>
+    );
+  }
   return (
-    <div className="prose-chat text-sm leading-relaxed">
-      <Markdown remarkPlugins={[remarkGfm]}>{children}</Markdown>
+    <div className="space-y-2 text-sm leading-relaxed">
+      {segments.map((segment, index) => {
+        if (segment.kind === "text") {
+          if (!segment.text.trim()) return null;
+          return (
+            <div key={`seg-text-${index}`} className="prose-chat">
+              <Markdown remarkPlugins={[remarkGfm]}>{segment.text}</Markdown>
+            </div>
+          );
+        }
+        return (
+          <Suspense
+            key={`seg-chart-${index}`}
+            fallback={<div className="p-4 text-center text-xs text-(--color-muted-foreground)">Loading chart...</div>}
+          >
+            <DataDrivenChart spec={segment.spec} />
+          </Suspense>
+        );
+      })}
     </div>
   );
 }

@@ -18,8 +18,8 @@ const withPayload = <P extends object>(Component: React.ComponentType<P>): React
   Component as unknown as React.ComponentType<{ payload: VizPayload }>;
 
 export const toolToVisualization: Record<string, React.ComponentType<{ payload: VizPayload }>> = {
-  ons_fetchObservations: withPayload(ChoroplethMap),
-  nomis_fetchTable: withPayload(ChoroplethMap),
+  ons_fetchObservations: withPayload(TimeSeriesLine),
+  nomis_fetchTable: withPayload(DataGrid),
   police_fetchCrimes: withPayload(PointMap),
   ea_flood: withPayload(FloodRiskMap),
   postcodes_lookup: withPayload(PostcodeZoom),
