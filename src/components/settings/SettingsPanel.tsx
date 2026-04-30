@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Copy, Download, LogOut, Trash2 } from "lucide-react";
+import { Copy, Download, LogOut, RotateCw, Trash2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/primitives";
 import { apiFetchJson } from "@/lib/api";
@@ -36,6 +36,7 @@ export function SettingsPanel({
   onExportChats,
   onDeleteAccount,
   onSignOut,
+  onRotateMcpToken,
 }: {
   theme: ThemePreference;
   onThemeChange: (theme: ThemePreference) => void;
@@ -44,12 +45,14 @@ export function SettingsPanel({
   onExportChats: () => Promise<void>;
   onDeleteAccount: () => Promise<void>;
   onSignOut: () => Promise<void>;
+  onRotateMcpToken: () => Promise<void>;
 }) {
   const masked = mcpToken ? `${mcpToken.slice(0, 6)}...${mcpToken.slice(-4)}` : "No token yet";
   const [actionStatus, setActionStatus] = useState<ActionStatus>(null);
   const [isExporting, setIsExporting] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
+  const [isRotatingToken, setIsRotatingToken] = useState(false);
   const [privacyConsent, setPrivacyConsent] = useState<PrivacyConsentResponse | null>(null);
   const [consentPending, setConsentPending] = useState(false);
   const [usageRows, setUsageRows] = useState<ModelUsage[]>([]);
@@ -161,6 +164,25 @@ export function SettingsPanel({
       setActionStatus({ type: "success", message: "Developer token copied." });
     } catch {
       setActionStatus({ type: "error", message: "Could not copy token right now." });
+    }
+  }
+
+  async function handleRotateMcpToken() {
+    if (typeof window !== "undefined") {
+      const confirmed = window.confirm(
+        "Rotate your MCP token? Any existing connections using this token (Claude Desktop, Cursor, etc.) will need to be reconfigured with the new token.",
+      );
+      if (!confirmed) return;
+    }
+    setActionStatus(null);
+    setIsRotatingToken(true);
+    try {
+      await onRotateMcpToken();
+      setActionStatus({ type: "success", message: "MCP token rotated. Update any external clients with the new token." });
+    } catch {
+      setActionStatus({ type: "error", message: "Could not rotate MCP token right now." });
+    } finally {
+      setIsRotatingToken(false);
     }
   }
 
@@ -335,19 +357,36 @@ export function SettingsPanel({
             <label className="text-[11px] font-medium uppercase tracking-wide text-(--color-muted-foreground)">Developer Token</label>
             <div className="flex items-center justify-between gap-2 rounded-md border border-(--color-border) bg-(--color-background) px-3 py-2">
               <code className="truncate text-xs">{masked}</code>
-              <Button
-                type="button"
-                variant="ghost"
-                className="h-8 w-8 p-0"
-                onClick={() => {
-                  void handleCopyMcpToken();
-                }}
-                aria-label="Copy MCP token"
-                disabled={!mcpToken}
-              >
-                <Copy className="h-4 w-4" />
-              </Button>
+              <div className="flex items-center gap-1">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="h-8 w-8 p-0"
+                  onClick={() => {
+                    void handleCopyMcpToken();
+                  }}
+                  aria-label="Copy MCP token"
+                  disabled={!mcpToken}
+                >
+                  <Copy className="h-4 w-4" />
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="h-8 w-8 p-0"
+                  onClick={() => {
+                    void handleRotateMcpToken();
+                  }}
+                  aria-label="Rotate MCP token"
+                  disabled={isRotatingToken}
+                >
+                  <RotateCw className={`h-4 w-4 ${isRotatingToken ? "animate-spin" : ""}`} />
+                </Button>
+              </div>
             </div>
+            <p className="text-[11px] text-(--color-muted-foreground)">
+              Rotating invalidates the previous token. Use only if you suspect it's been exposed.
+            </p>
           </div>
         </section>
 

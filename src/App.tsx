@@ -326,6 +326,13 @@ function ProtectedApp() {
     syncConversationIdToUrl(null);
   }, [setActiveConversationId]);
 
+  const rotateMcpToken = useCallback(async () => {
+    await apiFetchJson<{ success?: boolean }>("/api/account/rotate-mcp-token", {
+      method: "POST",
+    });
+    await refreshMcpToken();
+  }, [refreshMcpToken]);
+
   const settingsPanelProps = {
     theme,
     onThemeChange: setTheme,
@@ -334,6 +341,7 @@ function ProtectedApp() {
     onExportChats: exportChats,
     onDeleteAccount: deleteAccount,
     onSignOut: signOut,
+    onRotateMcpToken: rotateMcpToken,
   } as const;
 
   const settingsContent = (

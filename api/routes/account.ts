@@ -3,12 +3,14 @@ import type { Env } from "../env.js";
 import { getSupabaseAdmin, getUserFromRequest, json } from "../_lib/server.js";
 import {
   ensureProfileExists,
-  claimPendingMcpToken,
-  readProfileMcpToken,
+  ensureProfileMcpToken,
   PRIVACY_NOTICE_VERSION,
   CONVERSATION_SELECT_FIELDS,
 } from "../_lib/internals.js";
+import { encryptMcpToken } from "../_lib/crypto.js";
+import { issueMcpToken } from "../_lib/onboarding.js";
 import { writeAdminAuditLog } from "../_lib/audit.js";
+import { logError } from "../_lib/logger.js";
 
 export const accountRoutes = new Hono<{ Bindings: Env }>();
 
@@ -17,8 +19,7 @@ accountRoutes.get("/profile", async (c) => {
   if (!user) return json({ error: "Unauthorized" }, 401);
   const supabase = getSupabaseAdmin(c.env);
   await ensureProfileExists(user, c.env);
-  const claimedToken = await claimPendingMcpToken({ supabase, userId: user.id, email: user.email });
-  const token = claimedToken ?? (await readProfileMcpToken({ supabase, userId: user.id, email: user.email }));
+  const token = await ensureProfileMcpToken({ supabase, userId: user.id, email: user.email, env: c.env });
   const { data: consent } = await supabase
     .from("uk_chat_user_consents")
     .select("privacy_notice_version,ai_processing_acknowledged_at")
@@ -100,6 +101,46 @@ accountRoutes.get("/export", async (c) => {
     councils: councilsRow.data ?? [],
     councilTurns: councilTurnsRow.data ?? [],
   });
+});
+
+accountRoutes.post("/rotate-mcp-token", async (c) => {
+  const user = await getUserFromRequest(c.req.raw, c.env);
+  if (!user) return json({ error: "Unauthorized" }, 401);
+  const email = user.email?.trim().toLowerCase();
+  if (!email) return json({ error: "Account is missing an email address." }, 400);
+
+  let newToken: string;
+  try {
+    newToken = await issueMcpToken(email, c.env, { rotate: true });
+  } catch (error) {
+    logError("[api/account] MCP token rotation failed at issuer", {
+      userId: user.id,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return json({ error: "Could not rotate MCP token. Please try again shortly." }, 502);
+  }
+
+  const supabase = getSupabaseAdmin(c.env);
+  const encrypted = await encryptMcpToken(newToken);
+  const { error: updateError } = await supabase
+    .from("uk_chat_profiles")
+    .update({ mcp_token: null, mcp_token_encrypted: encrypted })
+    .eq("id", user.id);
+  if (updateError) {
+    logError("[api/account] Failed to persist rotated MCP token", {
+      userId: user.id,
+      error: updateError.message,
+    });
+    return json({ error: "Token rotated but could not be saved. Try again." }, 500);
+  }
+
+  await writeAdminAuditLog(c.env, {
+    actorUserId: user.id,
+    actorEmail: user.email ?? null,
+    action: "account.mcp_token.rotate.self",
+    target: email,
+  });
+  return json({ success: true });
 });
 
 accountRoutes.delete("/", async (c) => {

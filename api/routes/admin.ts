@@ -27,7 +27,7 @@ adminRoutes.get("/users", async (c) => {
   const supabase = getSupabaseAdmin(c.env);
   const { data, error } = await supabase
     .from("uk_chat_email_gate")
-    .select("email,claimed_at,pending_mcp_token")
+    .select("email,claimed_at")
     .order("invited_at", { ascending: false });
   if (error) return dbError(error, { context: "api/admin/users", publicMessage: "Failed to load users", status: 400 });
   const emails = (data ?? []).map((row) => row.email);
@@ -42,7 +42,7 @@ adminRoutes.get("/users", async (c) => {
     (data ?? []).map((row) => ({
       email: row.email,
       status: row.claimed_at ? "claimed" : "invited",
-      hasToken: Boolean(row.pending_mcp_token) || Boolean(profileTokenMap.get(row.email.toLowerCase())),
+      hasToken: Boolean(profileTokenMap.get(row.email.toLowerCase())),
     })),
   );
 });

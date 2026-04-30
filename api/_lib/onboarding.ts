@@ -25,7 +25,7 @@ function isLoopbackHostname(hostname: string): boolean {
   return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
 }
 
-async function issueMcpToken(email: string, env: Env) {
+export async function issueMcpToken(email: string, env: Env, options: { rotate?: boolean } = {}) {
   const issueUrl = env.MCP_TOKEN_ISSUE_URL ?? "https://mcp.explorethekingdom.co.uk/api/tokens";
   const issueSecret = env.MCP_TOKEN_ISSUE_SECRET ?? "";
   const response = await fetch(issueUrl, {
@@ -34,7 +34,7 @@ async function issueMcpToken(email: string, env: Env) {
       "Content-Type": "application/json",
       ...(issueSecret ? { Authorization: `Bearer ${issueSecret}` } : {}),
     },
-    body: JSON.stringify({ email }),
+    body: JSON.stringify({ email, rotate: options.rotate === true }),
   });
   if (!response.ok) {
     const body = await response.text().catch(() => "");
@@ -135,7 +135,7 @@ export async function onboardUser(input: OnboardUserInput, env: Env): Promise<On
 
   const { data: existing, error: existingError } = await supabase
     .from("uk_chat_email_gate")
-    .select("id,pending_mcp_token")
+    .select("id")
     .eq("email", email)
     .maybeSingle();
 
@@ -143,34 +143,23 @@ export async function onboardUser(input: OnboardUserInput, env: Env): Promise<On
     throw new Error(`Failed to read email gate: ${existingError.message}`);
   }
 
-  let tokenIssued = false;
-  let status: OnboardUserResult["status"] = "unchanged";
-  let token = existing?.pending_mcp_token ?? null;
-  if (typeof input.token === "string") {
-    token = input.token;
-  } else if (!token || rotateToken) {
-    token = await issueMcpToken(email, env);
-    tokenIssued = true;
-  }
-
+  let status: OnboardUserResult["status"] = existing ? "unchanged" : "created";
   if (!existing) {
-    const { error: insertError } = await supabase.from("uk_chat_email_gate").insert({
-      email,
-      pending_mcp_token: token,
-    });
+    const { error: insertError } = await supabase.from("uk_chat_email_gate").insert({ email });
     if (insertError) {
       throw new Error(`Failed to create email gate row: ${insertError.message}`);
     }
-    status = "created";
-  } else if (token !== existing.pending_mcp_token) {
-    const { error: updateError } = await supabase
-      .from("uk_chat_email_gate")
-      .update({ pending_mcp_token: token })
-      .eq("id", existing.id);
-    if (updateError) {
-      throw new Error(`Failed to update email gate row: ${updateError.message}`);
-    }
-    status = "updated";
+  }
+
+  // Token issuance is delegated to the canonical issuer, which is idempotent
+  // unless rotate is requested. We no longer cache tokens in email_gate.
+  let token: string | null = null;
+  let tokenIssued = false;
+  if (typeof input.token === "string") {
+    token = input.token;
+  } else {
+    token = await issueMcpToken(email, env, { rotate: rotateToken });
+    tokenIssued = true;
   }
 
   let emailSent = false;

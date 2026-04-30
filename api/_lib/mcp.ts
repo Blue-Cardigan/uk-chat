@@ -62,6 +62,19 @@ export function buildMcpCandidates(configuredUrl: string): McpCandidate[] {
   return candidates;
 }
 
+export function isMcpUnauthorized(attempts: McpAttempt[]): boolean {
+  return attempts.some((attempt) => {
+    const message = attempt.error.toLowerCase();
+    if (message.includes("401") || message.includes("unauthorized")) return true;
+    // The AI SDK's SSE transport opens the stream then tries to parse the body
+    // as SSE; a 401 JSON body surfaces as "Failed to parse server response"
+    // without the underlying status code. Treat that fingerprint as auth failure
+    // so the token-recovery path runs.
+    if (attempt.type === "sse" && message.includes("failed to parse server response")) return true;
+    return false;
+  });
+}
+
 export async function loadMcpToolsWithFallback(configuredUrl: string, token: string) {
   const candidates = buildMcpCandidates(configuredUrl);
   const attempts: McpAttempt[] = [];
