@@ -599,7 +599,10 @@ chatRoutes.post("/", async (c) => {
       prepareStep: options.includeTools
         ? ({ stepNumber, steps }) => {
             // Force a data tool on step 0 when the request is quantitative.
-            if (options.requireToolCall && stepNumber === 0) {
+            // EXCEPT for Gemini Pro: with the full 123-tool catalog Pro fails
+            // with "schema produces a constraint that has too many states for
+            // serving" when `tool_choice: required` is set. Auto works fine.
+            if (options.requireToolCall && stepNumber === 0 && selectedModel.id !== "pro") {
               return { toolChoice: "required" };
             }
             // Mitigation: when the user explicitly asked for a chart, models
@@ -625,6 +628,28 @@ chatRoutes.post("/", async (c) => {
       temperature: selectedModel.toolTemperature,
       system: options.systemOverride ?? systemPrompt,
       onFinish: onAssistantFinish,
+      onError: ({ error }) => {
+        // Stream-level errors (provider rejecting partway through SSE) don't
+        // pass through the fallback chain. Capture them with full responseBody
+        // so root causes are visible in worker logs.
+        const err = error as
+          | { statusCode?: number; message?: string; cause?: { statusCode?: number; responseBody?: unknown; message?: string } }
+          | null
+          | undefined;
+        const responseBody = err?.cause?.responseBody ?? null;
+        logError("[api/chat] stream error from provider", {
+          modelId: selectedModel.id,
+          providerModel: selectedModel.providerModel,
+          conversationId: body.conversationId,
+          statusCode: err?.statusCode ?? err?.cause?.statusCode ?? null,
+          message: err?.message ?? err?.cause?.message ?? String(error),
+          responseBody,
+          errorType:
+            responseBody && typeof responseBody === "object"
+              ? (responseBody as { metadata?: { error_type?: string } }).metadata?.error_type ?? null
+              : null,
+        });
+      },
     });
 
   const result = runChatWithFallback({

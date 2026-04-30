@@ -27,7 +27,11 @@ export const CHAT_MODEL_CONFIGS: ChatModelConfig[] = [
     dailyLimit: 80,
     toolStepLimit: 8,
     toolTemperature: 0.15,
-    toolOutputBudgetChars: 30_000,
+    // Lowered from 30k to 15k: Flash drops the SSE stream when adapter
+    // payloads are very large (e.g. central-London police_fetchCrimes can
+    // exceed 350k chars before truncation). Tighter cap = more reliable
+    // streaming on Gemini at the cost of fewer rows-per-call.
+    toolOutputBudgetChars: 15_000,
     minDataToolCallsForQuant: 1,
     runEvidencePrefetchForQuant: true,
     enableMetadataRetryForQuant: true,

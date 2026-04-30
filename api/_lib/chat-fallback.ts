@@ -1,6 +1,33 @@
 import type { streamText } from "ai";
 import { isProviderInvalidRequestError, isProviderTimeoutError } from "./internals.js";
-import { logWarn } from "./logger.js";
+import { logError, logWarn } from "./logger.js";
+
+function describeProviderError(error: unknown): {
+  message: string;
+  statusCode: number | null;
+  responseBody: unknown;
+  url: string | null;
+  errorType: string | null;
+} {
+  const err = error as
+    | {
+        statusCode?: number;
+        message?: string;
+        url?: string;
+        cause?: { statusCode?: number; responseBody?: unknown; message?: string; url?: string };
+      }
+    | null
+    | undefined;
+  const statusCode = err?.statusCode ?? err?.cause?.statusCode ?? null;
+  const message = err?.message ?? err?.cause?.message ?? String(error);
+  const responseBody = err?.cause?.responseBody ?? null;
+  const url = err?.url ?? err?.cause?.url ?? null;
+  const errorType =
+    responseBody && typeof responseBody === "object"
+      ? ((responseBody as { metadata?: { error_type?: string } }).metadata?.error_type ?? null)
+      : null;
+  return { message, statusCode, responseBody, url, errorType };
+}
 
 export type StreamTextResult = ReturnType<typeof streamText>;
 export type StreamToolsValue = Parameters<typeof streamText>[0]["tools"];
@@ -74,7 +101,7 @@ export function runChatWithFallback(params: FallbackRunParams): StreamTextResult
       logWarn("[api/chat] Provider timed out, retrying with reduced quantitative tools", {
         modelId,
         providerModel,
-        error: error instanceof Error ? error.message : String(error),
+        ...describeProviderError(error),
       });
       try {
         telemetry.fallbackPath = "timeout_reduced_tools";
@@ -103,7 +130,7 @@ export function runChatWithFallback(params: FallbackRunParams): StreamTextResult
       modelId,
       providerModel,
       requireDataToolCall,
-      error: error instanceof Error ? error.message : String(error),
+      ...describeProviderError(error),
     });
 
     try {
@@ -120,7 +147,7 @@ export function runChatWithFallback(params: FallbackRunParams): StreamTextResult
         logWarn("[api/chat] Provider still rejected request, retrying without tools", {
           modelId,
           providerModel,
-          error: retryError instanceof Error ? retryError.message : String(retryError),
+          ...describeProviderError(retryError),
         });
         telemetry.fallbackPath = "no_tools_non_quant";
         return tryStream({ includeFallbackModels: false, includeTools: false, requireToolCall: false });
@@ -129,7 +156,7 @@ export function runChatWithFallback(params: FallbackRunParams): StreamTextResult
       logWarn("[api/chat] Provider rejected required tool choice, retrying with auto tool choice", {
         modelId,
         providerModel,
-        error: retryError instanceof Error ? retryError.message : String(retryError),
+        ...describeProviderError(retryError),
       });
       try {
         telemetry.fallbackPath = "auto_tool_choice";
@@ -140,7 +167,7 @@ export function runChatWithFallback(params: FallbackRunParams): StreamTextResult
         logWarn("[api/chat] Provider still rejected request, retrying with reduced tool set", {
           modelId,
           providerModel,
-          error: autoToolChoiceError instanceof Error ? autoToolChoiceError.message : String(autoToolChoiceError),
+          ...describeProviderError(autoToolChoiceError),
         });
         try {
           telemetry.fallbackPath = "reduced_tools";

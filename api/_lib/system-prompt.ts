@@ -88,6 +88,12 @@ TOOL STRATEGY RULES
 - For quantitative requests, call at least one non-create_chart data tool before using create_chart.
 - create_chart is synthesis-only and must not be the first tool call when factual data retrieval is needed.
 - Keep tool calls efficient: do not call the same data tool repeatedly with near-identical parameters.
+
+DATA FRESHNESS — published-month feeds
+- UK government data feeds (data.police.uk, ONS bulletins, NHS statistics, MHCLG releases, etc.) lag the calendar by 1–3 months. Querying the current month or last month often returns zero rows.
+- For monthly series, do NOT default to today's month. Either omit the date parameter (the adapter will use its latest available month), or pick a date 2–3 months before today.
+- If a tool call returns zero rows, retry with an earlier month BEFORE telling the user no data exists. A single empty response is almost always a freshness/lag issue, not a real absence.
+- If after one earlier-month retry you still get zero rows, then say so honestly and suggest broadening the geography or category.
 `.trim();
 }
 
