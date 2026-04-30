@@ -273,10 +273,27 @@ const CREATE_CHART_INPUT_SCHEMA: Record<string, unknown> = {
 
 export function createSyntheticChartTool(compactCreateChartSpec: (input: unknown) => unknown) {
   return {
-    description: "Create a chart specification from one or more tool outputs.",
+    // Imperative description: models pay more attention to tool-local instructions
+    // than to system-prompt rules, and they readily substitute markdown tables for
+    // chart calls when the wording leaves it as a plain "create" verb.
+    description:
+      "Render a chart artifact for the user. CALL THIS TOOL whenever the user asks for a chart, plot, graph, bar/line/pie/stacked/scatter visualisation, or to 'visualise'/'show as chart'. Do NOT describe the chart in prose or render it as a markdown table — the chart only appears when this tool is called. Required: type, xField, yFields, data (rows from a prior data-retrieval tool).",
     inputSchema: jsonSchema(CREATE_CHART_INPUT_SCHEMA),
     execute: async (input: unknown) => compactCreateChartSpec(input),
   };
+}
+
+/**
+ * Detect explicit chart/visualisation intent in a user message. Used to escalate
+ * tool-choice from `auto` to a forced `create_chart` step once data has been
+ * fetched, mitigating the well-documented tool-omission failure mode where a
+ * model says "Here's the chart:" and renders a markdown table instead.
+ */
+export function hasChartIntent(query: string | undefined | null): boolean {
+  if (!query) return false;
+  return /\b(bar\s*chart|line\s*chart|pie\s*chart|stacked|scatter|histogram|chart|plot|graph|visuali[sz]e|visualisation|visualization)\b/i.test(
+    query,
+  );
 }
 
 export function enforceCreateChartDataPrereq(tools: Record<string, unknown>): Record<string, unknown> {

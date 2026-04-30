@@ -15,6 +15,7 @@ import {
   compactMcpToolsForModelContext,
   createSyntheticChartTool,
   enforceCreateChartDataPrereq,
+  hasChartIntent,
   hasPriorNonChartToolOutput,
   selectToolsForChat,
   selectWeakModelQuantTools,
@@ -268,6 +269,7 @@ chatRoutes.post("/", async (c) => {
   });
   const latestUserQuery = extractLatestUserText(body.messages);
   const requireDataToolCall = shouldRequireDataToolCall(latestUserQuery);
+  const chartIntentDetected = hasChartIntent(latestUserQuery);
   const quantPrefetchStepLimit = Math.max(
     1,
     Math.min(selectedModel.maxPrefetchToolStepsForQuant, selectedModel.toolStepLimit),
@@ -278,7 +280,12 @@ chatRoutes.post("/", async (c) => {
   );
   const weakQuantToolRestrictionApplied = requireDataToolCall && selectedModel.restrictQuantToolsForWeakModels;
   const priorDataToolOutputExists = hasPriorNonChartToolOutput(body.messages);
-  const allowCreateChartTool = !requireDataToolCall || priorDataToolOutputExists;
+  // create_chart needs to be in the registry whenever the user explicitly
+  // asked for a chart, so the prepareStep mitigation can force-call it after
+  // a data tool runs in the SAME turn. Premature first-step calls are
+  // runtime-blocked by enforceCreateChartDataPrereq below.
+  const allowCreateChartTool =
+    !requireDataToolCall || priorDataToolOutputExists || chartIntentDetected;
   const selectedBaseTools = selectToolsForChat(tools, latestUserQuery, 18);
   const quantScopedBaseTools = weakQuantToolRestrictionApplied
     ? selectWeakModelQuantTools(selectedBaseTools, latestUserQuery, { minimumTools: 3 })
@@ -589,8 +596,28 @@ chatRoutes.post("/", async (c) => {
         ? (options.toolsOverride ?? (safeTools as Parameters<typeof streamText>[0]["tools"]))
         : undefined,
       toolChoice: options.includeTools ? "auto" : undefined,
-      prepareStep: options.includeTools && options.requireToolCall
-        ? ({ stepNumber }) => (stepNumber === 0 ? { toolChoice: "required" } : {})
+      prepareStep: options.includeTools
+        ? ({ stepNumber, steps }) => {
+            // Force a data tool on step 0 when the request is quantitative.
+            if (options.requireToolCall && stepNumber === 0) {
+              return { toolChoice: "required" };
+            }
+            // Mitigation: when the user explicitly asked for a chart, models
+            // frequently fetch data and then describe the chart in prose
+            // (markdown table) instead of calling create_chart. After at
+            // least one non-chart tool has run successfully, force the chart
+            // tool exactly once. Subsequent steps go back to auto so the
+            // model can write its summary.
+            if (chartIntentDetected && allowCreateChartTool && stepNumber > 0) {
+              const calls = steps.flatMap((step) => step.toolCalls ?? []);
+              const nonChartCalled = calls.some((call) => call.toolName !== CREATE_CHART_TOOL_NAME);
+              const chartCalled = calls.some((call) => call.toolName === CREATE_CHART_TOOL_NAME);
+              if (nonChartCalled && !chartCalled) {
+                return { toolChoice: { type: "tool", toolName: CREATE_CHART_TOOL_NAME } };
+              }
+            }
+            return {};
+          }
         : undefined,
       stopWhen: stepCountIs(
         options.stepLimitOverride ?? (requireDataToolCall ? quantMainStepLimit : selectedModel.toolStepLimit),
