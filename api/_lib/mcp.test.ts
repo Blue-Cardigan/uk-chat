@@ -13,11 +13,12 @@ test("isMcpUnauthorized matches explicit 401 / unauthorized strings", () => {
   );
 });
 
-test("isMcpUnauthorized recognizes the AI SDK SSE 401 fingerprint", () => {
-  // The AI SDK SSE transport translates a JSON 401 body into this error string.
+test("isMcpUnauthorized does NOT treat 'Failed to parse server response' as auth failure", () => {
+  // The AI SDK raises this string for schema-mismatch on tools/list too —
+  // matching it as auth would trigger pointless token rotations.
   assert.equal(
     isMcpUnauthorized([{ type: "sse", url: "x", error: "Failed to parse server response" }]),
-    true,
+    false,
   );
 });
 

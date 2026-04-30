@@ -63,15 +63,13 @@ export function buildMcpCandidates(configuredUrl: string): McpCandidate[] {
 }
 
 export function isMcpUnauthorized(attempts: McpAttempt[]): boolean {
+  // "Failed to parse server response" alone is NOT auth-specific — the AI SDK
+  // raises it for any tool-list schema mismatch too. Match only on real auth
+  // status text so we don't mis-classify schema errors and pointlessly rotate
+  // tokens.
   return attempts.some((attempt) => {
     const message = attempt.error.toLowerCase();
-    if (message.includes("401") || message.includes("unauthorized")) return true;
-    // The AI SDK's SSE transport opens the stream then tries to parse the body
-    // as SSE; a 401 JSON body surfaces as "Failed to parse server response"
-    // without the underlying status code. Treat that fingerprint as auth failure
-    // so the token-recovery path runs.
-    if (attempt.type === "sse" && message.includes("failed to parse server response")) return true;
-    return false;
+    return message.includes("401") || message.includes("unauthorized");
   });
 }
 
