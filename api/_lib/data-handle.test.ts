@@ -141,6 +141,40 @@ test("materialiseChartInput returns input unchanged when no dataRef is set", () 
   assert.equal(materialiseChartInput(input, cache), input);
 });
 
+test("wrapToolWithDataHandle parses a `csv` blob into rows and stores them under a dataRef", async () => {
+  const cache = createDataCache();
+  const csv = ["URN,Name,Phase", ...Array.from({ length: 60 }, (_, i) => `${1000 + i},School ${i},${i % 2 === 0 ? "Primary" : "Secondary"}`)].join("\n");
+  const original = async () => ({
+    ok: true,
+    payload: {
+      csv,
+      csvTotalRows: 60,
+      csvIncludedRows: 60,
+    },
+  });
+  const wrapped = wrapToolWithDataHandle("dfe_schools", original, cache);
+  const result = (await wrapped({})) as Record<string, unknown>;
+  assert.equal(result.totalRows, 60);
+  assert.deepEqual(result.columns, ["URN", "Name", "Phase"]);
+  assert.equal(typeof result.dataRef, "string");
+  const cached = resolveDataRef(cache, result.dataRef as string);
+  assert.equal(cached?.rows.length, 60);
+  assert.equal(cached?.rows[0].Name, "School 0");
+});
+
+test("wrapToolWithDataHandle parses CSV with quoted commas", async () => {
+  const cache = createDataCache();
+  const lines = ["Name,LA"];
+  for (let i = 0; i < 60; i += 1) {
+    lines.push(`"School, with, commas ${i}",Greater Manchester`);
+  }
+  const original = async () => ({ payload: { csv: lines.join("\n") } });
+  const wrapped = wrapToolWithDataHandle("dfe_schools", original, cache);
+  const result = (await wrapped({})) as Record<string, unknown>;
+  const cached = resolveDataRef(cache, result.dataRef as string);
+  assert.equal(cached?.rows[0].Name, "School, with, commas 0");
+});
+
 test("materialiseChartInput surfaces a clear error when dataRef is unknown", () => {
   const cache = createDataCache();
   const out = materialiseChartInput(

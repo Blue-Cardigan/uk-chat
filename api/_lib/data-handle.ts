@@ -56,6 +56,77 @@ function isRecordArray(value: unknown): value is Array<Record<string, unknown>> 
   return Array.isArray(value) && value.length > 0 && value.every((item) => isRecord(item));
 }
 
+/**
+ * Parse a CSV string into records. Supports double-quoted fields with
+ * embedded commas and escaped quotes (the RFC4180 minimal subset). Good
+ * enough for the CSV blobs that UK government adapters return — school
+ * names, charity names, etc. — which can include commas inside quoted
+ * fields. Returns an empty array on malformed input rather than throwing.
+ */
+function parseCsv(text: string): Array<Record<string, unknown>> {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = "";
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (inQuotes) {
+      if (ch === '"' && text[i + 1] === '"') {
+        field += '"';
+        i += 1;
+      } else if (ch === '"') {
+        inQuotes = false;
+      } else {
+        field += ch;
+      }
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ",") {
+      row.push(field);
+      field = "";
+    } else if (ch === "\n" || ch === "\r") {
+      if (ch === "\r" && text[i + 1] === "\n") i += 1;
+      row.push(field);
+      rows.push(row);
+      row = [];
+      field = "";
+    } else {
+      field += ch;
+    }
+  }
+  if (field.length > 0 || row.length > 0) {
+    row.push(field);
+    rows.push(row);
+  }
+  if (rows.length < 2) return [];
+  const headers = rows[0]!;
+  const out: Array<Record<string, unknown>> = [];
+  for (let i = 1; i < rows.length; i += 1) {
+    const cells = rows[i]!;
+    if (cells.length === 1 && cells[0] === "") continue;
+    const record: Record<string, unknown> = {};
+    for (let j = 0; j < headers.length; j += 1) {
+      record[headers[j] ?? `col_${j}`] = cells[j] ?? "";
+    }
+    out.push(record);
+  }
+  return out;
+}
+
+/**
+ * Detect a top-level `csv` string field that's large enough to be worth
+ * promoting to a dataRef. Returns the parsed rows + the field name we should
+ * replace with a marker.
+ */
+function findCsvPayload(value: unknown): { rows: Array<Record<string, unknown>>; fieldName: string } | null {
+  if (!isRecord(value)) return null;
+  const csv = value.csv;
+  if (typeof csv !== "string" || csv.length < 200) return null;
+  const rows = parseCsv(csv);
+  if (rows.length < MIN_ROW_COUNT_TO_HANDLE) return null;
+  return { rows, fieldName: "csv" };
+}
+
 function findLargestRecordArrayPath(
   value: unknown,
   path: string[] = [],
@@ -193,18 +264,44 @@ export function wrapToolWithDataHandle(
     const raw = await originalExecute(input);
     const wasMcpTextEnvelope = isRecord(raw) && Array.isArray((raw as { content?: unknown }).content);
     const unwrapped = wasMcpTextEnvelope ? unwrapMcpToolText(raw) : raw;
-    const found = findLargestRecordArrayPath(unwrapped);
-    if (!found || found.rows.length < MIN_ROW_COUNT_TO_HANDLE) {
+
+    // The xtk-mcp tool envelope is { ok, tool, payload, source, … } so the
+    // payload itself is where the real data lives. Walk into it for both
+    // record-array detection and CSV detection.
+    const payloadCandidate = isRecord(unwrapped) && unwrapped.payload !== undefined
+      ? unwrapped.payload
+      : unwrapped;
+
+    // Prefer record arrays. If absent, look for a CSV blob and parse it.
+    let rows: Array<Record<string, unknown>> | null = null;
+    let pathInUnwrapped: string[] = [];
+    const arrayHit = findLargestRecordArrayPath(unwrapped);
+    if (arrayHit && arrayHit.rows.length >= MIN_ROW_COUNT_TO_HANDLE) {
+      rows = arrayHit.rows;
+      pathInUnwrapped = arrayHit.path;
+    } else {
+      const csvHit = findCsvPayload(payloadCandidate);
+      if (csvHit) {
+        rows = csvHit.rows;
+        // payload-relative path; if there was a payload wrapper, prepend it.
+        pathInUnwrapped = isRecord(unwrapped) && unwrapped.payload !== undefined
+          ? ["payload", csvHit.fieldName]
+          : [csvHit.fieldName];
+      }
+    }
+
+    if (!rows) {
       return raw;
     }
+
     const dataRef = generateDataRef();
     cache.set(dataRef, {
-      rows: found.rows,
-      columns: Object.keys(found.rows[0] ?? {}),
+      rows,
+      columns: Object.keys(rows[0] ?? {}),
       sourceTool: toolName,
       createdAt: Date.now(),
     });
-    const lean = buildLeanSummary(unwrapped, found.path, found.rows, dataRef, toolName);
+    const lean = buildLeanSummary(unwrapped, pathInUnwrapped, rows, dataRef, toolName);
     return wasMcpTextEnvelope ? rewrapAsMcpToolText(lean) : lean;
   };
 }
