@@ -768,9 +768,11 @@ export function extractArtifactsFromMessages(
     for (const part of message.parts ?? []) {
       if (!isRecord(part) || typeof part.type !== "string" || !part.type.startsWith("tool-")) continue;
       if (part.state !== "output-available" || !("output" in part) || part.output == null) continue;
+      if (isRecord(part.output) && (part.output.isError === true || part.output.synthesized === true)) continue;
       const toolName = part.type.replace("tool-", "");
       if (!isArtifactCandidate(toolName, part.output)) continue;
       const normalizedToolName = normalizeArtifactToolName(toolName);
+      if (normalizedToolName === "create_chart" && !isChartSpecShape(part.output)) continue;
       const toolCallId = typeof part.toolCallId === "string" ? part.toolCallId : `part-${artifacts.length}`;
       const chartSpec = normalizedToolName === "create_chart" && isChartSpecShape(part.output) ? part.output : undefined;
       artifacts.push({

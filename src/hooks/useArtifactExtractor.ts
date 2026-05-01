@@ -94,7 +94,12 @@ export function useArtifactExtractor(params: {
   useEffect(() => {
     for (const { messageId, toolName, toolCallId, output } of finalizedPartsRef.current) {
       if (!isVizArtifactCandidate(toolName, output)) continue;
+      if (
+        output != null && typeof output === "object" && !Array.isArray(output) &&
+        ((output as { isError?: unknown }).isError === true || (output as { synthesized?: unknown }).synthesized === true)
+      ) continue;
       const normalizedToolName = normalizeVizToolName(toolName);
+      if (normalizedToolName === "create_chart" && !isChartSpec(output)) continue;
       const chartSpec: ChartSpec | null =
         normalizedToolName === "create_chart" && isChartSpec(output)
           ? (output as ChartSpec)

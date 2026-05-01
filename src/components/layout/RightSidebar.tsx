@@ -1,7 +1,6 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
-import { BarChart3, ChevronDown, Pin, PinOff, X } from "lucide-react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { ChevronDown, Pin, PinOff, X } from "lucide-react";
 import { Button } from "@/components/ui/primitives";
-import { ArtifactToolbar } from "@/components/viz/ArtifactToolbar";
 import { useAppStore } from "@/lib/store";
 import { apiFetchJson } from "@/lib/api";
 import type { ArtifactLibrary, VizPayload } from "@/lib/types";
@@ -33,43 +32,39 @@ function ArtifactPreview({
   onToggleExpanded: () => void;
   onTogglePinned: () => void;
 }) {
-  const vizRef = useRef<HTMLDivElement | null>(null);
+  const label = artifact.chartSpec?.title ?? artifact.title ?? artifact.toolName;
 
   return (
-    <div className="rounded-md border border-(--color-border) bg-(--color-card)/60">
-      <div className="flex items-center gap-1 p-1.5">
+    <div>
+      <div className="flex items-center gap-1">
         <button
           type="button"
-          className="flex min-w-0 flex-1 items-center gap-2 rounded px-1.5 py-1 text-left text-xs hover:bg-[color-mix(in_oklch,var(--color-foreground)_6%,transparent)]"
+          className="flex min-w-0 flex-1 items-center gap-1.5 rounded px-1 py-1 text-left text-xs text-(--color-muted-foreground) hover:text-(--color-foreground)"
           onClick={onToggleExpanded}
           aria-expanded={expanded}
-          aria-label={`${expanded ? "Collapse" : "Expand"} ${artifact.title ?? artifact.toolName}`}
+          aria-label={`${expanded ? "Collapse" : "Expand"} ${label}`}
         >
-          <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 transition-transform", expanded ? "rotate-0" : "-rotate-90")} />
-          <BarChart3 className="h-3.5 w-3.5 shrink-0 text-(--color-muted-foreground)" />
-          <span className="truncate">{artifact.title ?? artifact.toolName}</span>
+          <ChevronDown className={cn("h-3 w-3 shrink-0 transition-transform", expanded ? "rotate-0" : "-rotate-90")} />
+          <span className="truncate">{label}</span>
         </button>
         <Button
           type="button"
           variant="ghost"
+          aria-label={pinned ? "Unpin artifact" : "Pin artifact as context"}
           className={cn(
-            "h-7 gap-1 rounded-md px-2 text-[11px]",
+            "h-6 w-6 p-0",
             pinned ? "text-(--color-primary)" : "text-(--color-muted-foreground)",
           )}
           onClick={onTogglePinned}
         >
-          {pinned ? <PinOff className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5" />}
-          {pinned ? "Remove" : "Context"}
+          {pinned ? <PinOff className="h-3 w-3" /> : <Pin className="h-3 w-3" />}
         </Button>
       </div>
       {expanded ? (
-        <div className="space-y-2 border-t border-(--color-border) p-2">
-          <ArtifactToolbar payload={artifact} targetRef={vizRef} />
-          <div ref={vizRef} className="rounded-md border border-(--color-border) bg-(--color-background) p-2">
-            <Suspense fallback={<div className="p-4 text-center text-xs text-(--color-muted-foreground)">Loading...</div>}>
-              <VizRouter payload={artifact} />
-            </Suspense>
-          </div>
+        <div className="mt-1">
+          <Suspense fallback={<div className="p-4 text-center text-xs text-(--color-muted-foreground)">Loading...</div>}>
+            <VizRouter payload={artifact} />
+          </Suspense>
         </div>
       ) : null}
     </div>
@@ -199,25 +194,25 @@ export function RightSidebar({ authToken }: Props) {
             No artifacts yet. Charts, maps, and data visualizations will appear here as you chat.
           </div>
         ) : (
-          <div className="space-y-2 overflow-y-auto pb-2">
+          <div className="space-y-3 overflow-y-auto pb-2">
             {groupedArtifacts.map((group) => {
               const isExpanded = expandedConversationIds.has(group.id);
               return (
-                <section key={group.id} className="rounded-lg border border-(--color-border) bg-(--color-card)/40 p-2">
+                <section key={group.id}>
                   <button
                     type="button"
-                    className="flex w-full items-center justify-between gap-2 rounded px-1 py-1 text-left hover:bg-[color-mix(in_oklch,var(--color-foreground)_6%,transparent)]"
+                    className="flex w-full items-center justify-between gap-2 rounded px-1 py-1 text-left text-(--color-muted-foreground) hover:text-(--color-foreground)"
                     onClick={() => toggleConversationGroup(group.id)}
                     aria-expanded={isExpanded}
                     aria-label={`${isExpanded ? "Collapse" : "Expand"} artifacts for ${group.title}`}
                   >
-                    <span className="truncate text-xs font-semibold uppercase tracking-wide text-(--color-muted-foreground)">
+                    <span className="truncate text-[11px] font-medium uppercase tracking-wide">
                       {group.title}
                     </span>
-                    <ChevronDown className={cn("h-4 w-4 shrink-0 transition-transform", isExpanded ? "rotate-0" : "-rotate-90")} />
+                    <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 transition-transform", isExpanded ? "rotate-0" : "-rotate-90")} />
                   </button>
                   {isExpanded ? (
-                    <div className="mt-2 space-y-2">
+                    <div className="mt-1 space-y-1.5">
                       {group.artifacts.map((artifact) => {
                         const pinned = pinnedArtifacts.some((pinnedArtifact) => pinnedArtifact.id === artifact.id);
                         return (
