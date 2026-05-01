@@ -264,6 +264,43 @@ export function buildAssistantPartsFromFinishEvent(
   return fallbackParts;
 }
 
+/**
+ * When a model emits a complete `create_chart` tool call but its stream
+ * terminates before the (synthetic, server-side) execute() result is
+ * delivered through the AI SDK chunk stream, the orphan-pairing step below
+ * marks the call with a synthesized error envelope. This recovery hook runs
+ * BEFORE that pairing: if the orphan part already carries the model's full
+ * input args, we just execute the synthetic tool ourselves. The chart was
+ * always ours to render — losing it to a Gemini Flash streaming hiccup is
+ * a UX regression we can avoid trivially.
+ */
+export function recoverOrphanCreateChart<T extends PersistedMessagePart>(
+  parts: T[],
+  toolName: string,
+  execute: (input: unknown) => unknown,
+): { parts: T[]; recoveredCount: number } {
+  let recoveredCount = 0;
+  const out = parts.map((part) => {
+    if (!isRecord(part) || typeof part.type !== "string") return part;
+    if (part.type !== `tool-${toolName}`) return part;
+    if (part.state === "output-available") return part;
+    const input = part.input;
+    if (input === undefined || input === null) return part;
+    try {
+      const recovered = execute(input);
+      recoveredCount += 1;
+      return {
+        ...part,
+        state: "output-available",
+        output: recovered,
+      } as T;
+    } catch {
+      return part;
+    }
+  });
+  return { parts: out, recoveredCount };
+}
+
 export function ensureToolResultsPaired(parts: PersistedMessagePart[]): {
   parts: PersistedMessagePart[];
   orphanCount: number;

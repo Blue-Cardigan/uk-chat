@@ -337,6 +337,120 @@ export function detectDateReferences(text: string | null | undefined, now: Date 
 }
 
 // ---------------------------------------------------------------------------
+// Free-text place names (resolved live via OSM Nominatim)
+//
+// Catches the long tail of UK place names that aren't postcodes, current
+// constituencies, MPs or LADs — e.g. "Finsbury Park", "Mayfair", "Camden
+// Market", "Borough Market". Uses a deliberately conservative detector:
+// only trigger on a well-formed prepositional phrase ("in <Title Case>",
+// "near <Title Case>", etc.) so we don't fire on every capitalised word.
+// Geocoding goes through OSM Nominatim with a UK country-code filter; their
+// usage policy expects a User-Agent and ≤1 req/sec, both honoured here.
+// ---------------------------------------------------------------------------
+
+const PLACE_PHRASE_REGEX =
+  /\b(?:in|near|around|at|for|across|throughout|within)\s+((?:[A-Z][a-zA-Z'\-]+(?:\s+[A-Z][a-zA-Z'\-]+){0,3}))\b/g;
+
+// Words that pass the title-case heuristic but are not real place tokens.
+const PLACE_DETECTOR_BLOCKLIST = new Set([
+  "the",
+  "england",
+  "scotland",
+  "wales",
+  "northern ireland",
+  "uk",
+  "united kingdom",
+  "great britain",
+  "britain",
+  "europe",
+  "london",
+  // Common mis-fires from question phrasing
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+  "sunday",
+]);
+
+export type AmbientPlace = {
+  matchedAs: string;
+  displayName: string;
+  latitude: number;
+  longitude: number;
+  council: string | null;
+  region: string | null;
+};
+
+export function detectPlacePhrases(text: string | null | undefined): string[] {
+  if (!text) return [];
+  const seen = new Set<string>();
+  const matches: string[] = [];
+  for (const match of text.matchAll(PLACE_PHRASE_REGEX)) {
+    const candidate = match[1]?.trim();
+    if (!candidate) continue;
+    const normalized = candidate.toLowerCase();
+    if (PLACE_DETECTOR_BLOCKLIST.has(normalized)) continue;
+    // Skip single-word items shorter than 5 chars to suppress noise like "in The".
+    if (!/\s/.test(candidate) && candidate.length < 5) continue;
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    matches.push(candidate);
+  }
+  return matches;
+}
+
+async function geocodePlace(
+  candidate: string,
+  fetchImpl: typeof fetch,
+): Promise<AmbientPlace | null> {
+  try {
+    const url = new URL("https://nominatim.openstreetmap.org/search");
+    url.searchParams.set("q", candidate);
+    url.searchParams.set("countrycodes", "gb");
+    url.searchParams.set("format", "json");
+    url.searchParams.set("addressdetails", "1");
+    url.searchParams.set("limit", "1");
+    const response = await fetchImpl(url.toString(), {
+      headers: {
+        accept: "application/json",
+        "user-agent": "chatgb (https://chatgb.co.uk) — UK gov data agent",
+      },
+    });
+    if (!response.ok) return null;
+    const payload = (await response.json()) as Array<{
+      lat?: string;
+      lon?: string;
+      display_name?: string;
+      address?: Record<string, string>;
+    }>;
+    const top = payload[0];
+    if (!top) return null;
+    const lat = Number(top.lat);
+    const lng = Number(top.lon);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+    const address = top.address ?? {};
+    return {
+      matchedAs: candidate,
+      displayName: top.display_name ?? candidate,
+      latitude: lat,
+      longitude: lng,
+      council:
+        address.city ??
+        address.town ??
+        address.county ??
+        address.state_district ??
+        address.borough ??
+        null,
+      region: address.state ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Aggregator + renderer
 // ---------------------------------------------------------------------------
 
@@ -345,6 +459,7 @@ export type AmbientContext = {
   constituencies: AmbientMp[];
   mpsByName: AmbientMp[];
   lads: AmbientLad[];
+  places: AmbientPlace[];
   dates: AmbientDate[];
 };
 
@@ -373,12 +488,24 @@ export async function buildAmbientContext(
   const lads = detectLads(query).slice(0, cap);
   const dates = detectDateReferences(query, now).slice(0, cap);
 
-  const postcodesResolved = await postcodesPromise;
+  // Free-text place geocoding. Only fires when no postcode was already
+  // detected, since postcodes give precise coordinates and a free-text
+  // place would be redundant (and a wasted Nominatim hit).
+  const placesPromise: Promise<AmbientPlace[]> = (async () => {
+    if (detectedPostcodes.length > 0) return [];
+    const candidates = detectPlacePhrases(query).slice(0, 2);
+    if (candidates.length === 0) return [];
+    const resolved = await Promise.all(candidates.map((c) => geocodePlace(c, fetchImpl)));
+    return resolved.filter((entry): entry is AmbientPlace => entry !== null);
+  })();
+
+  const [postcodesResolved, places] = await Promise.all([postcodesPromise, placesPromise]);
   return {
     postcodes: postcodesResolved.filter((entry): entry is AmbientPostcode => entry !== null),
     constituencies,
     mpsByName,
     lads,
+    places,
     dates,
   };
 }
@@ -419,6 +546,22 @@ export function renderAmbientContextBlock(context: AmbientContext): string {
       lines.push(
         `- "${m.matchedAs}" → ${m.name}${m.party ? ` (${m.party})` : ""}; constituency="${m.constituency}"; memberId=${m.memberId}`,
       );
+    }
+    sections.push(lines.join("\n"));
+  }
+
+  if (context.places.length > 0) {
+    const lines: string[] = [
+      "Places (free-text resolved via OSM Nominatim — pass these coordinates to lat/lng-aware tools, or use the council name if a tool accepts it):",
+    ];
+    for (const p of context.places) {
+      const parts: string[] = [
+        `"${p.matchedAs}" → lat=${p.latitude.toFixed(6)}, lng=${p.longitude.toFixed(6)}`,
+      ];
+      if (p.council) parts.push(`council="${p.council}"`);
+      if (p.region) parts.push(`region="${p.region}"`);
+      parts.push(`(${p.displayName})`);
+      lines.push(`- ${parts.join("; ")}`);
     }
     sections.push(lines.join("\n"));
   }

@@ -128,6 +128,7 @@ export {
   compactToolOutputForModel,
   ensureToolResultsPaired,
   extractPartsFromResponseMessage,
+  recoverOrphanCreateChart,
   hasAnyToolOutput,
   hasMeaningfulTextPart,
   isPersistedToolPart,
@@ -589,6 +590,16 @@ export function normalizeArtifactToolName(value: string): string {
     .replace(/^_+|_+$/g, "");
 }
 
+export function isChartSpecShape(value: unknown): value is Record<string, unknown> & { yFields: unknown[]; data: unknown[] } {
+  if (!isRecord(value)) return false;
+  if (typeof value.type !== "string") return false;
+  if (typeof value.title !== "string") return false;
+  if (typeof value.xField !== "string") return false;
+  if (!Array.isArray(value.yFields)) return false;
+  if (!Array.isArray(value.data)) return false;
+  return true;
+}
+
 export function hasChartLikeShape(value: unknown): boolean {
   if (!isRecord(value)) return false;
   if (Array.isArray(value.series) || Array.isArray(value.datasets) || Array.isArray(value.points)) return true;
@@ -614,7 +625,7 @@ export function sanitizeArtifactContext(input: unknown): ArtifactContextItem[] {
     const id = coerceString(candidate.id).trim() || `${normalizeArtifactToolName(toolName)}:${items.length}`;
     const conversationId = coerceString(candidate.conversationId).trim() || undefined;
     const messageId = coerceString(candidate.messageId).trim() || undefined;
-    const chartSpec = isRecord(candidate.chartSpec) ? candidate.chartSpec : undefined;
+    const chartSpec = isChartSpecShape(candidate.chartSpec) ? candidate.chartSpec : undefined;
     items.push({
       id,
       conversationId,
@@ -761,7 +772,7 @@ export function extractArtifactsFromMessages(
       if (!isArtifactCandidate(toolName, part.output)) continue;
       const normalizedToolName = normalizeArtifactToolName(toolName);
       const toolCallId = typeof part.toolCallId === "string" ? part.toolCallId : `part-${artifacts.length}`;
-      const chartSpec = normalizedToolName === "create_chart" && isRecord(part.output) ? part.output : undefined;
+      const chartSpec = normalizedToolName === "create_chart" && isChartSpecShape(part.output) ? part.output : undefined;
       artifacts.push({
         id: `${message.id}:${normalizedToolName}:${toolCallId}`,
         toolName: normalizedToolName,

@@ -4,7 +4,7 @@ import type { AmbientContext } from "./ambient-context.js";
 import { renderAmbientEvidenceBlock, runAmbientEvidence, type EvidenceItem } from "./ambient-evidence.js";
 
 function emptyAmbient(): AmbientContext {
-  return { postcodes: [], constituencies: [], mpsByName: [], lads: [], dates: [] };
+  return { postcodes: [], constituencies: [], mpsByName: [], lads: [], places: [], dates: [] };
 }
 
 const SE1_1AA = {

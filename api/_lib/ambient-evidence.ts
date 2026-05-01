@@ -128,6 +128,20 @@ const RULES: EvidenceRule[] = [
     summarize: aggregatePoliceCrimesByCategory,
   },
   {
+    name: "crime + place → police_fetchCrimes (lat/lng)",
+    toolName: "police_fetchCrimes",
+    matches: (query, ambient) =>
+      /\b(crime|police|safety|offen[cs]e|arson|burglary|robbery|theft|anti-?social)\b/i.test(query) &&
+      ambient.postcodes.length === 0 &&
+      ambient.places.length > 0,
+    buildInput: (_query, ambient) => {
+      const first = ambient.places[0];
+      if (!first) return null;
+      return { lat: first.latitude, lng: first.longitude, kind: "crimes_at_location", limit: 1500 };
+    },
+    summarize: aggregatePoliceCrimesByCategory,
+  },
+  {
     name: "MP voting record → parliament_votes",
     toolName: "parliament_votes",
     matches: (query, ambient) => {

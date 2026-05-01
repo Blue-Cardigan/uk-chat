@@ -30,6 +30,7 @@ import {
   AUTO_CHAT_TITLE_MODEL,
   approachingThreshold,
   buildAssistantPartsFromFinishEvent,
+  recoverOrphanCreateChart,
   buildProviderSafeTools,
   buildToolCatalog,
   compactCreateChartSpec,
@@ -719,7 +720,27 @@ chatRoutes.post("/", async (c) => {
       }
 
       const rawParts = buildAssistantPartsFromFinishEvent(event, (name) => safeToOriginal.get(name) ?? name);
-      const { parts: pairedParts, orphanCount } = ensureToolResultsPaired(rawParts);
+
+      // Before synthesising error envelopes for orphan tool calls, retry any
+      // orphan create_chart calls in-process: the model already produced the
+      // input args, and our chart "tool" is a synthetic local function.
+      // Re-running it costs nothing and salvages the chart for users on
+      // streaming-flaky models (Gemini Flash in particular).
+      const { parts: chartRecoveredParts, recoveredCount: chartsRecovered } = recoverOrphanCreateChart(
+        rawParts,
+        CREATE_CHART_TOOL_NAME,
+        compactCreateChartSpec,
+      );
+      if (chartsRecovered > 0) {
+        quantTelemetry.orphanCreateChartRecovered = chartsRecovered;
+        logWarn("[api/chat] Recovered orphan create_chart by re-executing locally", {
+          conversationId: body.conversationId,
+          modelId: selectedModel.id,
+          recoveredCount: chartsRecovered,
+        });
+      }
+
+      const { parts: pairedParts, orphanCount } = ensureToolResultsPaired(chartRecoveredParts);
       if (orphanCount > 0) {
         quantTelemetry.orphanToolCallsSynthesized = orphanCount;
         logWarn("[api/chat] Synthesized stub results for orphan tool calls", {
