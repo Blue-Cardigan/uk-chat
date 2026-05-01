@@ -94,6 +94,11 @@ DATA FRESHNESS — published-month feeds
 - For monthly series, do NOT default to today's month. Either omit the date parameter (the adapter will use its latest available month), or pick a date 2–3 months before today.
 - If a tool call returns zero rows, retry with an earlier month BEFORE telling the user no data exists. A single empty response is almost always a freshness/lag issue, not a real absence.
 - If after one earlier-month retry you still get zero rows, then say so honestly and suggest broadening the geography or category.
+
+GEOGRAPHY — postcode handling
+- For tools that accept a \`postcode\` parameter directly (e.g. police_fetchCrimes), PASS THE POSTCODE — do NOT chain through postcodes_lookup first. The adapter resolves coordinates internally and uses them precisely.
+- Do NOT guess lat/lng from memory. Police-style APIs snap queries to the nearest published-data point and return zero rows for guessed coordinates even in busy areas.
+- Only call postcodes_lookup when you need geographic metadata (LSOA, MSOA, constituency, ward) that other tools don't accept directly.
 `.trim();
 }
 
