@@ -1,6 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildAmbientContext, detectUkPostcodes, renderAmbientContextBlock } from "./ambient-context.js";
+import {
+  buildAmbientContext,
+  detectConstituencies,
+  detectDateReferences,
+  detectMpNames,
+  detectUkPostcodes,
+  renderAmbientContextBlock,
+} from "./ambient-context.js";
 
 test("detectUkPostcodes finds standard postcodes", () => {
   assert.deepEqual(detectUkPostcodes("Show crime in SE1 1AA"), ["SE1 1AA"]);
@@ -60,7 +67,52 @@ test("buildAmbientContext silently drops failed lookups", async () => {
 });
 
 test("renderAmbientContextBlock is empty when no entries", () => {
-  assert.equal(renderAmbientContextBlock({ postcodes: [] }), "");
+  assert.equal(
+    renderAmbientContextBlock({ postcodes: [], constituencies: [], mpsByName: [], dates: [] }),
+    "",
+  );
+});
+
+test("detectConstituencies finds a known constituency in a sentence", () => {
+  const matches = detectConstituencies("What's the demographic makeup of Bristol Central?");
+  assert.ok(matches.length >= 1);
+  assert.equal(matches[0].constituency, "Bristol Central");
+  assert.ok(matches[0].name);
+  assert.ok(matches[0].memberId > 0);
+});
+
+test("detectConstituencies prefers the longest match", () => {
+  const matches = detectConstituencies("compare Cities of London and Westminster vs Bristol Central");
+  const ids = matches.map((m) => m.constituency);
+  assert.ok(ids.includes("Cities of London and Westminster"));
+  assert.ok(ids.includes("Bristol Central"));
+});
+
+test("detectConstituencies ignores non-matches", () => {
+  assert.deepEqual(detectConstituencies("nothing here").length, 0);
+});
+
+test("detectMpNames finds a current MP", () => {
+  const matches = detectMpNames("What has Keir Starmer voted on recently?");
+  assert.ok(matches.length >= 1);
+  assert.match(matches[0].name, /Keir Starmer/);
+  assert.ok(matches[0].constituency);
+});
+
+test("detectDateReferences resolves explicit YYYY-MM and quarters", () => {
+  const matches = detectDateReferences("compare 2026-01 vs Q3 2025", new Date("2026-04-01T00:00:00Z"));
+  const labels = matches.map((m) => m.matchedAs);
+  assert.ok(labels.includes("2026-01"));
+  assert.ok(labels.some((l) => l.startsWith("q3 2025")));
+});
+
+test("detectDateReferences handles relative phrases", () => {
+  const now = new Date("2026-04-15T00:00:00Z");
+  const past = detectDateReferences("show the past 3 months", now);
+  assert.ok(past.length >= 1);
+  const span = past.find((m) => m.matchedAs === "past 3 months");
+  assert.ok(span);
+  assert.equal(span!.months.length, 3);
 });
 
 test("renderAmbientContextBlock includes pre-resolved fields", () => {
@@ -78,9 +130,12 @@ test("renderAmbientContextBlock includes pre-resolved fields", () => {
         msoa: "Southwark 002",
       },
     ],
+    constituencies: [],
+    mpsByName: [],
+    dates: [],
   });
   assert.match(block, /SE1 1AA/);
   assert.match(block, /lat=51\.502092/);
   assert.match(block, /constituency="Bermondsey and Old Southwark"/);
-  assert.match(block, /Skip postcodes_lookup/);
+  assert.match(block, /do NOT call lookup tools/);
 });
