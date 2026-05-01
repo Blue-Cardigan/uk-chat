@@ -249,21 +249,41 @@ export function selectWeakModelQuantTools(
 
 const CREATE_CHART_INPUT_SCHEMA: Record<string, unknown> = {
   type: "object",
-  additionalProperties: false,
-  required: ["type", "title", "xField", "yFields", "data"],
+  additionalProperties: true,
+  required: ["type", "title"],
   properties: {
     type: { type: "string", enum: ["line", "bar", "scatter", "area", "pie", "table"] },
     title: { type: "string" },
     xField: { type: "string" },
-    yFields: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 6 },
+    yFields: { type: "array", items: { type: "string" }, maxItems: 6 },
     labelField: { type: "string" },
     groupField: { type: "string" },
+    // Either supply `data` directly (small, model-known datasets) OR
+    // `dataRef` + `transform` to materialise rows server-side from a prior
+    // tool's cached output. The dataRef path is preferred for any dataset
+    // larger than ~50 rows: the model never has to read the rows.
     data: {
       type: "array",
       maxItems: 160,
       items: {
         type: "object",
         additionalProperties: true,
+      },
+    },
+    dataRef: {
+      type: "string",
+      description: "An opaque string returned by a prior data tool that points to its cached row set. Pass with `transform` to chart from those rows without re-quoting them.",
+    },
+    transform: {
+      type: "object",
+      additionalProperties: true,
+      properties: {
+        groupBy: { type: "string" },
+        groupBySecondary: { type: "string" },
+        metric: { type: "object", additionalProperties: true },
+        topN: { type: "number" },
+        sortBy: { type: "string", enum: ["key", "value"] },
+        sortDir: { type: "string", enum: ["asc", "desc"] },
       },
     },
     sources: { type: "array", items: { type: "string" } },
@@ -277,7 +297,8 @@ export function createSyntheticChartTool(compactCreateChartSpec: (input: unknown
     // than to system-prompt rules, and they readily substitute markdown tables for
     // chart calls when the wording leaves it as a plain "create" verb.
     description:
-      "Render a chart artifact for the user. CALL THIS TOOL whenever the user asks for a chart, plot, graph, bar/line/pie/stacked/scatter visualisation, or to 'visualise'/'show as chart'. Do NOT describe the chart in prose or render it as a markdown table — the chart only appears when this tool is called. Required: type, xField, yFields, data (rows from a prior data-retrieval tool).",
+      "Render a chart artifact for the user. CALL THIS TOOL whenever the user asks for a chart, plot, graph, bar/line/pie/stacked/scatter visualisation, or to 'visualise'/'show as chart'. Do NOT describe the chart in prose or render it as a markdown table — the chart only appears when this tool is called. " +
+      "Inputs: provide EITHER `data` (small inline rows) OR `dataRef` + `transform` (preferred for any dataset > ~50 rows: the rows stay server-side, you only pass the reference returned by an earlier tool plus a `transform: { groupBy: \"<column>\", metric: { op: \"count\" } }`).",
     inputSchema: jsonSchema(CREATE_CHART_INPUT_SCHEMA),
     execute: async (input: unknown) => compactCreateChartSpec(input),
   };

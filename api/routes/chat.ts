@@ -26,6 +26,7 @@ import {
 } from "../_lib/tool-pipeline.js";
 import { buildAmbientContext, renderAmbientContextBlock } from "../_lib/ambient-context.js";
 import { renderAmbientEvidenceBlock, runAmbientEvidence } from "../_lib/ambient-evidence.js";
+import { createDataCache, materialiseChartInput, wrapToolWithDataHandle } from "../_lib/data-handle.js";
 import {
   AUTO_CHAT_TITLE_MODEL,
   approachingThreshold,
@@ -293,9 +294,29 @@ chatRoutes.post("/", async (c) => {
   const quantScopedBaseTools = weakQuantToolRestrictionApplied
     ? selectWeakModelQuantTools(selectedBaseTools, latestUserQuery, { minimumTools: 3 })
     : selectedBaseTools;
+  // Per-request data cache for the data-handle pattern. Tools wrapped with
+  // `wrapToolWithDataHandle` store their large payloads here under a
+  // `dataRef`; the LLM only sees a lean summary. create_chart can later
+  // materialise rows via `dataRef + transform` without the model reading them.
+  const dataCache = createDataCache();
+  const wrappedDataHandleTools = Object.fromEntries(
+    Object.entries(quantScopedBaseTools).map(([name, def]) => {
+      if (!isRecord(def) || typeof def.execute !== "function") return [name, def];
+      return [
+        name,
+        {
+          ...def,
+          execute: wrapToolWithDataHandle(name, def.execute as (input: unknown) => unknown, dataCache),
+        },
+      ];
+    }),
+  );
+  const chartToolWithCache = createSyntheticChartTool((input) =>
+    compactCreateChartSpec(materialiseChartInput(input, dataCache)),
+  );
   const scopedTools = {
-    ...quantScopedBaseTools,
-    ...(allowCreateChartTool ? { [CREATE_CHART_TOOL_NAME]: createSyntheticChartTool(compactCreateChartSpec) } : {}),
+    ...wrappedDataHandleTools,
+    ...(allowCreateChartTool ? { [CREATE_CHART_TOOL_NAME]: chartToolWithCache } : {}),
   };
   const guardedTools = enforceCreateChartDataPrereq(scopedTools);
 
