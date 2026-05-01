@@ -12,6 +12,7 @@
 // LLM.
 
 import mpsRaw from "./data/uk-mps.json" with { type: "json" };
+import ladsRaw from "./data/uk-lads.json" with { type: "json" };
 
 // ---------------------------------------------------------------------------
 // Postcodes (resolved live via postcodes.io)
@@ -183,6 +184,65 @@ export function detectMpNames(text: string | null | undefined): AmbientMp[] {
 }
 
 // ---------------------------------------------------------------------------
+// Local Authority Districts (resolved from a bundled snapshot)
+//
+// 361 LADs across England, Scotland, Wales and Northern Ireland with their
+// GSS codes (LAD24CD), pulled once from the ONS Open Geography Portal.
+// Mentions of council names map to the canonical {name, code} so callers can
+// pass the GSS code straight to ONS / NHS / planning tools.
+// ---------------------------------------------------------------------------
+
+type LadRecord = { name: string; code: string };
+const LADS: readonly LadRecord[] = ladsRaw as LadRecord[];
+
+// Names like "City" or "Council" alone are far too noisy to substring-match.
+// Anything shorter than 4 characters is also rejected at detection time.
+const LAD_NAME_BLOCKLIST = new Set([
+  "city",
+  "council",
+  "north",
+  "south",
+  "east",
+  "west",
+  "central",
+]);
+
+const LAD_INDEX = [...LADS]
+  .filter((l) => !LAD_NAME_BLOCKLIST.has(l.name.toLowerCase()) && l.name.length >= 4)
+  .sort((a, b) => b.name.length - a.name.length);
+
+export type AmbientLad = {
+  matchedAs: string;
+  name: string;
+  code: string;
+};
+
+export function detectLads(text: string | null | undefined): AmbientLad[] {
+  if (!text) return [];
+  const haystack = text.toLowerCase();
+  const consumed: Array<[number, number]> = [];
+  const matches: AmbientLad[] = [];
+  const seen = new Set<string>();
+
+  for (const record of LAD_INDEX) {
+    if (seen.has(record.code)) continue;
+    const needle = record.name.toLowerCase();
+    const idx = haystack.indexOf(needle);
+    if (idx === -1) continue;
+    const before = idx === 0 ? " " : haystack[idx - 1];
+    const after = idx + needle.length >= haystack.length ? " " : haystack[idx + needle.length];
+    if (/[a-z0-9]/.test(before) || /[a-z0-9]/.test(after)) continue;
+    const span: [number, number] = [idx, idx + needle.length];
+    if (consumed.some(([s, e]) => !(span[1] <= s || span[0] >= e))) continue;
+    consumed.push(span);
+    seen.add(record.code);
+    matches.push({ matchedAs: record.name, name: record.name, code: record.code });
+  }
+
+  return matches;
+}
+
+// ---------------------------------------------------------------------------
 // Dates (resolved from natural-language references)
 // ---------------------------------------------------------------------------
 
@@ -284,6 +344,7 @@ export type AmbientContext = {
   postcodes: AmbientPostcode[];
   constituencies: AmbientMp[];
   mpsByName: AmbientMp[];
+  lads: AmbientLad[];
   dates: AmbientDate[];
 };
 
@@ -309,6 +370,7 @@ export async function buildAmbientContext(
   // De-dupe vs constituencies — if the same MP was matched both ways, keep the constituency entry
   const constituencyMemberIds = new Set(constituencies.map((c) => c.memberId));
   const mpsByName = detectedMps.filter((m) => !constituencyMemberIds.has(m.memberId)).slice(0, cap);
+  const lads = detectLads(query).slice(0, cap);
   const dates = detectDateReferences(query, now).slice(0, cap);
 
   const postcodesResolved = await postcodesPromise;
@@ -316,6 +378,7 @@ export async function buildAmbientContext(
     postcodes: postcodesResolved.filter((entry): entry is AmbientPostcode => entry !== null),
     constituencies,
     mpsByName,
+    lads,
     dates,
   };
 }
@@ -356,6 +419,14 @@ export function renderAmbientContextBlock(context: AmbientContext): string {
       lines.push(
         `- "${m.matchedAs}" → ${m.name}${m.party ? ` (${m.party})` : ""}; constituency="${m.constituency}"; memberId=${m.memberId}`,
       );
+    }
+    sections.push(lines.join("\n"));
+  }
+
+  if (context.lads.length > 0) {
+    const lines: string[] = ["Local Authority Districts (already resolved — pass the GSS code or name directly to ONS / NHS / planning tools):"];
+    for (const l of context.lads) {
+      lines.push(`- "${l.name}" → GSS code ${l.code}`);
     }
     sections.push(lines.join("\n"));
   }

@@ -4,6 +4,7 @@ import {
   buildAmbientContext,
   detectConstituencies,
   detectDateReferences,
+  detectLads,
   detectMpNames,
   detectUkPostcodes,
   renderAmbientContextBlock,
@@ -68,7 +69,7 @@ test("buildAmbientContext silently drops failed lookups", async () => {
 
 test("renderAmbientContextBlock is empty when no entries", () => {
   assert.equal(
-    renderAmbientContextBlock({ postcodes: [], constituencies: [], mpsByName: [], dates: [] }),
+    renderAmbientContextBlock({ postcodes: [], constituencies: [], mpsByName: [], lads: [], dates: [] }),
     "",
   );
 });
@@ -90,6 +91,20 @@ test("detectConstituencies prefers the longest match", () => {
 
 test("detectConstituencies ignores non-matches", () => {
   assert.deepEqual(detectConstituencies("nothing here").length, 0);
+});
+
+test("detectLads resolves a council name to its GSS code", () => {
+  const matches = detectLads("How is Manchester performing on housing targets?");
+  assert.ok(matches.length >= 1);
+  const m = matches.find((x) => x.name === "Manchester");
+  assert.ok(m, "expected Manchester LAD match");
+  assert.match(m!.code, /^E0[789]/);
+});
+
+test("detectLads ignores noisy generic words", () => {
+  // "City" alone is in the blocklist; bare "North" / "South" too.
+  assert.equal(detectLads("the city is busy").length, 0);
+  assert.equal(detectLads("travelling north").length, 0);
 });
 
 test("detectMpNames finds a current MP", () => {
@@ -132,6 +147,7 @@ test("renderAmbientContextBlock includes pre-resolved fields", () => {
     ],
     constituencies: [],
     mpsByName: [],
+    lads: [],
     dates: [],
   });
   assert.match(block, /SE1 1AA/);
