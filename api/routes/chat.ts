@@ -24,6 +24,7 @@ import {
   summarizeToolLoopHealth,
   wrapToolExecutionErrors,
 } from "../_lib/tool-pipeline.js";
+import { buildAmbientContext, renderAmbientContextBlock } from "../_lib/ambient-context.js";
 import {
   AUTO_CHAT_TITLE_MODEL,
   approachingThreshold,
@@ -438,8 +439,23 @@ chatRoutes.post("/", async (c) => {
       })
     : [];
   const planContext = buildExecutionPlanContext(planSteps);
+
+  // Deterministic ambient-context layer: resolve high-confidence entities
+  // (UK postcodes) WITHOUT involving the LLM, so weak models skip the
+  // look-up-then-use chain that's the dominant agent failure mode.
+  const ambientContext = await buildAmbientContext(latestUserQuery);
+  const ambientContextBlock = renderAmbientContextBlock(ambientContext);
+  if (ambientContext.postcodes.length > 0) {
+    quantTelemetry.ambientPostcodesResolved = ambientContext.postcodes.length;
+  }
+
   const systemPromptBase = getSystemPrompt(new Date(), selectedModel.id);
-  let withPlanContext = planContext ? `${systemPromptBase}\n\n${planContext}` : systemPromptBase;
+  const systemPromptWithAmbient = ambientContextBlock
+    ? `${systemPromptBase}\n\n${ambientContextBlock}`
+    : systemPromptBase;
+  let withPlanContext = planContext
+    ? `${systemPromptWithAmbient}\n\n${planContext}`
+    : systemPromptWithAmbient;
   let quantContinuationContext = "";
   let forceReducedMainTools = false;
   const compactedMessages = compactUiMessagesForModel(body.messages ?? []);
