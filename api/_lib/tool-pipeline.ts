@@ -413,10 +413,12 @@ export function wrapToolExecutionErrors(tools: Record<string, unknown>): Record<
           try {
             return await originalExecute(...args);
           } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
             return {
               isError: true,
-              error: error instanceof Error ? error.message : String(error),
+              error: message,
               tool: toolName,
+              hint: inferRecoveryHint(toolName, message),
             };
           }
         },
@@ -424,6 +426,71 @@ export function wrapToolExecutionErrors(tools: Record<string, unknown>): Record<
     ] as const;
   });
   return Object.fromEntries(wrapped);
+}
+
+/**
+ * Map a tool error to an actionable next step the model should take. Hints
+ * are deliberately specific — generic "try again" suggestions don't help
+ * weak models. When no hint matches, the wrapped error envelope still
+ * contains the raw `error` field so the model can read it; the absence of
+ * a hint is acceptable.
+ */
+const ERROR_HINT_RULES: ReadonlyArray<{
+  toolPattern?: RegExp;
+  errorPattern: RegExp;
+  hint: string;
+}> = [
+  // Postcode resolution failures across any geographic adapter
+  {
+    errorPattern: /postcode .* could not be resolved|postcode .* not found|invalid postcode/i,
+    hint: "The postcode couldn't be resolved. Try a known nearby postcode in the same area, or pass `lat`/`lng` directly if the tool supports them.",
+  },
+  // Nomis dataset 404 — tell the model to discover datasets first
+  {
+    toolPattern: /nomis_/,
+    errorPattern: /404|not found|invalid dataset/i,
+    hint: "Dataset ID not found on Nomis. Call `nomis_listDatasets` first to find the correct ID, then retry with the discovered identifier.",
+  },
+  // Police API 502/503 → retry with tighter scope
+  {
+    toolPattern: /police_/,
+    errorPattern: /502|503|gateway|upstream/i,
+    hint: "The data.police.uk upstream is flaky. Retry with `kind: \"crimes_at_location\"` for a single month and a tighter radius, or wait and try again.",
+  },
+  // Empty police results — usually a data-lag issue
+  {
+    toolPattern: /police_/,
+    errorPattern: /no crimes returned|0 rows|empty result/i,
+    hint: "data.police.uk lags 1–3 months behind the calendar. Retry with `date` 2–3 months earlier than today, or omit `date` entirely so the adapter picks the latest published month.",
+  },
+  // Schema validation: surface the offending field
+  {
+    errorPattern: /(?:invalid|missing|required) (?:field|property|argument)|schema validation failed/i,
+    hint: "Tool input failed schema validation. Re-read the tool's required parameters and supply each one explicitly. The error message above lists the offending field.",
+  },
+  // Rate limit / quota
+  {
+    errorPattern: /rate limit|too many requests|429|quota exceeded/i,
+    hint: "The upstream rate-limited us. Don't immediately retry — narrow the request (smaller date range, fewer rows) or move on to a different tool first.",
+  },
+  // Authentication / authorization on upstream
+  {
+    errorPattern: /401|403|unauthorized|forbidden|api key/i,
+    hint: "The upstream rejected our credentials for this dataset. This is a server-side configuration issue; tell the user the dataset is currently unavailable rather than retrying.",
+  },
+  // MCP timeout
+  {
+    errorPattern: /timeout|timed out|aborted/i,
+    hint: "The tool timed out. Try a narrower scope (smaller area, shorter date range, fewer rows) or pick a more specific tool variant.",
+  },
+];
+
+export function inferRecoveryHint(toolName: string, errorMessage: string): string | undefined {
+  for (const rule of ERROR_HINT_RULES) {
+    if (rule.toolPattern && !rule.toolPattern.test(toolName)) continue;
+    if (rule.errorPattern.test(errorMessage)) return rule.hint;
+  }
+  return undefined;
 }
 
 type ToolCallRow = { toolName: string | null; toolCallId: string | null };

@@ -27,6 +27,7 @@ import {
 import { buildAmbientContext, renderAmbientContextBlock } from "../_lib/ambient-context.js";
 import { renderAmbientEvidenceBlock, runAmbientEvidence } from "../_lib/ambient-evidence.js";
 import { createDataCache, materialiseChartInput, wrapToolWithDataHandle } from "../_lib/data-handle.js";
+import { routeModel } from "../_lib/model-router.js";
 import {
   AUTO_CHAT_TITLE_MODEL,
   approachingThreshold,
@@ -227,14 +228,26 @@ chatRoutes.post("/", async (c) => {
 
   const { data: conversation } = await supabase
     .from("uk_chat_conversations")
-    .select("id,title")
+    .select("id,title,entity_memory")
     .eq("id", body.conversationId)
     .eq("user_id", user.id)
     .is("deleted_at", null)
     .single();
   if (!conversation) return json({ error: "Conversation not found" }, 404);
+  const inheritedAmbient = isRecord(conversation.entity_memory) ? (conversation.entity_memory as Partial<import("../_lib/ambient-context.js").AmbientContext>) : null;
 
-  const selectedModel = getChatModelConfig(body.modelId);
+  // Auto-route to a sensible default model unless the user explicitly chose
+  // one in the UI. Heuristic-only at request entry (no async ambient build)
+  // so latency isn't impacted; uses query primitives + fast postcode regex
+  // for entity counting. Full ambient context arrives later but the early
+  // decision is good enough — see api/_lib/model-router.ts for the rules.
+  const userExplicitlyChose = typeof body.modelId === "string" && body.modelId.length > 0;
+  const earlyQuery = extractLatestUserText(body.messages);
+  const routeDecision = userExplicitlyChose
+    ? null
+    : routeModel({ query: earlyQuery, messages: body.messages });
+  const effectiveModelId = userExplicitlyChose ? body.modelId : routeDecision?.modelId ?? null;
+  const selectedModel = getChatModelConfig(effectiveModelId);
   const openrouter = createOpenRouter({ apiKey: c.env.OPENROUTER_API_KEY });
   const incomingDocuments = sanitizeIncomingDocuments(body.documents);
   const artifactContext = summarizeArtifactContext(sanitizeArtifactContext(body.artifactContext));
@@ -467,7 +480,7 @@ chatRoutes.post("/", async (c) => {
   // (UK postcodes, constituencies, MPs, LADs, dates) WITHOUT involving the
   // LLM, so weak models skip the look-up-then-use chain that's the dominant
   // agent failure mode.
-  const ambientContext = await buildAmbientContext(latestUserQuery);
+  const ambientContext = await buildAmbientContext(latestUserQuery, { inherited: inheritedAmbient });
   const ambientContextBlock = renderAmbientContextBlock(ambientContext);
   quantTelemetry.ambientPostcodesResolved = ambientContext.postcodes.length;
   quantTelemetry.ambientConstituencies = ambientContext.constituencies.length;
@@ -832,7 +845,11 @@ chatRoutes.post("/", async (c) => {
 
         const { error: updateConversationError } = await supabase
           .from("uk_chat_conversations")
-          .update({ updated_at: new Date().toISOString() })
+          .update({
+            updated_at: new Date().toISOString(),
+            // Persist this-turn merged entities so the next turn inherits them.
+            entity_memory: ambientContext,
+          })
           .eq("id", body.conversationId!)
           .eq("user_id", user.id)
           .is("deleted_at", null);

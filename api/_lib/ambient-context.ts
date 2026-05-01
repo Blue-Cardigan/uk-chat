@@ -470,6 +470,13 @@ export async function buildAmbientContext(
     maxPostcodes?: number;
     maxEntitiesPerKind?: number;
     now?: Date;
+    /**
+     * Entities resolved on prior turns of the same conversation. Merged with
+     * fresh detections from this turn — fresh wins on key collision so the
+     * user can override an inherited entity by mentioning a new one
+     * explicitly. Capped at 10 entries per kind to bound row size.
+     */
+    inherited?: Partial<AmbientContext> | null;
   } = {},
 ): Promise<AmbientContext> {
   const fetchImpl = options.fetchImpl ?? fetch;
@@ -500,13 +507,44 @@ export async function buildAmbientContext(
   })();
 
   const [postcodesResolved, places] = await Promise.all([postcodesPromise, placesPromise]);
-  return {
+  const fresh: AmbientContext = {
     postcodes: postcodesResolved.filter((entry): entry is AmbientPostcode => entry !== null),
     constituencies,
     mpsByName,
     lads,
     places,
     dates,
+  };
+  return mergeAmbientContext(options.inherited ?? null, fresh);
+}
+
+const AMBIENT_MEMORY_CAP = 10;
+
+/**
+ * Merge inherited (prior-turn) context with fresh (this-turn) detections.
+ * Fresh entries take precedence on key collision so a user mentioning a new
+ * postcode this turn doesn't get clobbered by the inherited one. Each list
+ * is capped at AMBIENT_MEMORY_CAP to bound persisted row size.
+ */
+export function mergeAmbientContext(
+  inherited: Partial<AmbientContext> | null,
+  fresh: AmbientContext,
+): AmbientContext {
+  const dedupe = <T>(fresh: T[], inherited: T[], keyOf: (item: T) => string): T[] => {
+    const freshKeys = new Set(fresh.map(keyOf));
+    const merged = [
+      ...fresh,
+      ...inherited.filter((item) => !freshKeys.has(keyOf(item))),
+    ];
+    return merged.slice(0, AMBIENT_MEMORY_CAP);
+  };
+  return {
+    postcodes: dedupe(fresh.postcodes, inherited?.postcodes ?? [], (p) => p.postcode),
+    constituencies: dedupe(fresh.constituencies, inherited?.constituencies ?? [], (c) => String(c.memberId)),
+    mpsByName: dedupe(fresh.mpsByName, inherited?.mpsByName ?? [], (m) => String(m.memberId)),
+    lads: dedupe(fresh.lads, inherited?.lads ?? [], (l) => l.code),
+    places: dedupe(fresh.places, inherited?.places ?? [], (p) => p.matchedAs.toLowerCase()),
+    dates: dedupe(fresh.dates, inherited?.dates ?? [], (d) => d.matchedAs.toLowerCase()),
   };
 }
 

@@ -8,6 +8,7 @@ import {
   detectMpNames,
   detectPlacePhrases,
   detectUkPostcodes,
+  mergeAmbientContext,
   renderAmbientContextBlock,
 } from "./ambient-context.js";
 
@@ -197,6 +198,90 @@ test("detectDateReferences handles relative phrases", () => {
   const span = past.find((m) => m.matchedAs === "past 3 months");
   assert.ok(span);
   assert.equal(span!.months.length, 3);
+});
+
+test("mergeAmbientContext keeps fresh detections and inherits non-overlapping prior entries", () => {
+  const inherited = {
+    postcodes: [
+      {
+        postcode: "SE1 1AA",
+        latitude: 51.502092,
+        longitude: -0.091895,
+        parliamentaryConstituency: "Bermondsey and Old Southwark",
+        adminDistrict: "Southwark",
+        adminWard: "Riverside",
+        region: "London",
+        lsoa: "Southwark 002E",
+        msoa: "Southwark 002",
+      },
+    ],
+    constituencies: [],
+    mpsByName: [],
+    lads: [],
+    places: [],
+    dates: [],
+  };
+  const fresh = {
+    postcodes: [
+      {
+        postcode: "M1 1AB",
+        latitude: 53.4794,
+        longitude: -2.2453,
+        parliamentaryConstituency: null,
+        adminDistrict: null,
+        adminWard: null,
+        region: null,
+        lsoa: null,
+        msoa: null,
+      },
+    ],
+    constituencies: [],
+    mpsByName: [],
+    lads: [],
+    places: [],
+    dates: [],
+  };
+  const merged = mergeAmbientContext(inherited, fresh);
+  assert.equal(merged.postcodes.length, 2);
+  // Fresh first, inherited second
+  assert.equal(merged.postcodes[0].postcode, "M1 1AB");
+  assert.equal(merged.postcodes[1].postcode, "SE1 1AA");
+});
+
+test("mergeAmbientContext caps each list at 10 entries", () => {
+  const make = (n: number) => Array.from({ length: n }, (_, i) => ({
+    postcode: `XX${i} ${i}AA`,
+    latitude: 0, longitude: 0,
+    parliamentaryConstituency: null, adminDistrict: null, adminWard: null,
+    region: null, lsoa: null, msoa: null,
+  }));
+  const merged = mergeAmbientContext(
+    { postcodes: make(20), constituencies: [], mpsByName: [], lads: [], places: [], dates: [] },
+    { postcodes: make(5), constituencies: [], mpsByName: [], lads: [], places: [], dates: [] },
+  );
+  assert.equal(merged.postcodes.length, 10);
+});
+
+test("mergeAmbientContext: fresh wins on key collision", () => {
+  const inherited = {
+    postcodes: [{
+      postcode: "SE1 1AA", latitude: 0, longitude: 0,
+      parliamentaryConstituency: "OLD", adminDistrict: null, adminWard: null,
+      region: null, lsoa: null, msoa: null,
+    }],
+    constituencies: [], mpsByName: [], lads: [], places: [], dates: [],
+  };
+  const fresh = {
+    postcodes: [{
+      postcode: "SE1 1AA", latitude: 0, longitude: 0,
+      parliamentaryConstituency: "NEW", adminDistrict: null, adminWard: null,
+      region: null, lsoa: null, msoa: null,
+    }],
+    constituencies: [], mpsByName: [], lads: [], places: [], dates: [],
+  };
+  const merged = mergeAmbientContext(inherited, fresh);
+  assert.equal(merged.postcodes.length, 1);
+  assert.equal(merged.postcodes[0].parliamentaryConstituency, "NEW");
 });
 
 test("renderAmbientContextBlock includes pre-resolved fields", () => {
