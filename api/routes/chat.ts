@@ -30,6 +30,7 @@ import { createDataCache, materialiseChartInput, wrapToolWithDataHandle } from "
 import { routeModel } from "../_lib/model-router.js";
 import { buildEmbeddingScoreMap, embedQuery } from "../_lib/tool-retrieval.js";
 import { runVerifierPass } from "../_lib/verifier.js";
+import { findUnsubstantiatedNumbers, renderCitationNote } from "../_lib/citation-checker.js";
 import {
   AUTO_CHAT_TITLE_MODEL,
   approachingThreshold,
@@ -879,6 +880,24 @@ chatRoutes.post("/", async (c) => {
       } catch (verifierError) {
         // Non-fatal: surface in telemetry but do not block the user-visible response.
         quantTelemetry.verifierError = verifierError instanceof Error ? verifierError.message : String(verifierError);
+      }
+
+      // Deterministic citation check: complement to the LLM verifier. Runs
+      // against the same parts; flags numbers in the answer text that don't
+      // appear anywhere in the tool outputs from this turn. No LLM call,
+      // negligible latency. Skipped if the verifier already appended a note
+      // (avoids stacking two self-check banners).
+      if (quantTelemetry.verifierCorrected !== true) {
+        const citationResult = findUnsubstantiatedNumbers(assistantParts);
+        if (citationResult.unsubstantiated.length > 0) {
+          const note = renderCitationNote(citationResult);
+          if (note) {
+            assistantParts = [...assistantParts, { type: "text", text: note }];
+            quantTelemetry.citationNoteAppended = true;
+            quantTelemetry.citationFlagged = citationResult.unsubstantiated.length;
+            quantTelemetry.citationTotal = citationResult.total;
+          }
+        }
       }
 
       const persistPromise = (async () => {
