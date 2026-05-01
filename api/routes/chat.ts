@@ -28,6 +28,8 @@ import { buildAmbientContext, renderAmbientContextBlock } from "../_lib/ambient-
 import { renderAmbientEvidenceBlock, runAmbientEvidence } from "../_lib/ambient-evidence.js";
 import { createDataCache, materialiseChartInput, wrapToolWithDataHandle } from "../_lib/data-handle.js";
 import { routeModel } from "../_lib/model-router.js";
+import { buildEmbeddingScoreMap, embedQuery } from "../_lib/tool-retrieval.js";
+import { runVerifierPass } from "../_lib/verifier.js";
 import {
   AUTO_CHAT_TITLE_MODEL,
   approachingThreshold,
@@ -303,7 +305,24 @@ chatRoutes.post("/", async (c) => {
   // runtime-blocked by enforceCreateChartDataPrereq below.
   const allowCreateChartTool =
     !requireDataToolCall || priorDataToolOutputExists || chartIntentDetected;
-  const selectedBaseTools = selectToolsForChat(tools, latestUserQuery, 18);
+  // Best-effort semantic tool retrieval: embed the user query via OpenRouter
+  // and blend cosine similarity into selectToolsForChat's scoring. Falls
+  // back transparently to keyword/synonym scoring if the embedding endpoint
+  // is unavailable, slow, or the API key isn't set. Adds ~80–150ms to the
+  // hot path; skipped entirely for very short queries where keywords are
+  // already strong signal.
+  let embeddingScores: Map<string, number> | undefined;
+  let toolEmbeddingScored = 0;
+  if (latestUserQuery.trim().length >= 16) {
+    const queryEmbedding = await embedQuery(latestUserQuery, {
+      apiKey: c.env.OPENROUTER_API_KEY,
+    });
+    if (queryEmbedding) {
+      embeddingScores = buildEmbeddingScoreMap(Object.keys(tools), queryEmbedding);
+      toolEmbeddingScored = embeddingScores.size;
+    }
+  }
+  const selectedBaseTools = selectToolsForChat(tools, latestUserQuery, 18, { embeddingScores });
   const quantScopedBaseTools = weakQuantToolRestrictionApplied
     ? selectWeakModelQuantTools(selectedBaseTools, latestUserQuery, { minimumTools: 3 })
     : selectedBaseTools;
@@ -464,6 +483,9 @@ chatRoutes.post("/", async (c) => {
     quantPrefetchStepLimit,
     quantMainStepLimit,
     weakQuantToolRestrictionApplied,
+    toolEmbeddingScored,
+    routedModel: routeDecision?.modelId ?? null,
+    routedReason: routeDecision?.reason ?? null,
   };
 
   const planSteps = requireDataToolCall
@@ -825,6 +847,38 @@ chatRoutes.post("/", async (c) => {
             error: quantTelemetry.nextSpeakerSynthesisError,
           });
         }
+      }
+
+      // Best-effort self-correction pass: catches "answer says X, chart shows Y"
+      // hallucinations on chart-producing turns. Cheap (Flash-lite, capped 600
+      // output tokens), runs in parallel with persistence so it doesn't block.
+      try {
+        const verdict = await runVerifierPass({
+          parts: assistantParts,
+          modelId: selectedModel.id,
+          openrouter,
+        });
+        if (verdict && verdict.ok === false) {
+          assistantParts = [
+            ...assistantParts,
+            {
+              type: "text",
+              text: `\n\n**Note (self-check):** ${verdict.correction}`,
+            },
+          ];
+          quantTelemetry.verifierCorrected = true;
+          quantTelemetry.verifierReason = verdict.reason;
+          logWarn("[api/chat] Verifier flagged a discrepancy and appended a correction", {
+            conversationId: body.conversationId,
+            modelId: selectedModel.id,
+            reason: verdict.reason,
+          });
+        } else if (verdict?.ok === true) {
+          quantTelemetry.verifierOk = true;
+        }
+      } catch (verifierError) {
+        // Non-fatal: surface in telemetry but do not block the user-visible response.
+        quantTelemetry.verifierError = verifierError instanceof Error ? verifierError.message : String(verifierError);
       }
 
       const persistPromise = (async () => {

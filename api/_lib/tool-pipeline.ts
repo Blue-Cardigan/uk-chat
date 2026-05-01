@@ -53,32 +53,157 @@ function classifyTool(name: string, description: string): { category: "data" | "
   return { category: "data", baseScore: 80 };
 }
 
+// Domain synonyms — each user-query term expands to a small set of tool-name
+// fragments and topical keywords that frequently appear in MCP tool
+// descriptions. Lets the matcher find `dfe_schools` when the user said
+// "school" or `parliament_votes` when they said "voted". Sorted broadly by
+// thematic clusters; new entries cheap to add.
+const DOMAIN_SYNONYMS: Record<string, string[]> = {
+  crime: ["police", "offence", "anti-social", "burglary", "robbery", "theft", "violence"],
+  police: ["crime", "force", "constabulary"],
+  safety: ["crime", "police"],
+  school: ["dfe", "education", "ofsted", "gias", "pupil", "teacher"],
+  pupil: ["school", "dfe", "education"],
+  education: ["school", "dfe", "ofsted"],
+  ofsted: ["inspection", "school"],
+  flood: ["ea", "warning", "river", "rainfall", "environment"],
+  rain: ["rainfall", "ea"],
+  river: ["ea", "flood"],
+  pollution: ["ea", "incident", "air"],
+  health: ["nhs", "gp", "hospital", "ae", "rtt"],
+  hospital: ["nhs", "trust", "ae", "kh03"],
+  gp: ["nhs", "practice", "patients"],
+  doctor: ["nhs", "gp", "practice"],
+  mp: ["parliament", "member", "vote", "constituency"],
+  voted: ["parliament", "vote", "division", "mp"],
+  voting: ["parliament", "vote", "division"],
+  parliament: ["mp", "vote", "hansard", "committee"],
+  hansard: ["parliament", "debate"],
+  debate: ["hansard", "parliament"],
+  housing: ["mhclg", "rent", "tenure", "ehs", "ons-housing"],
+  rent: ["housing", "voa", "ons-housing", "mhclg"],
+  property: ["hmlr", "epc", "voa"],
+  energy: ["desnz", "epc", "ofgem", "electricity"],
+  electricity: ["energy", "desnz", "national-grid"],
+  gas: ["energy", "desnz"],
+  council: ["lad", "local-authority", "councillors", "ladcd"],
+  councillor: ["councillors", "council", "local-authority"],
+  postcode: ["postcodes", "lat", "lng"],
+  population: ["census", "ons", "demographic"],
+  demographic: ["census", "ons", "population"],
+  census: ["ons", "nomis"],
+  benefit: ["dwp", "claimants", "welfare"],
+  unemployment: ["dwp", "nomis", "claimants"],
+  trade: ["uk-trade", "ons", "exports", "imports"],
+  charity: ["charity-commission", "trustee"],
+  company: ["companies-house", "corporate"],
+  corporate: ["companies-house", "company"],
+  transport: ["dft", "naptan", "bus", "rail", "tfl"],
+  train: ["national-rail", "transport"],
+  rail: ["national-rail", "transport", "ferries"],
+  bus: ["bus-open-data", "transport"],
+  road: ["road-traffic", "webtris"],
+  food: ["fsa", "fsa-hygiene"],
+  weather: ["metoffice"],
+  air: ["defra-air-quality", "pollution"],
+  earthquake: ["bgs"],
+  contract: ["contracts-finder"],
+  planning: ["planning-data"],
+  election: ["electoral-commission", "democracy-club"],
+  area: ["lad", "constituency", "ward", "lsoa", "msoa", "geography"],
+  ward: ["lad", "boundary", "geography"],
+  lsoa: ["geography", "ons"],
+  msoa: ["geography", "ons"],
+};
+
+const STOPWORDS = new Set([
+  "the", "a", "an", "is", "in", "on", "at", "by", "for", "of", "to", "and", "or",
+  "what", "show", "tell", "give", "me", "my", "our", "your", "their", "this",
+  "that", "those", "these", "with", "from", "as", "was", "were", "did", "do",
+  "does", "be", "been", "have", "has", "had", "will", "would", "should", "can",
+  "could", "may", "might", "near", "around", "about", "via", "within", "across",
+  "today", "yesterday", "now", "please", "any", "all", "some", "many", "few",
+  "more", "most", "much", "data", "info", "information", "find", "get", "list",
+]);
+
+function tokeniseQuery(query: string): string[] {
+  return query
+    .toLowerCase()
+    .replace(/[^a-z0-9'\-\s]/g, " ")
+    .split(/\s+/)
+    .filter((token) => token.length >= 3 && !STOPWORDS.has(token));
+}
+
+function expandQueryTokens(tokens: string[]): Set<string> {
+  const expanded = new Set<string>(tokens);
+  for (const token of tokens) {
+    const synonyms = DOMAIN_SYNONYMS[token];
+    if (!synonyms) continue;
+    for (const synonym of synonyms) expanded.add(synonym);
+  }
+  return expanded;
+}
+
+function tokeniseToolHaystack(name: string, description: string): string[] {
+  // Split tool name on _ and at camelCase boundaries; tokenise description
+  // by alphanumerics. Lowercase everything.
+  const namePieces = name
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/_/g, " ")
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean);
+  const descPieces = description
+    .toLowerCase()
+    .replace(/[^a-z0-9'\-\s]/g, " ")
+    .split(/\s+/)
+    .filter((t) => t.length >= 3 && !STOPWORDS.has(t));
+  return [...namePieces, ...descPieces];
+}
+
 function buildToolCatalog(tools: Record<string, unknown>, query: string): ToolCatalogItem[] {
-  const normalizedQuery = query.trim().toLowerCase();
-  const catalog = Object.entries(tools)
-    .map(([name, definition]) => {
-      const description =
-        (isRecord(definition) && typeof definition.description === "string" ? definition.description : "Model tool") ?? "Model tool";
-      const shortDescription = description.length > 120 ? `${description.slice(0, 117)}...` : description;
-      const { category, baseScore } = classifyTool(name, shortDescription);
-      const startsWithVerb = /^(get|list|search|query|find|fetch)/i.test(name) ? 10 : 0;
-      const conciseBonus = Math.max(0, 12 - Math.min(12, name.length));
-      const trustedDataBonus = /ons|nomis|nhs|boe|postcodes|parliament|metoffice|dft|fsa/i.test(name) ? 14 : 0;
-      const adminPenalty = category === "system" ? -40 : 0;
-      const score = baseScore + startsWithVerb + conciseBonus + trustedDataBonus + adminPenalty;
-      return {
-        name,
-        description: shortDescription,
-        category,
-        score,
-        recommended: false,
-      };
-    })
-    .filter((tool) => {
-      if (!normalizedQuery) return true;
-      const haystack = `${tool.name} ${tool.description} ${tool.category}`.toLowerCase();
-      return haystack.includes(normalizedQuery);
-    });
+  const queryTokens = tokeniseQuery(query);
+  const expandedTokens = expandQueryTokens(queryTokens);
+  const catalog = Object.entries(tools).map(([name, definition]) => {
+    const description =
+      (isRecord(definition) && typeof definition.description === "string" ? definition.description : "Model tool") ?? "Model tool";
+    const shortDescription = description.length > 120 ? `${description.slice(0, 117)}...` : description;
+    const { category, baseScore } = classifyTool(name, shortDescription);
+    const startsWithVerb = /^(get|list|search|query|find|fetch)/i.test(name) ? 10 : 0;
+    const conciseBonus = Math.max(0, 12 - Math.min(12, name.length));
+    const trustedDataBonus = /ons|nomis|nhs|boe|postcodes|parliament|metoffice|dft|fsa/i.test(name) ? 14 : 0;
+    const adminPenalty = category === "system" ? -40 : 0;
+
+    // Token-overlap scoring: each direct query token in the tool's haystack
+    // is worth more than an expanded-synonym match. Name hits weighted higher
+    // than description hits because tool names are denser signal.
+    const haystackTokens = tokeniseToolHaystack(name, shortDescription);
+    const haystackSet = new Set(haystackTokens);
+    let directMatchScore = 0;
+    let synonymMatchScore = 0;
+    for (const token of haystackSet) {
+      if (queryTokens.includes(token)) directMatchScore += 25;
+      else if (expandedTokens.has(token)) synonymMatchScore += 12;
+    }
+    // Boost when tokens appear inside the tool name (not just description).
+    const nameTokens = new Set(haystackTokens.slice(0, name.split(/[_\s]/).length + 4));
+    let nameBoost = 0;
+    for (const token of nameTokens) {
+      if (queryTokens.includes(token)) nameBoost += 30;
+      else if (expandedTokens.has(token)) nameBoost += 18;
+    }
+
+    const score =
+      baseScore + startsWithVerb + conciseBonus + trustedDataBonus + adminPenalty +
+      directMatchScore + synonymMatchScore + nameBoost;
+    return {
+      name,
+      description: shortDescription,
+      category,
+      score,
+      recommended: false,
+    };
+  });
 
   catalog.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
   let recommendedCount = 0;
@@ -200,18 +325,32 @@ export function hasPriorNonChartToolOutput(messages: Array<{ role?: string; part
   return false;
 }
 
-export function selectToolsForChat(tools: Record<string, unknown>, query: string, limit: number): Record<string, unknown> {
-  const catalog = buildToolCatalog(tools, "");
+export function selectToolsForChat(
+  tools: Record<string, unknown>,
+  query: string,
+  limit: number,
+  options: { embeddingScores?: ReadonlyMap<string, number> } = {},
+): Record<string, unknown> {
+  const catalog = buildToolCatalog(tools, query);
   const keywords = query
     .toLowerCase()
     .split(/[^a-z0-9]+/)
     .filter((keyword) => keyword.length >= 3);
+  const embeddingScores = options.embeddingScores;
   const ranked = [...catalog].sort((a, b) => {
     const aHaystack = `${a.name} ${a.description}`.toLowerCase();
     const bHaystack = `${b.name} ${b.description}`.toLowerCase();
-    const aMatches = keywords.reduce((sum, keyword) => sum + (aHaystack.includes(keyword) ? 1 : 0), 0);
-    const bMatches = keywords.reduce((sum, keyword) => sum + (bHaystack.includes(keyword) ? 1 : 0), 0);
-    return bMatches - aMatches || b.score - a.score;
+    const aKeywordMatches = keywords.reduce((sum, keyword) => sum + (aHaystack.includes(keyword) ? 1 : 0), 0);
+    const bKeywordMatches = keywords.reduce((sum, keyword) => sum + (bHaystack.includes(keyword) ? 1 : 0), 0);
+    // Blend keyword score (count of direct keyword matches) with cosine
+    // similarity from the precomputed tool embeddings. Cosine values are in
+    // [-1, 1] — multiply by 100 so a single strong semantic match competes
+    // with multiple keyword hits.
+    const aEmbed = embeddingScores?.get(a.name) ?? 0;
+    const bEmbed = embeddingScores?.get(b.name) ?? 0;
+    const aBlended = aKeywordMatches * 30 + aEmbed * 100 + a.score * 0.4;
+    const bBlended = bKeywordMatches * 30 + bEmbed * 100 + b.score * 0.4;
+    return bBlended - aBlended;
   });
   const selectedNames = new Set(ranked.slice(0, Math.max(10, limit)).map((item) => item.name));
   addPrerequisiteTools(selectedNames, tools, query);
