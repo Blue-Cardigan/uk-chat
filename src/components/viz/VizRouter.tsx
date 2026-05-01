@@ -2,6 +2,7 @@ import type { VizPayload } from "@/lib/types";
 import { normalizeVizToolName, toolToVisualization } from "@/lib/viz-registry";
 import { VisualizationCard } from "@/components/viz/VisualizationCard";
 import { DataDrivenChart } from "@/components/viz/charts/DataDrivenChart";
+import { isChartSpec } from "@/lib/viz-data-parser";
 
 function isSynthesizedToolError(data: unknown): data is { error?: string; synthesized?: boolean; isError?: boolean } {
   return (
@@ -35,7 +36,7 @@ export function VizRouter({ payload }: { payload: VizPayload }) {
     );
   }
 
-  if (payload.chartSpec) {
+  if (isChartSpec(payload.chartSpec)) {
     return <DataDrivenChart spec={payload.chartSpec} />;
   }
 
