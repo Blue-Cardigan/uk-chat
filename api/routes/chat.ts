@@ -25,6 +25,7 @@ import {
   wrapToolExecutionErrors,
 } from "../_lib/tool-pipeline.js";
 import { buildAmbientContext, renderAmbientContextBlock } from "../_lib/ambient-context.js";
+import { renderAmbientEvidenceBlock, runAmbientEvidence } from "../_lib/ambient-evidence.js";
 import {
   AUTO_CHAT_TITLE_MODEL,
   approachingThreshold,
@@ -441,18 +442,30 @@ chatRoutes.post("/", async (c) => {
   const planContext = buildExecutionPlanContext(planSteps);
 
   // Deterministic ambient-context layer: resolve high-confidence entities
-  // (UK postcodes) WITHOUT involving the LLM, so weak models skip the
-  // look-up-then-use chain that's the dominant agent failure mode.
+  // (UK postcodes, constituencies, MPs, LADs, dates) WITHOUT involving the
+  // LLM, so weak models skip the look-up-then-use chain that's the dominant
+  // agent failure mode.
   const ambientContext = await buildAmbientContext(latestUserQuery);
   const ambientContextBlock = renderAmbientContextBlock(ambientContext);
-  if (ambientContext.postcodes.length > 0) {
-    quantTelemetry.ambientPostcodesResolved = ambientContext.postcodes.length;
-  }
+  quantTelemetry.ambientPostcodesResolved = ambientContext.postcodes.length;
+  quantTelemetry.ambientConstituencies = ambientContext.constituencies.length;
+  quantTelemetry.ambientMpsByName = ambientContext.mpsByName.length;
+  quantTelemetry.ambientLads = ambientContext.lads.length;
+  quantTelemetry.ambientDates = ambientContext.dates.length;
+
+  // Speculative ambient-evidence layer: when entity + intent are both
+  // unambiguous (e.g. postcode + "crime"), pre-execute the obvious tool
+  // call and stuff the result into the system prompt. Weak models then
+  // see the data already present and skip the tool-selection step entirely.
+  const ambientEvidence = await runAmbientEvidence(latestUserQuery, ambientContext, scopedTools);
+  const ambientEvidenceBlock = renderAmbientEvidenceBlock(ambientEvidence);
+  quantTelemetry.ambientEvidenceFired = ambientEvidence.length;
+  quantTelemetry.ambientEvidenceTools = ambientEvidence.map((item) => item.toolName);
 
   const systemPromptBase = getSystemPrompt(new Date(), selectedModel.id);
-  const systemPromptWithAmbient = ambientContextBlock
-    ? `${systemPromptBase}\n\n${ambientContextBlock}`
-    : systemPromptBase;
+  const systemPromptWithAmbient = [systemPromptBase, ambientContextBlock, ambientEvidenceBlock]
+    .filter(Boolean)
+    .join("\n\n");
   let withPlanContext = planContext
     ? `${systemPromptWithAmbient}\n\n${planContext}`
     : systemPromptWithAmbient;
